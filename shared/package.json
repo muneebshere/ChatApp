@@ -1,0 +1,17 @@
+{
+  "name": "chatapp.shared",
+  "version": "1.0.0",
+  "description": "Client/server shared code",
+  "author": "Muneeb Shere",
+  "license": "The Unlicense",
+  "devDependencies": {
+    "@types/lodash": "^4.14.191",
+    "@types/node": "^18.11.18",
+    "tslib": "^2.5.0"
+  },
+  "dependencies": {
+    "browser-or-node": "^2.1.1",
+    "buffer": "^6.0.3",
+    "lodash": "^4.17.21"
+  }
+}

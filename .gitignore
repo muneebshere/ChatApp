@@ -1,4 +1,4 @@
-node_modules/**
+**/node_modules/**
 certificates/*
 certificates/*.gitkeep
 public/*.js
