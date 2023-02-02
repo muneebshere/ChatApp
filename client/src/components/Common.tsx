@@ -1,6 +1,6 @@
 import _ from "../node_modules/lodash";
 import React, { useState, useRef, useEffect } from "../node_modules/react";
-import { TextField, Sheet } from "../node_modules/@mui/joy";
+import { Sheet, FormControl, FormLabel, FormHelperText, Input } from "../node_modules/@mui/joy";
 import { styled } from "../node_modules/@mui/joy/styles";
 import { Failure } from "../../../shared/commonTypes";
 
@@ -60,19 +60,27 @@ export function ControlledTextField(args: ControlledTextFieldProps) {
   }
 
   return (
-    <TextField variant={args.variant ?? "outlined"} 
-      value={args.value} 
-      ref={ref} 
-      placeholder={args.placeholder} 
-      type={args.type}
-      error={ !args.valid && (args.forceInvalid || touched) }
-      disabled={args.disabled}
-      onChange={onChange}
-      onBlur={onBlur}
-      onFocus={onFocus}
-      onKeyDown={ (e) => onKey(e, "down") }
-      onKeyUp={ (e) => onKey(e, "up") }
-      helperText={ errorText() ? args.errorMessage : args.helperText } sx={{ justifyItems: "flex-start", textAlign: "start" }}/>)
+    <FormControl>
+      <FormLabel>
+        <Input
+          ref={ref} 
+          variant={args.variant}
+          type={args.type}
+          placeholder={args.placeholder}
+          value={args.value}
+          error={ !args.valid && (args.forceInvalid || touched) }
+          disabled={args.disabled}
+          onChange={onChange}
+          onBlur={onBlur}
+          onFocus={onFocus}
+          onKeyDown={ (e) => onKey(e, "down") }
+          onKeyUp={ (e) => onKey(e, "up") }/>
+      </FormLabel>
+      {(errorText() || args.helperText) &&
+      <FormHelperText sx={{ justifyItems: "flex-start", textAlign: "start" }}>{ errorText() ? args.errorMessage : args.helperText }
+        { errorText() ? args.errorMessage : args.helperText };
+      </FormHelperText>}
+    </FormControl>)
 }
 
 export function Spacer({ units }: { units: number }) {
