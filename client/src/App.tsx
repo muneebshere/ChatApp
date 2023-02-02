@@ -14,7 +14,7 @@ const PORT = 8080;
 createRoot(document.getElementById("root")).render(<App/>);
 
 function App() {
-  const [logInData, logInDataDispatch] = useReducer(defaultLogInDataReducer, { ...defaultLogInData, usernameExists, submit: logIn });
+  const [logInData, logInDataDispatch] = useReducer(defaultLogInDataReducer, { ...defaultLogInData, usernameExists, userLoginPermitted, submit: logIn });
   const [signUpData, signUpDataDispatch] = useReducer(defaultSignUpDataReducer, { ...defaultSignUpData, usernameExists, submit: signUp });
   const [status, setStatus] = useState<Status>(null);
   const [connected, setConnected] = useState(false);
@@ -75,6 +75,10 @@ function App() {
 
   function usernameExists(username: string) {
     return client.current.checkUsernameExists(username);
+  }
+
+  function userLoginPermitted(username: string) {
+    return client.current.userLogInPermitted(username);
   }
 
   function logIn({ username, password, savePassword }: SubmitResponse) {

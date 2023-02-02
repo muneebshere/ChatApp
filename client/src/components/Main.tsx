@@ -5,8 +5,8 @@ import { Item } from "./Common";
 import { ViewMessage, FocusContext } from "./MessageCard";
 import MessageList, { ListMessage } from "./MessageList";
 import { DateTime } from "luxon";
+import { messages } from "./prvMessagesList";
 
-const messages = [];
 const timestamplr = DateTime.now().minus({ days: 1}).toMillis();
 const message1lr = {
   id: `${timestamplr}`,

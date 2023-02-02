@@ -43,6 +43,7 @@ class SocketHandler {
   readonly mongoHandler: MongoHandler;
   private readonly responseMap: Map<SocketEvents, any> = new Map([
     [SocketEvents.UsernameExists, this.usernameExists] as [SocketEvents, any], 
+    [SocketEvents.UserLoginPermitted, this.userLoginPermitted], 
     [SocketEvents.RequestAuthSetupKey, this.generateAuthSetupKey], 
     [SocketEvents.RegisterNewUser, this.registerNewUser], 
     [SocketEvents.InitiateAuthentication, this.initiateAuthentication], 
@@ -185,6 +186,11 @@ class SocketHandler {
       logError(err)
       respond(failure(CommonStrings.ProcessFailed, err));
     }
+  }
+
+  private async userLoginPermitted({ username }: Username): Promise<{ tries: number, allowsAt: number }> {
+    const { tries, allowsAt } = await mongoHandler.getUserRetries(username);
+    return allowsAt && allowsAt > Date.now() ? { tries, allowsAt } : { tries: null, allowsAt: null };
   }
 
   private async usernameExists({ username }: Username): Promise<{ exists: boolean }> {

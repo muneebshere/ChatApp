@@ -200,6 +200,7 @@ export type RequestKeyBundleResponse = {
 export enum SocketEvents {
     CompleteHandshake = "complete-handshake",
     UsernameExists = "username-exists",
+    UserLoginPermitted = "user-login-permitted",
     RequestAuthSetupKey = "request-auth-setup-key",
     RegisterNewUser = "register-new-user",
     InitiateAuthentication = "initiate-authentication",

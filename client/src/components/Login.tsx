@@ -20,6 +20,7 @@ type LogInData = {
   readonly failed: boolean;
   readonly submitted: boolean;
   readonly usernameExists: (username: string) => Promise<boolean>;
+  readonly userLoginPermitted: (username: string) => Promise<{ tries: number, allowsAt: number }>;
   readonly submit: (response: SubmitResponse) => Promise<Failure>;
 }
 
@@ -34,7 +35,7 @@ export function logInAction<K extends keyof LogInData>(id: K, value: LogInData[K
   return { id, value };
 }
 
-export const defaultLogInData: Omit<LogInData, "usernameExists" | "submit"> = {
+export const defaultLogInData: Omit<LogInData, "usernameExists" | "submit" | "userLoginPermitted"> = {
   username: "",
   usernameValid: false,
   usernameEntered: false,
@@ -74,7 +75,7 @@ export const LogInDataContext = createContext<LogInData>(null);
 export const LogInDataDispatchContext = createContext<Dispatch<LogInAction<keyof LogInData>>>(null);
 
 export default function LogInForm() {
-  const { username, usernameValid, usernameEntered, password, passwordValid, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, tryAgain, failed, submitted, usernameExists, submit } = useContext(LogInDataContext);
+  const { username, usernameValid, usernameEntered, password, passwordValid, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, tryAgain, failed, submitted, usernameExists, userLoginPermitted, submit } = useContext(LogInDataContext);
   const logInDataDispatch = useContext(LogInDataDispatchContext);
   const setUsername = (username: string) => logInDataDispatch(logInAction("username", username));
   const setUsernameValid = (usernameValid: boolean) => logInDataDispatch(logInAction("usernameValid", usernameValid));
@@ -87,7 +88,7 @@ export default function LogInForm() {
   const setFailed = (failed: boolean) => logInDataDispatch(logInAction("failed", failed));
   const setSubmitted = (submitted: boolean) => logInDataDispatch(logInAction("submitted", submitted));
   const setTryAgainIn = (tryAgainIn: number) => logInDataDispatch(logInAction("tryAgainIn", tryAgainIn));
-  const setTryAgainRef = (tryAgain: number) => logInDataDispatch(logInAction("tryAgain", tryAgainIn));
+  const setTryAgainRef = (tryAgain: number) => logInDataDispatch(logInAction("tryAgain", tryAgain));
   const setTryCount = (tryCount: number) => logInDataDispatch(logInAction("tryCount", tryCount));
   const [warn, setWarn] = useState(false);
   const tryAgainRef = useRef(0);
@@ -108,6 +109,19 @@ export default function LogInForm() {
     }
   }, [savePassword])
 
+  useEffect(() => {
+    if (usernameEntered) {
+      userLoginPermitted(username).then((({ tries, allowsAt }) => {
+        if (tries) {
+          if (tries && allowsAt) {
+            setTryCount(tries);
+            setTryAgainIn(allowsAt - Date.now());
+          }
+        }
+      }))
+    }
+  }, [usernameEntered])
+
   function validateUserName(username: string): void {
     usernameExists(username).then((exists) => setUsernameValid(exists)).catch(() => {});
   }
@@ -126,7 +140,7 @@ export default function LogInForm() {
       else if (reason === CommonStrings.TooManyWrongTries) {
         setPasswordValid(false);
         const { tries, allowsAt } = details ?? {};
-        if (tries && allowsAt) {
+        if (allowsAt && allowsAt > Date.now()) {
           setTryCount(tries);
           setTryAgainIn(allowsAt - Date.now());
         }
@@ -177,9 +191,9 @@ export default function LogInForm() {
             preventSpaces
             setValue={setPassword}
             validate={ (pass) => setPasswordValid(!lastIncorrectPasswords.some((([u, p]) => u === username && p === pass))) }
-            valid={passwordValid && !!password}
+            valid={passwordValid && !!password && tryAgain <= 0}
             disabled={submitted || tryAgainIn > 0}
-            forceInvalid={!passwordValid}
+            forceInvalid={!passwordValid || tryAgainIn > 0}
             errorMessage={ tryAgainIn <= 0 ? (!password ? "Please provide password" : "Incorrect password.") : `Incorrect password entered ${tryCount} times. Try again in ${ (tryAgainIn / 1000).toFixed(0) }s.`}
             onEnter={submitLocal}/>
           <FormControl orientation="horizontal">

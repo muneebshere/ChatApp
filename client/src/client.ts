@@ -206,6 +206,10 @@ export class Client {
     return exists;
   }
 
+  async userLogInPermitted(username: string): Promise<{ tries: number, allowsAt: number }> {
+    return await this.request(SocketEvents.UserLoginPermitted, { username });
+  }
+
   async registerNewUser(username: string, password: string, displayName: string, savePassword: boolean): Promise<Failure> {
     if (!this.connected) return failure(CommonStrings.NoConnectivity);
     this.notifyCallback?.(Status.CreatingNewUser);
