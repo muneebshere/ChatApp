@@ -22,7 +22,7 @@
   "version": "1.0.0",
   "description": "End-to-end encrypted chatting full-stack MERN web application using socket.io",
   "scripts": {
-    "start": "nodemon --exec \"ts-node\" ./server/backendserver.ts",
+    "start": "nodemon --exec \"ts-node\" ./backendserver.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Muneeb Shere",
