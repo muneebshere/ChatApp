@@ -1,6 +1,6 @@
 **/node_modules/**
-certificates/*
-certificates/*.gitkeep
-public/*.js
-**/.vscode
-!node_modules/buffer-serializer/
+/certificates/*
+!certificates/*.gitkeep
+*/public/*.js
+**/.vscode/**
+*.env
