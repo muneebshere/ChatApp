@@ -2,11 +2,11 @@ const path = require('path');
 
 module.exports = {
     mode: 'development',
-    entry: './src/App.tsx',
+    entry: './App.tsx',
     devtool: 'inline-source-map',
     output: {
         filename: 'main.js',
-        path: path.resolve(__dirname, 'public'),
+        path: path.resolve(__dirname, '../public'),
     },
     resolve: {
       extensions: ['.tsx', '.ts', '.js']
