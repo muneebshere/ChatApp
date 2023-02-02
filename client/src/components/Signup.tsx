@@ -4,6 +4,7 @@ import React, { useState, useEffect, createContext, useReducer, Dispatch, useCon
 import {  } from "../node_modules/@mui/material";
 import { FormControl, FormLabel, Stack, Switch, Button, CircularProgress, Modal, ModalClose, Sheet, Typography, Alert } from "../node_modules/@mui/joy";
 import { Failure } from "../../../shared/commonTypes";
+import { match } from "ts-pattern";
 
 type SignUpData = {
   readonly displayName: string;
@@ -17,6 +18,7 @@ type SignUpData = {
   readonly showPassword: boolean;
   readonly savePassword: boolean;
   readonly failed: boolean;
+  readonly submitted: boolean;
   readonly usernameExists: (username: string) => Promise<boolean>;
   readonly submit: (response: SubmitResponse) => Promise<Failure>;
 }
@@ -28,7 +30,7 @@ type SignUpAction<K extends keyof SignUpData> = {
 
 type SignUpDataReducer = (data: SignUpData, action: SignUpAction<keyof SignUpData>) => SignUpData;
 
-function signUpAction<K extends keyof SignUpData>(id: K, value: SignUpData[K]): SignUpAction<K> {
+export function signUpAction<K extends keyof SignUpData>(id: K, value: SignUpData[K]): SignUpAction<K> {
   return { id, value };
 }
 
@@ -43,35 +45,35 @@ export const defaultSignUpData: Omit<SignUpData, "usernameExists" | "submit"> = 
   repeatPasswordValid: false,
   showPassword: false,
   savePassword: false,
+  submitted: false,
   failed: false
 };
 
 export const defaultSignUpDataReducer: SignUpDataReducer = (data, action) => {
   const { id, value } = action;
-  switch (id) {
-    case "displayName": return { ...data, displayName: value as string };
-    case "username": return { ...data, username: value as string };
-    case "usernameValid": return { ...data, usernameValid: value as boolean };
-    case "usernameError": return { ...data, usernameError: value as string };
-    case "password": return { ...data, password: value as string };
-    case "passwordValid": return { ...data, passwordValid: value as boolean };
-    case "repeatPassword": return { ...data, repeatPassword: value as string };
-    case "repeatPasswordValid": return { ...data, repeatPasswordValid: value as boolean };
-    case "showPassword": return { ...data, showPassword: value as boolean };
-    case "savePassword": return { ...data, savePassword: value as boolean };
-    case "failed": return { ...data, failed: value as boolean };
-    default: return data;
-  }
+  return match(id)
+    .with("displayName", () => ({ ...data, displayName: value as string }))
+    .with("username", () => ({ ...data, username: value as string }))
+    .with("usernameValid", () => ({ ...data, usernameValid: value as boolean }))
+    .with("usernameError", () => ({ ...data, usernameError: value as string }))
+    .with("password", () => ({ ...data, password: value as string }))
+    .with("passwordValid", () => ({ ...data, passwordValid: value as boolean }))
+    .with("repeatPassword", () => ({ ...data, repeatPassword: value as string }))
+    .with("repeatPasswordValid", () => ({ ...data, repeatPasswordValid: value as boolean }))
+    .with("showPassword", () => ({ ...data, showPassword: value as boolean }))
+    .with("savePassword", () => ({ ...data, savePassword: value as boolean }))
+    .with("submitted", () => ({ ...data, submitted: value as boolean }))
+    .with("failed", () => ({ ...data, failed: value as boolean }))
+    .otherwise(() => data);    
 }
 
 export const SignUpDataContext = createContext<SignUpData>(null);
 
 export const SignUpDataDispatchContext = createContext<Dispatch<SignUpAction<keyof SignUpData>>>(null);
 
-export function SignUpForm() {
-  const { displayName, username, usernameValid, usernameError, password, passwordValid, repeatPassword, repeatPasswordValid, showPassword, savePassword, failed, usernameExists, submit } = useContext(SignUpDataContext);
+export default function SignUpForm() {
+  const { displayName, username, usernameValid, usernameError, password, passwordValid, repeatPassword, repeatPasswordValid, showPassword, savePassword, failed, submitted, usernameExists, submit } = useContext(SignUpDataContext);
   const signUpDataDispatch = useContext(SignUpDataDispatchContext);
-  const [submitted, setSubmitted] = useState(false);
   const setDisplayName = (displayName: string) => signUpDataDispatch(signUpAction("displayName", displayName));
   const setUsername = (username: string) => signUpDataDispatch(signUpAction("username", username));
   const setUsernameValid = (usernameValid: boolean) => signUpDataDispatch(signUpAction("usernameValid", usernameValid));
@@ -83,6 +85,7 @@ export function SignUpForm() {
   const setShowPassword = (showPassword: boolean) => signUpDataDispatch(signUpAction("showPassword", showPassword));
   const setSavePassword = (savePassword: boolean) => signUpDataDispatch(signUpAction("savePassword", savePassword));
   const setFailed = (failed: boolean) => signUpDataDispatch(signUpAction("failed", failed));
+  const setSubmitted = (submitted: boolean) => signUpDataDispatch(signUpAction("submitted", submitted));
   const [warn, setWarn] = useState(false);
 
   useEffect(() => {

@@ -1,4 +1,5 @@
 import _ from "../node_modules/lodash";
+import { match } from "ts-pattern";
 import { SubmitResponse, SubmitProps, ControlledTextField } from "./Common";
 import React, { useState, useRef, useEffect, useReducer, useContext, createContext, Dispatch } from "../node_modules/react";
 import { FormControl, FormLabel, Stack, Switch, Button, CircularProgress, Modal, ModalClose, Sheet, Typography, Alert } from "../node_modules/@mui/joy";
@@ -17,6 +18,7 @@ type LogInData = {
   readonly tryCount: number;
   readonly tryAgain: number;
   readonly failed: boolean;
+  readonly submitted: boolean;
   readonly usernameExists: (username: string) => Promise<boolean>;
   readonly submit: (response: SubmitResponse) => Promise<Failure>;
 }
@@ -28,7 +30,7 @@ type LogInAction<K extends keyof LogInData> = {
 
 type LogInDataReducer = (data: LogInData, action: LogInAction<keyof LogInData>) => LogInData;
 
-function logInAction<K extends keyof LogInData>(id: K, value: LogInData[K]): LogInAction<K> {
+export function logInAction<K extends keyof LogInData>(id: K, value: LogInData[K]): LogInAction<K> {
   return { id, value };
 }
 
@@ -44,36 +46,36 @@ export const defaultLogInData: Omit<LogInData, "usernameExists" | "submit"> = {
   tryAgainIn: 0,
   tryCount: 0,
   tryAgain: 0,
+  submitted: false,
   failed: false
 };
 
 export const defaultLogInDataReducer: LogInDataReducer = (data, action) => {
   const { id, value } = action;
-  switch (id) {
-    case "username": return { ...data, username: value as string };
-    case "password": return { ...data, password: value as string };
-    case "savePassword": return { ...data, savePassword: value as boolean };
-    case "usernameValid": return { ...data, usernameValid: value as boolean };
-    case "usernameEntered": return { ...data, usernameEntered: value as boolean };
-    case "passwordValid": return { ...data, passwordValid: value as boolean };
-    case "lastIncorrectPasswords": return { ...data, lastIncorrectPasswords: value as [string, string][] };
-    case "showPassword": return { ...data, showPassword: value as boolean };
-    case "tryAgainIn": return { ...data, tryAgainIn: value as number };
-    case "tryCount": return { ...data, tryCount: value as number };
-    case "tryAgain": return { ...data, tryAgain: value as number };
-    case "failed": return { ...data, failed: value as boolean };
-    default: return data;
-  }
+  return match(id)
+    .with("username", () => ({ ...data, username: value as string }))
+    .with("password", () => ({ ...data, password: value as string }))
+    .with("savePassword", () => ({ ...data, savePassword: value as boolean }))
+    .with("usernameValid", () => ({ ...data, usernameValid: value as boolean }))
+    .with("usernameEntered", () => ({ ...data, usernameEntered: value as boolean }))
+    .with("passwordValid", () => ({ ...data, passwordValid: value as boolean }))
+    .with("lastIncorrectPasswords", () => ({ ...data, lastIncorrectPasswords: value as [string, string][] }))
+    .with("showPassword", () => ({ ...data, showPassword: value as boolean }))
+    .with("tryAgainIn", () => ({ ...data, tryAgainIn: value as number }))
+    .with("tryCount", () => ({ ...data, tryCount: value as number }))
+    .with("tryAgain", () => ({ ...data, tryAgain: value as number }))
+    .with("failed", () => ({ ...data, failed: value as boolean }))
+    .with("submitted", () => ({ ...data, submitted: value as boolean }))
+    .otherwise(() => data);
 }
 
 export const LogInDataContext = createContext<LogInData>(null);
 
 export const LogInDataDispatchContext = createContext<Dispatch<LogInAction<keyof LogInData>>>(null);
 
-export function LogInForm() {
-  const { username, usernameValid, usernameEntered, password, passwordValid, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, tryAgain, failed, usernameExists, submit } = useContext(LogInDataContext);
+export default function LogInForm() {
+  const { username, usernameValid, usernameEntered, password, passwordValid, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, tryAgain, failed, submitted, usernameExists, submit } = useContext(LogInDataContext);
   const logInDataDispatch = useContext(LogInDataDispatchContext);
-  const [submitted, setSubmitted] = useState(false);
   const setUsername = (username: string) => logInDataDispatch(logInAction("username", username));
   const setUsernameValid = (usernameValid: boolean) => logInDataDispatch(logInAction("usernameValid", usernameValid));
   const setUsernameEntered = (usernameEntered: boolean) => logInDataDispatch(logInAction("usernameEntered", usernameEntered));
@@ -83,6 +85,7 @@ export function LogInForm() {
   const setShowPassword = (showPassword: boolean) => logInDataDispatch(logInAction("showPassword", showPassword));
   const setSavePassword = (savePassword: boolean) => logInDataDispatch(logInAction("savePassword", savePassword));
   const setFailed = (failed: boolean) => logInDataDispatch(logInAction("failed", failed));
+  const setSubmitted = (submitted: boolean) => logInDataDispatch(logInAction("submitted", submitted));
   const setTryAgainIn = (tryAgainIn: number) => logInDataDispatch(logInAction("tryAgainIn", tryAgainIn));
   const setTryAgainRef = (tryAgain: number) => logInDataDispatch(logInAction("tryAgain", tryAgainIn));
   const setTryCount = (tryCount: number) => logInDataDispatch(logInAction("tryCount", tryCount));

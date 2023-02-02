@@ -1,8 +1,8 @@
 import _ from "../node_modules/lodash";
 import { SubmitResponse, Item, Spacer } from "./Common";
 import React, { useContext } from "../node_modules/react";
-import { LogInDataContext, LogInForm } from "./Login";
-import { SignUpDataContext, SignUpForm } from "./Signup";
+import LogInForm, { LogInDataContext } from "./Login";
+import SignUpForm, { SignUpDataContext } from "./Signup";
 import { Tabs, TabList, Tab, TabPanel, Grid } from "../node_modules/@mui/joy";
 import { Failure } from "../../../shared/commonTypes";
 

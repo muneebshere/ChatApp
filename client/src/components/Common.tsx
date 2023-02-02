@@ -2,7 +2,7 @@ import _ from "../node_modules/lodash";
 import React, { useState, useRef, useEffect } from "../node_modules/react";
 import { TextField, Sheet } from "../node_modules/@mui/joy";
 import { styled } from "../node_modules/@mui/joy/styles";
-import { Failure } from "../../commonTypes";
+import { Failure } from "../../../shared/commonTypes";
 
 export const Item = styled(Sheet)(({ theme }) => ({
   ...theme.typography.body2,

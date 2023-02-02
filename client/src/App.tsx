@@ -1,8 +1,8 @@
 import { SubmitResponse, Spacer } from "./components/Common";
 import LogInSignUp from "./components/LogInSignUp";
 import Main from "./components/Main";
-import { LogInDataContext, LogInDataDispatchContext, defaultLogInDataReducer, defaultLogInData } from "./components/Login";
-import { SignUpDataContext, SignUpDataDispatchContext, defaultSignUpDataReducer, defaultSignUpData } from "./components/Signup";
+import { LogInDataContext, LogInDataDispatchContext, defaultLogInDataReducer, defaultLogInData, logInAction } from "./components/Login";
+import { SignUpDataContext, SignUpDataDispatchContext, defaultSignUpDataReducer, defaultSignUpData, signUpAction } from "./components/Signup";
 import React, { useState, useRef, useEffect, useReducer } from "./node_modules/react";
 import { createRoot } from "./node_modules/react-dom/client";
 import { Container, Stack, CircularProgress } from "./node_modules/@mui/joy";
@@ -66,6 +66,12 @@ function App() {
       default: break;
     }
   }, [status, connected]);
+  useEffect(() => {
+    if (!connected) {
+      logInDataDispatch(logInAction("submitted", false));
+      signUpDataDispatch(signUpAction("submitted", false));
+    }
+  }, [connected]);
 
   function usernameExists(username: string) {
     return client.current.checkUsernameExists(username);
