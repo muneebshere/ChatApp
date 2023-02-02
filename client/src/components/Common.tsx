@@ -1,7 +1,7 @@
-import _ from "../node_modules/lodash";
-import React, { useState, useRef, useEffect } from "../node_modules/react";
-import { Sheet, FormControl, FormLabel, FormHelperText, Input } from "../node_modules/@mui/joy";
-import { styled } from "../node_modules/@mui/joy/styles";
+import _ from "lodash";
+import React, { useState, useRef, useEffect } from "react";
+import { Sheet, FormControl, FormLabel, FormHelperText, Input } from "@mui/joy";
+import { styled } from "@mui/joy/styles";
 import { Failure } from "../../../shared/commonTypes";
 
 export const Item = styled(Sheet)(({ theme }) => ({

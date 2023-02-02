@@ -1,6 +1,6 @@
-import React, { useState } from "../node_modules/react";
-import { Alert, Grid, LinearProgress, Stack, Typography } from "../node_modules/@mui/joy";
-import { ReportProblem } from "../node_modules/@mui/icons-material";
+import React, { useState } from "react";
+import { Alert, Grid, LinearProgress, Stack, Typography } from "@mui/joy";
+import { ReportProblem } from "@mui/icons-material";
 import { Item } from "./Common";
 import { ViewMessage, FocusContext } from "./MessageCard";
 import MessageList, { ListMessage } from "./MessageList";

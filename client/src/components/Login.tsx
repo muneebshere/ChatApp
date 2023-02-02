@@ -1,8 +1,8 @@
-import _ from "../node_modules/lodash";
+import _ from "lodash";
 import { match } from "ts-pattern";
 import { SubmitResponse, SubmitProps, ControlledTextField } from "./Common";
-import React, { useState, useRef, useEffect, useReducer, useContext, createContext, Dispatch } from "../node_modules/react";
-import { FormControl, FormLabel, Stack, Switch, Button, CircularProgress, Modal, ModalClose, Sheet, Typography, Alert } from "../node_modules/@mui/joy";
+import React, { useState, useRef, useEffect, useReducer, useContext, createContext, Dispatch } from "react";
+import { FormControl, FormLabel, Stack, Switch, Button, CircularProgress, Modal, ModalClose, Sheet, Typography, Alert } from "@mui/joy";
 import { CommonStrings, Failure } from "../../../shared/commonTypes";
 
 type LogInData = {

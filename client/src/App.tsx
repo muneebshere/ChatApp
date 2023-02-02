@@ -3,10 +3,10 @@ import LogInSignUp from "./components/LogInSignUp";
 import Main from "./components/Main";
 import { LogInDataContext, LogInDataDispatchContext, defaultLogInDataReducer, defaultLogInData, logInAction } from "./components/Login";
 import { SignUpDataContext, SignUpDataDispatchContext, defaultSignUpDataReducer, defaultSignUpData, signUpAction } from "./components/Signup";
-import React, { useState, useRef, useEffect, useReducer } from "./node_modules/react";
-import { createRoot } from "./node_modules/react-dom/client";
-import { Container, Stack, CircularProgress } from "./node_modules/@mui/joy";
-import { CssVarsProvider } from "./node_modules/@mui/joy/styles";
+import React, { useState, useRef, useEffect, useReducer } from "react";
+import { createRoot } from "react-dom/client";
+import { Container, Stack, CircularProgress } from "@mui/joy";
+import { CssVarsProvider } from "@mui/joy/styles";
 import { Status, Client } from "./client";
 
 const PORT = 8080;

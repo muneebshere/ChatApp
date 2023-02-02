@@ -1,7 +1,7 @@
-import axios, { Axios } from "./node_modules/axios";
-import { io, Socket } from "./node_modules/socket.io-client/";
+import axios, { Axios } from "axios";
+import { io, Socket } from "socket.io-client";
 import { Buffer } from "./node_modules/buffer";
-import { stringify } from "./node_modules/safe-stable-stringify";
+import { stringify } from "safe-stable-stringify";
 import { SessionCrypto } from "../../shared/sessionCrypto";
 import { X3DHUser } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";

@@ -1,9 +1,9 @@
-import _ from "../node_modules/lodash";
+import _ from "lodash";
 import { SubmitResponse, Item, Spacer } from "./Common";
-import React, { useContext } from "../node_modules/react";
+import React, { useContext } from "react";
 import LogInForm, { LogInDataContext } from "./Login";
 import SignUpForm, { SignUpDataContext } from "./Signup";
-import { Tabs, TabList, Tab, TabPanel, Grid } from "../node_modules/@mui/joy";
+import { Tabs, TabList, Tab, TabPanel, Grid } from "@mui/joy";
 import { Failure } from "../../../shared/commonTypes";
 
 type TabProps =  { currentTab: number, setCurrentTab: (currentTab: number) => void };

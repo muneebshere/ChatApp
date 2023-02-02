@@ -1,7 +1,7 @@
-import { Buffer } from "../node_modules/buffer";
-import BufferSerializer from "../node_modules/buffer-serializer";
-import * as crypto from "../../cryptoOperator";
-import { ExposedSignedPublicKey, SignedKeyPair, ExportedSignedKeyPair, ExportedSigningKeyPair, KeyBundle, EncryptedData, SignedEncryptedData, MessageHeader, Message, MessageRequestHeader, randomFunctions } from "../../commonTypes";
+import { Buffer } from "./node_modules/buffer";
+import BufferSerializer from "./node_modules/buffer-serializer";
+import * as crypto from "../../shared/cryptoOperator";
+import { ExposedSignedPublicKey, SignedKeyPair, ExportedSignedKeyPair, ExportedSigningKeyPair, KeyBundle, EncryptedData, SignedEncryptedData, MessageHeader, Message, MessageRequestHeader, randomFunctions } from "../../shared/commonTypes";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 const serializer = new BufferSerializer();
