@@ -60,8 +60,8 @@ export function ControlledTextField(args: ControlledTextFieldProps) {
   }
 
   return (
-    <FormControl>
-      <FormLabel>
+    <FormControl sx={{ justifyContent: "stretch" }}>
+      <FormLabel sx={{ flexGrow: 1, width: "100%" }}>
         <Input
           ref={ref} 
           variant={args.variant}
@@ -74,11 +74,12 @@ export function ControlledTextField(args: ControlledTextFieldProps) {
           onBlur={onBlur}
           onFocus={onFocus}
           onKeyDown={ (e) => onKey(e, "down") }
-          onKeyUp={ (e) => onKey(e, "up") }/>
+          onKeyUp={ (e) => onKey(e, "up") }
+          sx={{ width: "100%" }}/>
       </FormLabel>
       {(errorText() || args.helperText) &&
-      <FormHelperText sx={{ justifyItems: "flex-start", textAlign: "start" }}>{ errorText() ? args.errorMessage : args.helperText }
-        { errorText() ? args.errorMessage : args.helperText };
+      <FormHelperText sx={{ justifyItems: "flex-start", textAlign: "start", color: !args.valid && (args.forceInvalid || touched) ? "var(--joy-palette-danger-outlinedColor)" : "neutral" }}>
+        { errorText() ? args.errorMessage : args.helperText }
       </FormHelperText>}
     </FormControl>)
 }
