@@ -5,11 +5,19 @@ import { ReportProblem } from "@mui/icons-material";
 import { Item } from "./Common";
 import { chats } from "./prvChats";
 import ChatView from "./ChatView";
+import { useEffectOnce } from "usehooks-ts";
 
 export default function Main({ connected, displayName }: { connected: boolean, displayName: string }) {
   const [currentFocus, setCurrentFocus] = useState<string>(null);
   const [currentChat, setCurrentChat] = useState<number>(null);
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
+  
+  useEffectOnce(() => {
+    window.history.replaceState({ currentIndex: null }, "", "");
+    const popStateListener = (event: PopStateEvent) => setCurrentChat(event.state.currentIndex);
+    window.addEventListener("popstate", popStateListener);
+    return () => window.removeEventListener("popstate", popStateListener);
+  });
 
   const disconnectedAlert = (
     connected ||
@@ -30,6 +38,11 @@ export default function Main({ connected, displayName }: { connected: boolean, d
         </Stack>
       </Item>
     </Grid>);
+
+  function openChat(index: number) {
+    window.history.pushState({ currentIndex: index }, "", `#${chats[index].with}`);
+    setCurrentChat(index)
+  }
   return (
   <Grid container direction="column" sx={{ flexGrow: 1 }}>
     <React.Fragment>
@@ -53,7 +66,7 @@ export default function Main({ connected, displayName }: { connected: boolean, d
             {chats.map((c, i) =>
               <ListItem key={i}>
                 <ListItemButton 
-                  onClick={() => setCurrentChat(i)} 
+                  onClick={() => openChat(i)} 
                   selected={currentChat === i} 
                   sx={{ borderRadius: "10px" }}
                   variant={currentChat === i ? "soft" : "plain"}
