@@ -1,5 +1,5 @@
 import _ from "lodash";
-import react from "react";
+import React from "react";
 import { Card, List, ListItem, ListSubheader, Sheet, Tooltip, Typography } from "@mui/joy";
 import { DateTime } from "luxon";
 import MessageCard, { ViewMessage } from "./MessageCard";
@@ -8,12 +8,11 @@ export type ListMessage = {
   readonly id: string;
   readonly content: string;
   readonly timestamp: number;
-  readonly replyingTo?: { id: string, sentByMe: boolean, text: string };
+  readonly replyingTo?: { id: string, replyToOwn: boolean, text: string };
   readonly status: "read" | "delivered" | "sent" | "pending";
 }
 
 type MessageListProps = {
-  chatWith: string,
   messages: ListMessage[],
   repliedClicked: (id: string) => void
 }
@@ -34,7 +33,7 @@ function formatDate(date: string): string {
   return dt.toFormat("d/L/y");
 }
 
-function convertMessages(messages: ListMessage[], chatWith: string, repliedClicked: (id: string) => void): ViewMessage[] {
+function convertMessages(messages: ListMessage[], repliedClicked: (id: string) => void): ViewMessage[] {
   const result: ViewMessage[] = [];
   let lastByMe : boolean = null;
   for (const { id, status, replyingTo: replying, ...rest } of messages) { 
@@ -44,21 +43,20 @@ function convertMessages(messages: ListMessage[], chatWith: string, repliedClick
     const replyingTo = !replying
       ? null
       : (() => {
-      let { id, sentByMe, text } = replying;
+      let { id, replyToOwn, text } = replying;
       const click = () => repliedClicked(id);
-      const sender = sentByMe ? null : chatWith;
       text = truncateText(text);
-      return { text, sender, click }; })();
+      return { text, replyToOwn, click }; })();
     result.push({ id, status, replyingTo, first, ...rest });
   }
   return result;
 }
 
-export default function MessageList({ chatWith, messages, repliedClicked } : MessageListProps) {
+export default function MessageList({ messages, repliedClicked } : MessageListProps) {
   const convertedMessages = _.chain(messages)
     .orderBy((m) => m.timestamp, "asc")
     .groupBy((m) => DateTime.fromMillis(m.timestamp).toISODate())
-    .map((messages, date) => ({ date, messages: convertMessages(messages, chatWith, repliedClicked) }))
+    .map((messages, date) => ({ date, messages: convertMessages(messages, repliedClicked) }))
     .value();
 
   const dayCard = (date: string) => (  

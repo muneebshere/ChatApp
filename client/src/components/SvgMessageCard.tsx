@@ -4,8 +4,6 @@ import React, { useRef } from "react";
 import { useUpdateEffect } from "usehooks-ts";
 import styled from "@emotion/styled";
 
-type Size = { height: number, width: number };
-
 export type SvgMessageProps = {
   darken: boolean,
   darkenFinished: () => void,
