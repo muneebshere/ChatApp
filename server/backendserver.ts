@@ -13,7 +13,7 @@ import { Buffer } from "./node_modules/buffer";
 import { SessionCrypto } from "../shared/sessionCrypto";
 import * as crypto from "../shared/cryptoOperator";
 import { failure, Failure, CommonStrings, Username, AuthSetupKey, AuthInfo, RegisterNewUserRequest, InitiateAuthenticationResponse, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, PasswordDeriveInfo, UserAuthInfo, randomFunctions, SavedDetails, AuthSetupKeyData, NewUserData, ConcludeAuthenticationRequest, AuthChangeData } from "../shared/commonTypes";
-import BufferSerializer from "./node_modules/buffer-serializer";
+import BufferSerializer from "./custom_modules/buffer-serializer";
 import { MongoHandler, bufferReplaceForMongo } from "./MongoHandler";
 
 const serializer = new BufferSerializer();

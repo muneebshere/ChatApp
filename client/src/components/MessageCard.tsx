@@ -5,11 +5,12 @@ import { useUpdateEffect } from "usehooks-ts";
 import { Grid, Link, Sheet, Stack, Tooltip, Typography } from "@mui/joy";
 import { DoneSharp, DoneAllSharp, HourglassTop } from "@mui/icons-material";
 import { Item } from "./Common";
+import { ReactMarkdownOptions } from "react-markdown/lib/react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import twemoji from "../custom_modules/remark-twemoji";
 import { DateTime } from "luxon";
 import styled from "@emotion/styled";
-import { ReactMarkdownOptions } from "react-markdown/lib/react-markdown";
 import SvgMessageCard from "./SvgMessageCard";
 
 interface HTMLDivElementScroll extends HTMLDivElement {
@@ -97,7 +98,7 @@ export default function MessageCard({ message }: { message: ViewMessage}) {
               sx={{ maxWidth: "max-content", width: "fit-content", padding: 1.5, paddingBottom: 0.5, alignContent: "flex-start", textAlign: "start" }}>
                 {repliedMessage && repliedMessage}
               <Typography component="span" sx={{ width: "fit-content", maxWidth: "max-content" }}>
-                <StyledReactMarkdown className="react-markdown" children={content} remarkPlugins={[remarkGfm]}/>
+                <StyledReactMarkdown className="react-markdown" children={content} remarkPlugins={[remarkGfm, twemoji]}/>
               </Typography>
               <Tooltip 
                 title={DateTime.fromMillis(timestamp).toFormat("d LLLL, h:mm a")} 

@@ -34,11 +34,12 @@ export default function ChatView({ currentChat }: ChatViewProps) {
           <Stack direction="row" spacing={1} sx={{ flex: 0, flexBasis: "content", display: "flex", flexDirection: "row", flexWrap: "nowrap" }}>
             <Textarea 
               value={message}
+              color="success"
               placeholder="Type a message"
               minRows={1} 
               maxRows={5} 
               onChange={(event) => setMessage(event.target.value)}
-              sx={{ flexGrow: 1, flexBasis: "content" }}/>
+              sx={{ flexGrow: 1, flexBasis: "content", color: "black" }}/>
             <IconButton 
               variant="outlined"
               color="success" 

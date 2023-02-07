@@ -1,7 +1,7 @@
 import { SignedEncryptedData, randomFunctions } from "./commonTypes";
 import * as crypto from "./cryptoOperator";
 import { Buffer } from "./node_modules/buffer";
-import BufferSerializer from "./node_modules/buffer-serializer";
+import BufferSerializer from "./custom_modules/buffer-serializer";
 const serializer = new BufferSerializer();
 const serialize: (data: any) => Buffer = serializer.toBuffer.bind(serializer);
 function deserialize(buff: Buffer, offset = 0): any {

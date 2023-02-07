@@ -6,7 +6,7 @@ import { SessionCrypto } from "../../shared/sessionCrypto";
 import { X3DHUser } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
 import { CommonStrings, Failure, Username, AuthSetupKey, UserEncryptedData, RegisterNewUserRequest, InitiateAuthenticationResponse, ConcludeAuthenticationRequest, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, randomFunctions, failure, SavedDetails, PasswordEncryptedData, AuthSetupKeyData, NewUserData, AuthChangeData } from "../../shared/commonTypes";
-import BufferSerializer from "./node_modules/buffer-serializer";
+import BufferSerializer from "./custom_modules/buffer-serializer";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;
