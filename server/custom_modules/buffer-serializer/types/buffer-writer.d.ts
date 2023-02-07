@@ -1,4 +1,4 @@
-import { Buffer } from "../../buffer";
+import { Buffer } from "../../../node_modules/buffer";
 
 export default BufferWriter;
 declare class BufferWriter {

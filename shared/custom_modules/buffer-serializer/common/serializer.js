@@ -2,7 +2,7 @@
 
 const BufferReader = require("./buffer-reader");
 const BufferWriter = require("./buffer-writer");
-const { Buffer } = require('../../buffer/');
+const { Buffer } = require("../../../node_modules/buffer");
 
 /**
  * Serializer - turn things into Buffers

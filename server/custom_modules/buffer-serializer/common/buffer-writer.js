@@ -4,7 +4,7 @@
  * read specific types that mirror BufferReader.
  */
 
-const { Buffer } = require('../../buffer/');
+const { Buffer } = require("../../../node_modules/buffer");
 class BufferWriter {
     /**
      * Creates a new BufferWriter, which is essentially an array of

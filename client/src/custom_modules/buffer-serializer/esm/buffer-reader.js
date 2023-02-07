@@ -4,7 +4,7 @@
  * read specific types that mirror BufferWriter.
  */
 
-import { Buffer } from "../../buffer/";
+import { Buffer } from "../../../node_modules/buffer";
 
 class BufferReader {
     /**
