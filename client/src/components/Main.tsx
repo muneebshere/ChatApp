@@ -6,7 +6,6 @@ import { Item } from "./Common";
 import { chats } from "./prvChats";
 import ChatView from "./ChatView";
 import { useEffectOnce } from "usehooks-ts";
-import { SxProps } from "@mui/joy/styles/types";
 
 export default function Main({ connected, displayName }: { connected: boolean, displayName: string }) {
   const [currentFocus, setCurrentFocus] = useState<string>(null);
@@ -47,8 +46,6 @@ export default function Main({ connected, displayName }: { connected: boolean, d
     setCurrentChat(index);
   }
 
-  const fitOverflow: SxProps = { minHeight: 0, maxHeight: "100%", overflowX: "clip", overflowY: "auto" };
-
   return (
   <Grid container direction="column" sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column" }}>
     <React.Fragment>
@@ -67,7 +64,7 @@ export default function Main({ connected, displayName }: { connected: boolean, d
       sx={{ flex: 1, flexBasis: 0, minHeight: 0 }}>
       <Grid xs={12} xl={3} sx={{ minHeight: 0, maxHeight: "100%" }}>
         {(!belowXL || currentChat === null) &&
-        <Item sx={fitOverflow}>
+        <Item sx={{ minHeight: 0, maxHeight: "100%", overflowX: "clip", overflowY: "auto" }}>
           <List variant="plain" color="neutral">
             {chats.map((c, i) =>
               <ListItem key={i}>
@@ -85,7 +82,7 @@ export default function Main({ connected, displayName }: { connected: boolean, d
         </Item>}
       </Grid>
       <Grid xs={12} xl={9} sx={{ minHeight: 0, maxHeight: "100%" }}>
-        <Item sx={fitOverflow}>
+        <Item sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
           <ChatView currentChat={currentChat ? chats[currentChat] : null}/>
         </Item>
       </Grid>

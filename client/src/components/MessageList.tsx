@@ -69,33 +69,31 @@ export default function MessageList({ messages, repliedClicked } : MessageListPr
   </Card>);
   
   return (
-    <Sheet variant="plain">
-      <List>
-        {convertedMessages.map(({ date, messages }) => (
-          <ListItem nested key={date}>
-            <ListSubheader sticky sx={{ display: "flex", justifyContent: "center", backgroundColor: "transparent" }}>
-              { formatDate(date).search(/^\d{1,2}\/\d{1,2}\/\d{4}$/) === -1
-                ? 
-                <Tooltip 
-                  title={DateTime.fromISO(date).toFormat("d LLLL y")} 
-                  placement="right" 
-                  variant="outlined"
-                  size="sm"
-                  sx={{ backgroundColor: "#f8f7f5", borderColor: "rgba(237, 237, 237, 0.7)", boxShadow: "0px 0.5px 2px #e4e4e4" }}>
-                    { dayCard(date) }
-                </Tooltip>
-                : dayCard(date) }
-            </ListSubheader>
-            <List component="ol" sx={{ "--List-gap": 5 }}>
-              {messages.map((m) => (
-                <ListItem key={m.timestamp} sx={{ display: "flex", flexDirection: "row" }}>
-                  <MessageCard message={m}/>
-                </ListItem>
-              ))}
-            </List>
-          </ListItem>
-        ))}
-      </List>
-    </Sheet>
+    <List>
+      {convertedMessages.map(({ date, messages }) => (
+        <ListItem nested key={date}>
+          <ListSubheader sticky sx={{ display: "flex", justifyContent: "center", backgroundColor: "transparent" }}>
+            { formatDate(date).search(/^\d{1,2}\/\d{1,2}\/\d{4}$/) === -1
+              ? 
+              <Tooltip 
+                title={DateTime.fromISO(date).toFormat("d LLLL y")} 
+                placement="right" 
+                variant="outlined"
+                size="sm"
+                sx={{ backgroundColor: "#f8f7f5", borderColor: "rgba(237, 237, 237, 0.7)", boxShadow: "0px 0.5px 2px #e4e4e4" }}>
+                  { dayCard(date) }
+              </Tooltip>
+              : dayCard(date) }
+          </ListSubheader>
+          <List component="ol" sx={{ "--List-gap": 5 }}>
+            {messages.map((m) => (
+              <ListItem key={m.timestamp} sx={{ display: "flex", flexDirection: "row" }}>
+                <MessageCard message={m}/>
+              </ListItem>
+            ))}
+          </List>
+        </ListItem>
+      ))}
+    </List>
   )
 }
