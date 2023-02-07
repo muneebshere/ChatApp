@@ -1,5 +1,5 @@
 const visit = require("unist-util-visit");
-const twemoji = require("twemoji").default;
+const twemoji = require("../twemoji").default;
 
 // https://reactnativecafe.com/emojis-in-javascript/#Conclusion
 const EmojiRegExp = new RegExp(

@@ -9,6 +9,7 @@ import { ReactMarkdownOptions } from "react-markdown/lib/react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import twemoji from "../custom_modules/remark-twemoji";
+import rehypeRaw from "rehype-raw";
 import { DateTime } from "luxon";
 import styled from "@emotion/styled";
 import SvgMessageCard from "./SvgMessageCard";
@@ -18,6 +19,23 @@ interface HTMLDivElementScroll extends HTMLDivElement {
 }
 
 const StyledReactMarkdown = styled(ReactMarkdown as unknown as React.ComponentClass<ReactMarkdownOptions, {}>)`
+  img.emoji {
+    height: 22px;
+    width: 22px;
+    background-position:center;
+    background-repeat:no-repeat;
+    background-size:contain;
+    display:inline-block;
+    vertical-align:middle;
+    margin: 0px 1.5px;
+  }
+
+  span.onlyEmoji+img.emoji {
+    height: 66px;
+    width: 66px;
+    margin: 0px 1.5px 5px;
+  }
+
   & > p:last-child {
     padding-bottom: 0px;
     margin-bottom: 0px;
@@ -98,7 +116,11 @@ export default function MessageCard({ message }: { message: ViewMessage}) {
               sx={{ maxWidth: "max-content", width: "fit-content", padding: 1.5, paddingBottom: 0.5, alignContent: "flex-start", textAlign: "start" }}>
                 {repliedMessage && repliedMessage}
               <Typography component="span" sx={{ width: "fit-content", maxWidth: "max-content" }}>
-                <StyledReactMarkdown className="react-markdown" children={content} remarkPlugins={[remarkGfm, twemoji]}/>
+                <StyledReactMarkdown 
+                  className="react-markdown" 
+                  children={content} 
+                  remarkPlugins={[remarkGfm, twemoji]}
+                  rehypePlugins={[rehypeRaw]}/>
               </Typography>
               <Tooltip 
                 title={DateTime.fromMillis(timestamp).toFormat("d LLLL, h:mm a")} 
