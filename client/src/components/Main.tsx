@@ -6,6 +6,7 @@ import { Item } from "./Common";
 import { chats } from "./prvChats";
 import ChatView from "./ChatView";
 import { useEffectOnce } from "usehooks-ts";
+import { SxProps } from "@mui/joy/styles/types";
 
 export default function Main({ connected, displayName }: { connected: boolean, displayName: string }) {
   const [currentFocus, setCurrentFocus] = useState<string>(null);
@@ -13,7 +14,9 @@ export default function Main({ connected, displayName }: { connected: boolean, d
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   
   useEffectOnce(() => {
-    window.history.replaceState({ currentIndex: null }, "", "");
+    const currentIndex = window.history.state?.currentIndex ?? null;
+    window.history.replaceState({ currentIndex }, "", "");
+    setCurrentChat(currentIndex);
     const popStateListener = (event: PopStateEvent) => setCurrentChat(event.state.currentIndex);
     window.addEventListener("popstate", popStateListener);
     return () => window.removeEventListener("popstate", popStateListener);
@@ -21,7 +24,7 @@ export default function Main({ connected, displayName }: { connected: boolean, d
 
   const disconnectedAlert = (
     connected ||
-    <Grid xs={12} sx={{ justifyContent: "stretch", justifySelf: "center" }}>
+    <Grid xs={12} sx={{ flex: 0, flexBasis: "content" }}>
       <Item>
         <Stack direction="column" sx={{ justifyContent: "stretch", justifySelf: "center" }}>
           <Alert 
@@ -41,14 +44,17 @@ export default function Main({ connected, displayName }: { connected: boolean, d
 
   function openChat(index: number) {
     window.history.pushState({ currentIndex: index }, "", `#${chats[index].with}`);
-    setCurrentChat(index)
+    setCurrentChat(index);
   }
+
+  const fitOverflow: SxProps = { minHeight: 0, maxHeight: "100%", overflowX: "clip", overflowY: "auto" };
+
   return (
-  <Grid container direction="column" sx={{ flexGrow: 1 }}>
+  <Grid container direction="column" sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column" }}>
     <React.Fragment>
       {disconnectedAlert}
     </React.Fragment>
-    <Grid xs={12} sx={{ justifyContent: "center", justifySelf: "center" }}>
+    <Grid xs={12} sx={{ flex: 0, flexBasis: "content" }}>
       <Item>
         <Typography sx={{ textAlign: "center" }}>
           {displayName}
@@ -58,10 +64,10 @@ export default function Main({ connected, displayName }: { connected: boolean, d
     <Grid 
       container 
       xs={12} 
-      sx={{ justifyContent: "flex-end", alignSelf: "stretch", flexGrow: 1 }}>
-      <Grid xs={12} xl={3}>
+      sx={{ flex: 1, flexBasis: 0, minHeight: 0 }}>
+      <Grid xs={12} xl={3} sx={{ minHeight: 0, maxHeight: "100%" }}>
         {(!belowXL || currentChat === null) &&
-        <Item>
+        <Item sx={fitOverflow}>
           <List variant="plain" color="neutral">
             {chats.map((c, i) =>
               <ListItem key={i}>
@@ -78,8 +84,8 @@ export default function Main({ connected, displayName }: { connected: boolean, d
           </List>
         </Item>}
       </Grid>
-      <Grid xs={12} xl={9}>
-        <Item>
+      <Grid xs={12} xl={9} sx={{ minHeight: 0, maxHeight: "100%" }}>
+        <Item sx={fitOverflow}>
           <ChatView currentChat={currentChat ? chats[currentChat] : null}/>
         </Item>
       </Grid>

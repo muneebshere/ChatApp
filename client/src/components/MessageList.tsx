@@ -69,7 +69,7 @@ export default function MessageList({ messages, repliedClicked } : MessageListPr
   </Card>);
   
   return (
-    <Sheet variant="plain" sx={{ maxHeight: "90vh", overflowX: "clip", overflowY: "auto" }}>
+    <Sheet variant="plain">
       <List>
         {convertedMessages.map(({ date, messages }) => (
           <ListItem nested key={date}>

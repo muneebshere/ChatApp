@@ -92,7 +92,7 @@ function App() {
   
   return (
     <CssVarsProvider>
-      <Container maxWidth={false}>
+      <Container maxWidth={false} disableGutters={true} sx={{ height: "100vh", overflow: "clip", display: "flex", flexDirection: "column" }}>
         {(!connected && !signedIn) &&
         <React.Fragment>
           <Spacer units={2}/>

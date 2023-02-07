@@ -16,7 +16,7 @@ export default function ChatView({ currentChat }: ChatViewProps) {
   const [currentFocus, setCurrentFocus] = useState<string>(null);
 
   return (
-    currentChat
+    currentChat && currentChat.messages.length > 0
       ? (
         <SenderContext.Provider value={{ sender: currentChat.with }}>
           <FocusContext.Provider value={{ currentFocus, clearFocus: () => setCurrentFocus(null) }} >
