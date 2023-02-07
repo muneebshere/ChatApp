@@ -2,6 +2,8 @@
 /certificates/*
 !certificates/*.gitkeep
 */public/*.js
+*/public/*.ttf
+*/public/*.woff*
 **/.vscode/**
 *.env
 *prv*

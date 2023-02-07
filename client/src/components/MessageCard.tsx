@@ -8,11 +8,14 @@ import { Item } from "./Common";
 import { ReactMarkdownOptions } from "react-markdown/lib/react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import twemoji from "../custom_modules/remark-twemoji";
 import rehypeRaw from "rehype-raw";
+import rehypeKatex from "rehype-katex";
 import { DateTime } from "luxon";
 import styled from "@emotion/styled";
 import SvgMessageCard from "./SvgMessageCard";
+import "katex/dist/katex.min.css"
 
 interface HTMLDivElementScroll extends HTMLDivElement {
   scrollIntoViewIfNeeded(centerIfNeeded?: boolean): void;
@@ -119,8 +122,8 @@ export default function MessageCard({ message }: { message: ViewMessage}) {
                 <StyledReactMarkdown 
                   className="react-markdown" 
                   children={content} 
-                  remarkPlugins={[remarkGfm, twemoji]}
-                  rehypePlugins={[rehypeRaw]}/>
+                  remarkPlugins={[remarkGfm, remarkMath, twemoji]}
+                  rehypePlugins={[rehypeKatex, rehypeRaw]}/>
               </Typography>
               <Tooltip 
                 title={DateTime.fromMillis(timestamp).toFormat("d LLLL, h:mm a")} 
