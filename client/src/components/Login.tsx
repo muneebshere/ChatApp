@@ -1,8 +1,8 @@
 import _ from "lodash";
 import { match } from "ts-pattern";
-import { SubmitResponse, SubmitProps, ControlledTextField } from "./Common";
+import { SubmitResponse, SubmitProps, ControlledTextField, StyledSwitch } from "./Common";
 import React, { useState, useRef, useEffect, useReducer, useContext, createContext, Dispatch } from "react";
-import { FormControl, FormLabel, Stack, Switch, Button, CircularProgress, Modal, ModalClose, Sheet, Typography, Alert } from "@mui/joy";
+import { FormControl, FormLabel, Stack, Button, CircularProgress, Modal, ModalClose, Sheet, Typography, Alert } from "@mui/joy";
 import { CommonStrings, Failure } from "../../../shared/commonTypes";
 
 type LogInData = {
@@ -19,6 +19,7 @@ type LogInData = {
   readonly tryAgain: number;
   readonly failed: boolean;
   readonly submitted: boolean;
+  readonly warned: boolean;
   readonly usernameExists: (username: string) => Promise<boolean>;
   readonly userLoginPermitted: (username: string) => Promise<{ tries: number, allowsAt: number }>;
   readonly submit: (response: SubmitResponse) => Promise<Failure>;
@@ -30,6 +31,11 @@ type LogInAction<K extends keyof LogInData> = {
 }
 
 type LogInDataReducer = (data: LogInData, action: LogInAction<keyof LogInData>) => LogInData;
+
+type LogInContextType = {
+  logInData: LogInData,
+  logInDispatch: Dispatch<LogInAction<keyof LogInData>>;
+}
 
 export function logInAction<K extends keyof LogInData>(id: K, value: LogInData[K]): LogInAction<K> {
   return { id, value };
@@ -48,7 +54,8 @@ export const defaultLogInData: Omit<LogInData, "usernameExists" | "submit" | "us
   tryCount: 0,
   tryAgain: 0,
   submitted: false,
-  failed: false
+  failed: false,
+  warned: false
 };
 
 export const defaultLogInDataReducer: LogInDataReducer = (data, action) => {
@@ -67,30 +74,28 @@ export const defaultLogInDataReducer: LogInDataReducer = (data, action) => {
     .with("tryAgain", () => ({ ...data, tryAgain: value as number }))
     .with("failed", () => ({ ...data, failed: value as boolean }))
     .with("submitted", () => ({ ...data, submitted: value as boolean }))
+    .with("warned", () => ({ ...data, warned: value as boolean }))
     .otherwise(() => data);
 }
 
-export const LogInDataContext = createContext<LogInData>(null);
-
-export const LogInDataDispatchContext = createContext<Dispatch<LogInAction<keyof LogInData>>>(null);
+export const LogInContext = createContext<LogInContextType>(null);
 
 export default function LogInForm() {
-  const { username, usernameValid, usernameEntered, password, passwordValid, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, tryAgain, failed, submitted, usernameExists, userLoginPermitted, submit } = useContext(LogInDataContext);
-  const logInDataDispatch = useContext(LogInDataDispatchContext);
-  const setUsername = (username: string) => logInDataDispatch(logInAction("username", username));
-  const setUsernameValid = (usernameValid: boolean) => logInDataDispatch(logInAction("usernameValid", usernameValid));
-  const setUsernameEntered = (usernameEntered: boolean) => logInDataDispatch(logInAction("usernameEntered", usernameEntered));
-  const setPassword = (password: string) => logInDataDispatch(logInAction("password", password));
-  const setPasswordValid = (passwordValid: boolean) => logInDataDispatch(logInAction("passwordValid", passwordValid));
-  const setLastIncorrectPasswords = (lastIncorrectPasswords: [string, string][]) => logInDataDispatch(logInAction("lastIncorrectPasswords", lastIncorrectPasswords));
-  const setShowPassword = (showPassword: boolean) => logInDataDispatch(logInAction("showPassword", showPassword));
-  const setSavePassword = (savePassword: boolean) => logInDataDispatch(logInAction("savePassword", savePassword));
-  const setFailed = (failed: boolean) => logInDataDispatch(logInAction("failed", failed));
-  const setSubmitted = (submitted: boolean) => logInDataDispatch(logInAction("submitted", submitted));
-  const setTryAgainIn = (tryAgainIn: number) => logInDataDispatch(logInAction("tryAgainIn", tryAgainIn));
-  const setTryAgainRef = (tryAgain: number) => logInDataDispatch(logInAction("tryAgain", tryAgain));
-  const setTryCount = (tryCount: number) => logInDataDispatch(logInAction("tryCount", tryCount));
-  const [warn, setWarn] = useState(false);
+  const { logInData: { username, usernameValid, usernameEntered, password, passwordValid, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, tryAgain, failed, submitted, warned, usernameExists, userLoginPermitted, submit },  logInDispatch } = useContext(LogInContext);
+  const setUsername = (username: string) => logInDispatch(logInAction("username", username));
+  const setUsernameValid = (usernameValid: boolean) => logInDispatch(logInAction("usernameValid", usernameValid));
+  const setUsernameEntered = (usernameEntered: boolean) => logInDispatch(logInAction("usernameEntered", usernameEntered));
+  const setPassword = (password: string) => logInDispatch(logInAction("password", password));
+  const setPasswordValid = (passwordValid: boolean) => logInDispatch(logInAction("passwordValid", passwordValid));
+  const setLastIncorrectPasswords = (lastIncorrectPasswords: [string, string][]) => logInDispatch(logInAction("lastIncorrectPasswords", lastIncorrectPasswords));
+  const setShowPassword = (showPassword: boolean) => logInDispatch(logInAction("showPassword", showPassword));
+  const setSavePassword = (savePassword: boolean) => logInDispatch(logInAction("savePassword", savePassword));
+  const setFailed = (failed: boolean) => logInDispatch(logInAction("failed", failed));
+  const setSubmitted = (submitted: boolean) => logInDispatch(logInAction("submitted", submitted));
+  const setWarned = (warned: boolean) => logInDispatch(logInAction("warned", warned));
+  const setTryAgainIn = (tryAgainIn: number) => logInDispatch(logInAction("tryAgainIn", tryAgainIn));
+  const setTryAgainRef = (tryAgain: number) => logInDispatch(logInAction("tryAgain", tryAgain));
+  const setTryCount = (tryCount: number) => logInDispatch(logInAction("tryCount", tryCount));
   const tryAgainRef = useRef(0);
   tryAgainRef.current ??= tryAgain;
 
@@ -103,24 +108,17 @@ export default function LogInForm() {
     }
   }, [tryAgainIn]);
 
-  useEffect(() => {
-    if (savePassword) {
-      setWarn(true);
-    }
-  }, [savePassword])
-
-  useEffect(() => {
-    if (usernameEntered) {
-      userLoginPermitted(username).then((({ tries, allowsAt }) => {
-        if (tries) {
-          if (tries && allowsAt) {
-            setTryCount(tries);
-            setTryAgainIn(allowsAt - Date.now());
-          }
+  function onUsernameEntered() {
+    userLoginPermitted(username).then((({ tries, allowsAt }) => {
+      if (tries) {
+        if (tries && allowsAt) {
+          setTryCount(tries);
+          setTryAgainIn(allowsAt - Date.now());
         }
-      }))
-    }
-  }, [usernameEntered])
+      }
+      setUsernameEntered(true);
+    }));
+  }
 
   function validateUserName(username: string): void {
     usernameExists(username).then((exists) => setUsernameValid(exists)).catch(() => {});
@@ -174,7 +172,7 @@ export default function LogInForm() {
               }
             } }/>
           <Button variant="solid"
-            onClick={ () => setUsernameEntered(true) } 
+            onClick={onUsernameEntered} 
             disabled={ !usernameValid }>
               Next
           </Button>
@@ -198,14 +196,14 @@ export default function LogInForm() {
             onEnter={submitLocal}/>
           <FormControl orientation="horizontal">
             <FormLabel>Show Password</FormLabel>
-            <Switch checked={showPassword}
+            <StyledSwitch checked={showPassword}
               disabled={submitted}
               onChange={ (e) => setShowPassword(e.target.checked) } 
               color={showPassword ? "primary" : "neutral"}/>
           </FormControl>
           <FormControl orientation="horizontal">
             <FormLabel>Save password</FormLabel>
-            <Switch checked={savePassword} 
+            <StyledSwitch checked={savePassword} 
               disabled={submitted}
               onChange={ (e) => setSavePassword(e.target.checked) }
               color={savePassword ? "primary" : "neutral"}/>
@@ -232,8 +230,8 @@ export default function LogInForm() {
             </Button>
           </Stack>
           <Modal
-            open={warn}
-            onClose={() => setWarn(false)}
+            open={savePassword && !warned}
+            onClose={() => setWarned(true)}
             sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
             <Sheet
               variant="outlined"

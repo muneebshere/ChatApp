@@ -1,11 +1,11 @@
 import { SubmitResponse, Spacer } from "./components/Common";
 import LogInSignUp from "./components/LogInSignUp";
 import Main from "./components/Main";
-import { LogInDataContext, LogInDataDispatchContext, defaultLogInDataReducer, defaultLogInData, logInAction } from "./components/Login";
-import { SignUpDataContext, SignUpDataDispatchContext, defaultSignUpDataReducer, defaultSignUpData, signUpAction } from "./components/Signup";
+import { LogInContext, defaultLogInDataReducer, defaultLogInData, logInAction } from "./components/Login";
+import { SignUpContext, defaultSignUpDataReducer, defaultSignUpData, signUpAction } from "./components/Signup";
 import React, { useState, useRef, useEffect, useReducer } from "react";
 import { createRoot } from "react-dom/client";
-import { Container, Stack, CircularProgress } from "@mui/joy";
+import { Container, CircularProgress } from "@mui/joy";
 import { CssVarsProvider } from "@mui/joy/styles";
 import { Status, Client } from "./client";
 
@@ -14,8 +14,8 @@ const PORT = 8080;
 createRoot(document.getElementById("root")).render(<App/>);
 
 function App() {
-  const [logInData, logInDataDispatch] = useReducer(defaultLogInDataReducer, { ...defaultLogInData, usernameExists, userLoginPermitted, submit: logIn });
-  const [signUpData, signUpDataDispatch] = useReducer(defaultSignUpDataReducer, { ...defaultSignUpData, usernameExists, submit: signUp });
+  const [logInData, logInDispatch] = useReducer(defaultLogInDataReducer, { ...defaultLogInData, usernameExists, userLoginPermitted, submit: logIn });
+  const [signUpData, signUpDispatch] = useReducer(defaultSignUpDataReducer, { ...defaultSignUpData, usernameExists, submit: signUp });
   const [status, setStatus] = useState<Status>(null);
   const [connected, setConnected] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
@@ -25,6 +25,7 @@ function App() {
   const client = useRef(new Client(`${protocol}//${hostname}:${PORT}`, setStatus));
   useEffect(() => { client.current.establishSession(); }, []);
   useEffect(() => window.addEventListener("beforeunload", client.current.terminateCurrentSession.bind(client.current), { capture: true, once: true }), []);
+  
   useEffect(() => {
     switch (status) {
       case Status.Disconnected: 
@@ -66,10 +67,11 @@ function App() {
       default: break;
     }
   }, [status, connected]);
+
   useEffect(() => {
     if (!connected) {
-      logInDataDispatch(logInAction("submitted", false));
-      signUpDataDispatch(signUpAction("submitted", false));
+      logInDispatch(logInAction("submitted", false));
+      signUpDispatch(signUpAction("submitted", false));
     }
   }, [connected]);
 
@@ -101,15 +103,11 @@ function App() {
           </div>
         </React.Fragment>}
         {connected && !signedIn &&
-          <LogInDataContext.Provider value={logInData}>
-            <LogInDataDispatchContext.Provider value={logInDataDispatch}>
-              <SignUpDataContext.Provider value={signUpData}>
-                <SignUpDataDispatchContext.Provider value={signUpDataDispatch}>
-                  <LogInSignUp currentTab={currentTab} setCurrentTab={setCurrentTab}/>
-                </SignUpDataDispatchContext.Provider>
-              </SignUpDataContext.Provider>
-            </LogInDataDispatchContext.Provider>
-          </LogInDataContext.Provider>
+          <LogInContext.Provider value={{ logInData, logInDispatch }}>
+            <SignUpContext.Provider value={{ signUpData, signUpDispatch }}>
+              <LogInSignUp currentTab={currentTab} setCurrentTab={setCurrentTab}/>
+            </SignUpContext.Provider>
+          </LogInContext.Provider>
         }
         {signedIn &&
         <Main connected={connected} displayName={displayName}/>

@@ -1,22 +1,24 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { Alert, Grid, LinearProgress, List, ListItem, ListItemButton, Stack, Theme, Typography } from "@mui/joy";
 import { useMediaQuery } from "@mui/material";
 import { ReportProblem } from "@mui/icons-material";
-import { Item } from "./Common";
+import { Item, StyledScrollbar } from "./Common";
 import { chats } from "./prvChats";
 import ChatView from "./ChatView";
 import { useEffectOnce } from "usehooks-ts";
 
 export default function Main({ connected, displayName }: { connected: boolean, displayName: string }) {
   const [currentFocus, setCurrentFocus] = useState<string>(null);
-  const [currentChat, setCurrentChat] = useState<number>(null);
+  const [currentChatIndex, setCurrentChatIndex] = useState<number>(null);
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
+
+  const currentChat = currentChatIndex ? chats[currentChatIndex] : null;
   
   useEffectOnce(() => {
     const currentIndex = window.history.state?.currentIndex ?? null;
     window.history.replaceState({ currentIndex }, "", "");
-    setCurrentChat(currentIndex);
-    const popStateListener = (event: PopStateEvent) => setCurrentChat(event.state.currentIndex);
+    setCurrentChatIndex(currentIndex);
+    const popStateListener = (event: PopStateEvent) => setCurrentChatIndex(event.state?.currentIndex);
     window.addEventListener("popstate", popStateListener);
     return () => window.removeEventListener("popstate", popStateListener);
   });
@@ -43,7 +45,7 @@ export default function Main({ connected, displayName }: { connected: boolean, d
 
   function openChat(index: number) {
     window.history.pushState({ currentIndex: index }, "", `#${chats[index].with}`);
-    setCurrentChat(index);
+    setCurrentChatIndex(index);
   }
 
   return (
@@ -62,28 +64,28 @@ export default function Main({ connected, displayName }: { connected: boolean, d
       container 
       xs={12} 
       sx={{ flex: 1, flexBasis: 0, minHeight: 0 }}>
-      <Grid xs={12} xl={3} sx={{ minHeight: 0, maxHeight: "100%" }}>
-        {(!belowXL || currentChat === null) &&
-        <Item sx={{ minHeight: 0, maxHeight: "100%", overflowX: "clip", overflowY: "auto" }}>
-          <List variant="plain" color="neutral">
-            {chats.map((c, i) =>
+      {(!belowXL || currentChatIndex === null) &&
+      <Grid xs={12} xl={3} sx={{ minHeight: 0, maxHeight: "100%", display: "flex", flexDirection: "column" }}>
+          <StyledScrollbar>
+            <List variant="plain" color="neutral">
+              {chats.map((c, i) =>
               <ListItem key={i}>
                 <ListItemButton 
                   onClick={() => openChat(i)} 
-                  selected={currentChat === i} 
+                  selected={currentChatIndex === i} 
                   sx={{ borderRadius: "10px" }}
-                  variant={currentChat === i ? "soft" : "plain"}
+                  variant={currentChatIndex === i ? "soft" : "plain"}
                   color="neutral">
                   {c.with}
                 </ListItemButton>
-              </ListItem>
-            )}
-          </List>
-        </Item>}
-      </Grid>
+              </ListItem>)}
+            </List>            
+          </StyledScrollbar>
+      </Grid>}
       <Grid xs={12} xl={9} sx={{ minHeight: 0, maxHeight: "100%" }}>
         <Item sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
-          <ChatView currentChat={currentChat ? chats[currentChat] : null}/>
+          <ChatView 
+            currentChat={currentChat}/>
         </Item>
       </Grid>
     </Grid>

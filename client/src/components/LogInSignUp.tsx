@@ -1,16 +1,16 @@
 import _ from "lodash";
 import { SubmitResponse, Item, Spacer } from "./Common";
 import React, { useContext } from "react";
-import LogInForm, { LogInDataContext } from "./Login";
-import SignUpForm, { SignUpDataContext } from "./Signup";
+import LogInForm, { LogInContext } from "./Login";
+import SignUpForm, { SignUpContext } from "./Signup";
 import { Tabs, TabList, Tab, TabPanel, Grid } from "@mui/joy";
 import { Failure } from "../../../shared/commonTypes";
 
 type TabProps =  { currentTab: number, setCurrentTab: (currentTab: number) => void };
 
 export default function LogInSignUp({ currentTab, setCurrentTab }: TabProps) {
-  const { submitted: logInSubmitted } = useContext(LogInDataContext);
-  const { submitted: signUpSubmitted } = useContext(SignUpDataContext);
+  const { logInData: { submitted: logInSubmitted } } = useContext(LogInContext);
+  const { signUpData: { submitted: signUpSubmitted } } = useContext(SignUpContext);
 
   return (
     <React.Fragment>

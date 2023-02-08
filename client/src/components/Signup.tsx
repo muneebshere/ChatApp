@@ -1,8 +1,8 @@
 import _ from "lodash";
-import { SubmitProps, ControlledTextField, SubmitResponse } from "./Common";
+import { SubmitProps, ControlledTextField, SubmitResponse, StyledSwitch } from "./Common";
 import React, { useState, useEffect, createContext, useReducer, Dispatch, useContext } from "react";
 import {  } from "@mui/material";
-import { FormControl, FormLabel, Stack, Switch, Button, CircularProgress, Modal, ModalClose, Sheet, Typography, Alert } from "@mui/joy";
+import { FormControl, FormLabel, Stack, Button, CircularProgress, Modal, ModalClose, Sheet, Typography, Alert } from "@mui/joy";
 import { Failure } from "../../../shared/commonTypes";
 import { match } from "ts-pattern";
 
@@ -19,6 +19,7 @@ type SignUpData = {
   readonly savePassword: boolean;
   readonly failed: boolean;
   readonly submitted: boolean;
+  readonly warned: boolean;
   readonly usernameExists: (username: string) => Promise<boolean>;
   readonly submit: (response: SubmitResponse) => Promise<Failure>;
 }
@@ -29,6 +30,11 @@ type SignUpAction<K extends keyof SignUpData> = {
 }
 
 type SignUpDataReducer = (data: SignUpData, action: SignUpAction<keyof SignUpData>) => SignUpData;
+
+type SignUpContextType = {
+  signUpData: SignUpData,
+  signUpDispatch: Dispatch<SignUpAction<keyof SignUpData>>;
+}
 
 export function signUpAction<K extends keyof SignUpData>(id: K, value: SignUpData[K]): SignUpAction<K> {
   return { id, value };
@@ -46,7 +52,8 @@ export const defaultSignUpData: Omit<SignUpData, "usernameExists" | "submit"> = 
   showPassword: false,
   savePassword: false,
   submitted: false,
-  failed: false
+  failed: false,
+  warned: false
 };
 
 export const defaultSignUpDataReducer: SignUpDataReducer = (data, action) => {
@@ -64,35 +71,27 @@ export const defaultSignUpDataReducer: SignUpDataReducer = (data, action) => {
     .with("savePassword", () => ({ ...data, savePassword: value as boolean }))
     .with("submitted", () => ({ ...data, submitted: value as boolean }))
     .with("failed", () => ({ ...data, failed: value as boolean }))
+    .with("warned", () => ({ ...data, warned: value as boolean }))
     .otherwise(() => data);    
 }
 
-export const SignUpDataContext = createContext<SignUpData>(null);
-
-export const SignUpDataDispatchContext = createContext<Dispatch<SignUpAction<keyof SignUpData>>>(null);
+export const SignUpContext = createContext<SignUpContextType>(null);
 
 export default function SignUpForm() {
-  const { displayName, username, usernameValid, usernameError, password, passwordValid, repeatPassword, repeatPasswordValid, showPassword, savePassword, failed, submitted, usernameExists, submit } = useContext(SignUpDataContext);
-  const signUpDataDispatch = useContext(SignUpDataDispatchContext);
-  const setDisplayName = (displayName: string) => signUpDataDispatch(signUpAction("displayName", displayName));
-  const setUsername = (username: string) => signUpDataDispatch(signUpAction("username", username));
-  const setUsernameValid = (usernameValid: boolean) => signUpDataDispatch(signUpAction("usernameValid", usernameValid));
-  const setUsernameError = (usernameError: string) => signUpDataDispatch(signUpAction("usernameError", usernameError));
-  const setPassword = (password: string) => signUpDataDispatch(signUpAction("password", password));
-  const setPasswordValid = (passwordValid: boolean) => signUpDataDispatch(signUpAction("passwordValid", passwordValid));
-  const setRepeatPassword = (repeatPassword: string) => signUpDataDispatch(signUpAction("repeatPassword", repeatPassword));
-  const setRepeatPasswordValid = (repeatPasswordValid: boolean) => signUpDataDispatch(signUpAction("repeatPasswordValid", repeatPasswordValid));
-  const setShowPassword = (showPassword: boolean) => signUpDataDispatch(signUpAction("showPassword", showPassword));
-  const setSavePassword = (savePassword: boolean) => signUpDataDispatch(signUpAction("savePassword", savePassword));
-  const setFailed = (failed: boolean) => signUpDataDispatch(signUpAction("failed", failed));
-  const setSubmitted = (submitted: boolean) => signUpDataDispatch(signUpAction("submitted", submitted));
-  const [warn, setWarn] = useState(false);
-
-  useEffect(() => {
-    if (savePassword) {
-      setWarn(true);
-    }
-  }, [savePassword])
+  const { signUpData: { displayName, username, usernameValid, usernameError, password, passwordValid, repeatPassword, repeatPasswordValid, showPassword, savePassword, failed, submitted, warned, usernameExists, submit }, signUpDispatch } = useContext(SignUpContext);
+  const setDisplayName = (displayName: string) => signUpDispatch(signUpAction("displayName", displayName));
+  const setUsername = (username: string) => signUpDispatch(signUpAction("username", username));
+  const setUsernameValid = (usernameValid: boolean) => signUpDispatch(signUpAction("usernameValid", usernameValid));
+  const setUsernameError = (usernameError: string) => signUpDispatch(signUpAction("usernameError", usernameError));
+  const setPassword = (password: string) => signUpDispatch(signUpAction("password", password));
+  const setPasswordValid = (passwordValid: boolean) => signUpDispatch(signUpAction("passwordValid", passwordValid));
+  const setRepeatPassword = (repeatPassword: string) => signUpDispatch(signUpAction("repeatPassword", repeatPassword));
+  const setRepeatPasswordValid = (repeatPasswordValid: boolean) => signUpDispatch(signUpAction("repeatPasswordValid", repeatPasswordValid));
+  const setShowPassword = (showPassword: boolean) => signUpDispatch(signUpAction("showPassword", showPassword));
+  const setSavePassword = (savePassword: boolean) => signUpDispatch(signUpAction("savePassword", savePassword));
+  const setFailed = (failed: boolean) => signUpDispatch(signUpAction("failed", failed));
+  const setSubmitted = (submitted: boolean) => signUpDispatch(signUpAction("submitted", submitted));
+  const setWarned = (warned: boolean) => signUpDispatch(signUpAction("warned", warned));
 
   function validateUserName(username: string): void {
     if (username.match(/^[a-z][a-z0-9_]{2,14}$/) === null) {
@@ -187,14 +186,14 @@ export default function SignUpForm() {
           onEnter={submitLocal}/>
         <FormControl orientation="horizontal">
           <FormLabel>Show Password</FormLabel>
-          <Switch checked={showPassword} 
+          <StyledSwitch checked={showPassword} 
             disabled={submitted}
             onChange={ (e) => setShowPassword(e.target.checked) } 
             color={showPassword ? "primary" : "neutral"}/>
         </FormControl>
         <FormControl orientation="horizontal">
           <FormLabel>Save password</FormLabel>
-          <Switch checked={savePassword} 
+          <StyledSwitch checked={savePassword} 
             disabled={submitted}
             onChange={ (e) => setSavePassword(e.target.checked) }
             color={savePassword ? "primary" : "neutral"}/>
@@ -217,8 +216,8 @@ export default function SignUpForm() {
         </Alert>}
       </Stack>
       <Modal
-            open={warn}
-            onClose={() => setWarn(false)}
+            open={savePassword && !warned}
+            onClose={() => setWarned(true)}
             sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
             <Sheet
               variant="outlined"

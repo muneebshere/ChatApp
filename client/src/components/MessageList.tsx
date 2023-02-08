@@ -1,8 +1,28 @@
 import _ from "lodash";
-import React from "react";
-import { Card, List, ListItem, ListSubheader, Sheet, Tooltip, Typography } from "@mui/joy";
+import React, { useState, useLayoutEffect, useRef } from "react";
+import { Card, CircularProgress, List, ListItem, ListSubheader, Tooltip, Typography } from "@mui/joy";
 import { DateTime } from "luxon";
 import MessageCard, { ViewMessage } from "./MessageCard";
+import styled from "@emotion/styled";
+import { KeyboardDoubleArrowDownOutlined } from "@mui/icons-material";
+import { StyledScrollbar } from "./Common";
+
+const ScrollDownButton = styled.div`
+  display: grid;
+  position: fixed;
+  bottom: 100px;
+  right: 35px;
+  height: 45px;
+  width: 45px;
+  z-index: 10;
+  background-color: rgba(244, 244, 244, 0.8);
+  border: 1px solid #d2d2d2;
+  border-radius: 10px;
+  box-shadow: 0px 0px 4px #dadada;
+
+  :hover {
+    filter: brightness(0.9);
+  }`;
 
 export type ListMessage = {
   readonly id: string;
@@ -53,6 +73,28 @@ function convertMessages(messages: ListMessage[], repliedClicked: (id: string) =
 }
 
 export default function MessageList({ messages, repliedClicked } : MessageListProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [showScrollDown, setShowScrollDown] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  const scrollHandler = (event: Event) => {
+    const scrollbar = event.target as HTMLDivElement;
+    const scrollFinished = scrollbar.scrollTop >= scrollbar.scrollHeight - scrollbar.clientHeight - 1;
+    setShowScrollDown(!scrollFinished);
+    if (scrollFinished && !scrolled) {
+      setScrolled(true);
+    }
+  }
+  const debouncedScrollHandler = _.debounce(scrollHandler, 50, { trailing: true, maxWait: 50 });
+
+  useLayoutEffect(() => {
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    scrollRef.current.addEventListener("scroll", debouncedScrollHandler);
+    return () => {
+      debouncedScrollHandler.cancel();
+      scrollRef.current.removeEventListener("scroll", debouncedScrollHandler);
+    }
+  }, []);
+
   const convertedMessages = _.chain(messages)
     .orderBy((m) => m.timestamp, "asc")
     .groupBy((m) => DateTime.fromMillis(m.timestamp).toISODate())
@@ -69,31 +111,47 @@ export default function MessageList({ messages, repliedClicked } : MessageListPr
   </Card>);
   
   return (
-    <List>
-      {convertedMessages.map(({ date, messages }) => (
-        <ListItem nested key={date}>
-          <ListSubheader sticky sx={{ display: "flex", justifyContent: "center", backgroundColor: "transparent" }}>
-            { formatDate(date).search(/^\d{1,2}\/\d{1,2}\/\d{4}$/) === -1
-              ? 
-              <Tooltip 
-                title={DateTime.fromISO(date).toFormat("d LLLL y")} 
-                placement="right" 
-                variant="outlined"
-                size="sm"
-                sx={{ backgroundColor: "#f8f7f5", borderColor: "rgba(237, 237, 237, 0.7)", boxShadow: "0px 0.5px 2px #e4e4e4" }}>
-                  { dayCard(date) }
-              </Tooltip>
-              : dayCard(date) }
-          </ListSubheader>
-          <List component="ol" sx={{ "--List-gap": 5 }}>
-            {messages.map((m) => (
-              <ListItem key={m.timestamp} sx={{ display: "flex", flexDirection: "row" }}>
-                <MessageCard message={m}/>
-              </ListItem>
-            ))}
-          </List>
-        </ListItem>
-      ))}
-    </List>
+    <StyledScrollbar ref={scrollRef} style={{ visibility: scrolled ? "visible" : "hidden" }}>
+      <div 
+        style={{ display: "flex", 
+                justifyContent: "center",
+                zIndex: 10, 
+                position: "absolute", 
+                top: "20px",
+                left: "50%",
+                visibility: scrolled ? "collapse" : "visible" }}>
+        <CircularProgress size="md" variant="soft" color="success"/>
+      </div>
+      <List>
+        {convertedMessages.map(({ date, messages }) => (
+          <ListItem nested key={date}>
+            <ListSubheader sticky sx={{ display: "flex", justifyContent: "center", backgroundColor: "transparent" }}>
+              { formatDate(date).search(/^\d{1,2}\/\d{1,2}\/\d{4}$/) === -1
+                ? 
+                <Tooltip 
+                  title={DateTime.fromISO(date).toFormat("d LLLL y")} 
+                  placement="right" 
+                  variant="outlined"
+                  size="sm"
+                  sx={{ backgroundColor: "#f8f7f5", borderColor: "rgba(237, 237, 237, 0.7)", boxShadow: "0px 0.5px 2px #e4e4e4" }}>
+                    { dayCard(date) }
+                </Tooltip>
+                : dayCard(date) }
+            </ListSubheader>
+            <List component="ol" sx={{ "--List-gap": 5 }}>
+              {messages.map((m) => (
+                <ListItem key={m.timestamp} sx={{ display: "flex", flexDirection: "row" }}>
+                  <MessageCard message={m}/>
+                </ListItem>
+              ))}
+            </List>
+          </ListItem>
+        ))}
+      </List>
+      {showScrollDown &&
+        <ScrollDownButton onClick={ () => scrollRef.current.scrollTop = scrollRef.current.scrollHeight }>
+          <KeyboardDoubleArrowDownOutlined sx={{ color: "#6e6e6e", fontSize: "2rem", placeSelf: "center" }}/>
+        </ScrollDownButton>}
+    </StyledScrollbar>
   )
 }
