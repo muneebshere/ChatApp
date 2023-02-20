@@ -3,12 +3,11 @@ import { Alert, Grid, LinearProgress, List, ListItem, ListItemButton, Stack, The
 import { useMediaQuery } from "@mui/material";
 import { ReportProblem } from "@mui/icons-material";
 import { Item, StyledScrollbar } from "./Common";
-import { chats } from "./prvChats";
 import ChatView from "./ChatView";
 import { useEffectOnce } from "usehooks-ts";
+import { chats } from "./prvChats";
 
 export default function Main({ connected, displayName }: { connected: boolean, displayName: string }) {
-  const [currentFocus, setCurrentFocus] = useState<string>(null);
   const [currentChatIndex, setCurrentChatIndex] = useState<number>(null);
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
 
@@ -44,7 +43,7 @@ export default function Main({ connected, displayName }: { connected: boolean, d
     </Grid>);
 
   function openChat(index: number) {
-    window.history.pushState({ currentIndex: index }, "", `#${chats[index].with}`);
+    window.history.pushState({ currentIndex: index }, "", `#${chats[index].chatWith}`);
     setCurrentChatIndex(index);
   }
 
@@ -76,7 +75,7 @@ export default function Main({ connected, displayName }: { connected: boolean, d
                   sx={{ borderRadius: "10px" }}
                   variant={currentChatIndex === i ? "soft" : "plain"}
                   color="neutral">
-                  {c.with}
+                  {c.chatWith}
                 </ListItemButton>
               </ListItem>)}
             </List>            
@@ -85,7 +84,8 @@ export default function Main({ connected, displayName }: { connected: boolean, d
       <Grid xs={12} xl={9} sx={{ minHeight: 0, maxHeight: "100%" }}>
         <Item sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
           <ChatView 
-            currentChat={currentChat}/>
+            chatWith={currentChat?.chatWith ?? ""}
+            length={currentChat?.messages.length ?? 0}/>
         </Item>
       </Grid>
     </Grid>

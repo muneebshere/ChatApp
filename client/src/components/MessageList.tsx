@@ -1,11 +1,14 @@
 import _ from "lodash";
-import React, { useState, useLayoutEffect, useRef } from "react";
+import React, { useState, useLayoutEffect, useRef, useContext, memo } from "react";
 import { Card, CircularProgress, List, ListItem, ListSubheader, Tooltip, Typography } from "@mui/joy";
 import { DateTime } from "luxon";
-import MessageCard, { ViewMessage } from "./MessageCard";
+import { MessageCard, ViewMessage, ChatContext } from "./MessageCard";
 import styled from "@emotion/styled";
 import { KeyboardDoubleArrowDownOutlined } from "@mui/icons-material";
 import { StyledScrollbar } from "./Common";
+import { chats } from "./prvChats";
+
+const chatMap = new Map(chats.map(({chatWith, messages}) => ([chatWith, messages])));
 
 const ScrollDownButton = styled.div`
   display: grid;
@@ -33,7 +36,6 @@ export type ListMessage = {
 }
 
 type MessageListProps = {
-  messages: ListMessage[],
   repliedClicked: (id: string) => void
 }
 
@@ -72,7 +74,10 @@ function convertMessages(messages: ListMessage[], repliedClicked: (id: string) =
   return result;
 }
 
-export default function MessageList({ messages, repliedClicked } : MessageListProps) {
+export const MessageList = memo(NonMemoMessageList, () => true);
+
+function NonMemoMessageList({ repliedClicked } : MessageListProps) {
+  const { chatWith } = useContext(ChatContext);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showScrollDown, setShowScrollDown] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -95,7 +100,7 @@ export default function MessageList({ messages, repliedClicked } : MessageListPr
     }
   }, []);
 
-  const convertedMessages = _.chain(messages)
+  const convertedMessages = _.chain(chatMap.get(chatWith))
     .orderBy((m) => m.timestamp, "asc")
     .groupBy((m) => DateTime.fromMillis(m.timestamp).toISODate())
     .map((messages, date) => ({ date, messages: convertMessages(messages, repliedClicked) }))
@@ -111,7 +116,7 @@ export default function MessageList({ messages, repliedClicked } : MessageListPr
   </Card>);
   
   return (
-    <StyledScrollbar ref={scrollRef} style={{ visibility: scrolled ? "visible" : "hidden" }}>
+    <StyledScrollbar ref={scrollRef} style={{ visibility: "visible" }}>
       <div 
         style={{ display: "flex", 
                 justifyContent: "center",
@@ -119,7 +124,7 @@ export default function MessageList({ messages, repliedClicked } : MessageListPr
                 position: "absolute", 
                 top: "20px",
                 left: "50%",
-                visibility: scrolled ? "collapse" : "visible" }}>
+                visibility: "collapse" }}>
         <CircularProgress size="md" variant="soft" color="success"/>
       </div>
       <List>

@@ -1,5 +1,5 @@
 import _ from "lodash";
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, memo } from "react";
 import { Sheet, FormControl, FormLabel, FormHelperText, Input, Switch } from "@mui/joy";
 import { styled as joyStyled } from "@mui/joy/styles";
 import styled from "@emotion/styled";
@@ -18,7 +18,6 @@ export const StyledSwitch = styled(Switch)`
     top: 0px;
     left: 0px;
   }`;
-  
 
 export const StyledScrollbar = styled(Item)`
   flex: 1; 
@@ -26,7 +25,7 @@ export const StyledScrollbar = styled(Item)`
   max-height: 100%; 
   overflow-x: clip;
   overflow-y: scroll;
-  scroll-behavior: smooth;
+  scroll-behavior: auto !important;
   scrollbar-width: thin;
   scrollbar-color: #afafaf #d1d1d1;
 
@@ -48,10 +47,7 @@ export const StyledScrollbar = styled(Item)`
     background-color: #afafaf;
     border-radius: 5px;
     box-shadow: inset 0px 0px 5px rgba(0,0,0,0.7);
-    &:active {
-      filter: brightness(0.5);
-    }
-  }
+}
 
   ::-webkit-scrollbar-button:single-button:vertical:decrement {
     height: 10px;
@@ -181,4 +177,58 @@ export type ControlledTextFieldProps = {
   disabled?: boolean;
   errorMessage?: string;
   preventSpaces?: boolean;
+}
+
+export type TextareaProps = {
+  rows: number,
+  onTextChange: (text: string, width: number) => Promise<void>,
+  scrollOn: boolean
+}
+
+export const Textarea = memo(NonMemoTextarea, 
+  ({ rows: prevRows, scrollOn: prevScroll }, { rows: nextRows, scrollOn: nextScroll }) => prevRows === nextRows && prevScroll === nextScroll);
+
+export const StyledTextarea = styled.textarea`
+  border-radius: 0px;
+  border: 0px none;
+  flex: 1; 
+  flex-basis: 0;
+  max-height: 100%; 
+  overflow-x: clip;
+  overflow-y: scroll;
+  scroll-behavior: auto !important;
+  scrollbar-width: thin;
+  scrollbar-color: #afafaf #d1d1d1;
+
+  &:focus {
+    outline: 0px none;
+  }
+
+  ::-webkit-scrollbar {
+    width: 3px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background-color: #d1d1d1;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: #7c7c7c;
+    border-radius: 4px;
+  }`;
+
+function NonMemoTextarea({ rows, scrollOn, onTextChange }: TextareaProps) {
+
+  function onChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    const element = e.target;
+    onTextChange(element.value, element.clientWidth);
+  }
+
+  return(<StyledTextarea
+            placeholder="Type a message"
+            rows={rows}
+            onChange={onChange}
+            style={{ resize: "none", fontFamily: "Public Sans", fontSize: "1rem", overflowY: scrollOn ? "scroll" : "clip" }}
+        />)
 }

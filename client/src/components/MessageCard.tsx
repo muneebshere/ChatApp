@@ -1,6 +1,6 @@
 import _ from "lodash";
 import  { match } from "ts-pattern";
-import React, { createContext, useContext, useLayoutEffect, useRef, useState } from "react";
+import React, { createContext, memo, useContext, useLayoutEffect, useRef, useState } from "react";
 import { useUpdateEffect } from "usehooks-ts";
 import { Grid, Link, Sheet, Stack, Tooltip, Typography } from "@mui/joy";
 import { DoneSharp, DoneAllSharp, HourglassTop } from "@mui/icons-material";
@@ -51,7 +51,7 @@ export type FocusData = {
 
 export const FocusContext = createContext<FocusData>(null);
 
-export const SenderContext = createContext({ sender: "Unknown" });
+export const ChatContext = createContext({ chatWith: "Unknown" });
 
 export type ViewMessage = {
   readonly id: string;
@@ -62,9 +62,11 @@ export type ViewMessage = {
   readonly first: boolean;
 }
 
-export default function MessageCard({ message }: { message: ViewMessage}) {
+export const MessageCard = memo(MessageCardNonMemo, ({ message: { id: prevId } }, { message: { id: nextId } }) => prevId === nextId);
+
+function MessageCardNonMemo({ message }: { message: ViewMessage}) {
   const { currentFocus, clearFocus } = useContext(FocusContext);
-  const { sender } = useContext(SenderContext);
+  const { chatWith } = useContext(ChatContext);
   const { id, content, timestamp, replyingTo, status, first } = message;
   const [darken, setDarken] = useState(false);
   const sheetRef = useRef<HTMLDivElementScroll>(null);
@@ -97,7 +99,7 @@ export default function MessageCard({ message }: { message: ViewMessage}) {
               <Sheet variant="soft" sx={{ flexGrow: 1, backgroundColor: repliedColor, padding: 1, borderTopRightRadius: "10px", borderBottomRightRadius: "10px", borderTop: "thin solid transparent", borderBottom: repliedBorder, borderRight: repliedBorder, boxShadow: `1px 0px 2px ${repliedBorderColor}`, "&:hover": { boxShadow: `1px 0px 7px ${repliedBorderColor}` } }}>
                 <Stack direction="column" justifyContent="flex-start" sx={{ display: "flex", textAlign: "left" }}>
                   <Typography component="span" level="body3" fontWeight="bold" textColor={repliedOutlineColor}>
-                    {replyToOwn ? "You" : sender }
+                    {replyToOwn ? "You" : chatWith }
                   </Typography>
                   <Typography component="span" level="body3">
                     <ReactMarkdown components={{ p: "span" }}  children={text} remarkPlugins={[remarkGfm]}/>

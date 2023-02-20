@@ -1,43 +1,100 @@
-import React, { useState } from "react";
-import { IconButton, Stack, Textarea, Typography } from "@mui/joy";
+import React, { useState, useRef } from "react";
+import { IconButton, Stack, Typography } from "@mui/joy";
 import { SendRounded } from "@mui/icons-material";
-import { FocusContext, SenderContext } from "./MessageCard";
-import MessageList, { ListMessage } from "./MessageList";
+import { FocusContext, ChatContext } from "./MessageCard";
+import { MessageList } from "./MessageList";
+import { Textarea } from "./Common";
+import styled from "@emotion/styled";
 
 type ChatViewProps = {
-  currentChat: { with: string, messages: ListMessage[] };
+  chatWith: string, 
+  length: number
 }
 
-export default function ChatView({ currentChat }: ChatViewProps) {
+const TextareaBorder = styled.div`
+  flex: 1;
+  display: flex;
+  justify-content: stretch;
+  align-content: center;
+  padding: 7px;
+  border-radius: 8px;
+  border: 1px solid grey;
+
+  &:focus-within {
+    border: 2px solid black;
+  }
+`;
+
+export default function ChatView({ chatWith, length }: ChatViewProps) {
   const [currentFocus, setCurrentFocus] = useState<string>(null);
-  const [message, setMessage] = useState("");
+  const prevLines = useRef(1);
+  const [rows, setRows] = useState(1);
+  const [scrollOn, setScrollOn] = useState(false);
+  const messageRef = useRef("");
+  const canvasContext = useRef(createCanvas());
+  const maxRows = 5;
+
+  function createCanvas() {
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    context.font = `1rem "Public Sans"`;
+    return context;
+  }
+
+  function calculateLines(line: string, width: number) {
+    const measure = (s: string) => canvasContext.current.measureText(s).width / width;
+    const totalFraction = measure(line);
+    if (totalFraction < 1) return 1;
+    let cursor = line.length;
+    while (measure(line.slice(0, cursor)) >= 1) {
+      cursor = Math.ceil(cursor / 2);
+    }
+    while(measure(line.slice(0, cursor)) < 1) {
+      cursor++;
+    }
+    return calculateLines(line.slice(cursor - 1), width) + 1;
+  }
+
+  async function onTextChange(text: string, width: number) {
+    messageRef.current = text;
+    const lines = text.split(/\r\n|\r|\n/);
+    const noOfLines = lines.map((l) => calculateLines(l, width)).reduce((p, c) => p + c);
+    if (noOfLines > prevLines.current) {
+      if (prevLines.current < maxRows) {
+        setRows(noOfLines > maxRows ? maxRows : noOfLines);
+      }
+      if (noOfLines > maxRows) {
+        setScrollOn(true);
+      }
+    }
+    else if (noOfLines < prevLines.current) {
+      if (noOfLines <= maxRows) {
+        setScrollOn(false);
+      }
+      if (noOfLines < maxRows) {
+        setRows(noOfLines);
+      }
+    }
+    prevLines.current = noOfLines;
+  }
 
   return (
-    currentChat && currentChat.messages.length > 0
+    length > 0
       ? (
         <Stack direction="column" spacing={1} sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column" }}>
           <Typography sx={{ textAlign: "left", flex: 0, flexBasis: "content" }}>
-            {currentChat.with}
+            {chatWith}
           </Typography>
-          <SenderContext.Provider value={{ sender: currentChat.with }}>
+          <ChatContext.Provider value={{ chatWith }}>
             <FocusContext.Provider value={{ currentFocus, clearFocus: () => setCurrentFocus(null) }} >
             <MessageList
-            messages={currentChat.messages} 
-            repliedClicked={
-            (id) => {
-            setCurrentFocus(id);
-            }}/>
+              repliedClicked={ (id) => { setCurrentFocus(id); }}/>
             </FocusContext.Provider>
-          </SenderContext.Provider>
+          </ChatContext.Provider>
           <Stack direction="row" spacing={1} sx={{ flex: 0, flexBasis: "content", display: "flex", flexDirection: "row", flexWrap: "nowrap" }}>
-            <Textarea 
-              value={message}
-              color="success"
-              placeholder="Type a message"
-              minRows={1} 
-              maxRows={5} 
-              onChange={(event) => setMessage(event.target.value)}
-              sx={{ flexGrow: 1, flexBasis: "content", color: "black" }}/>
+            <TextareaBorder>
+              <Textarea rows={rows} scrollOn={scrollOn} onTextChange={onTextChange}/>
+            </TextareaBorder>
             <IconButton 
               variant="outlined"
               color="success" 
