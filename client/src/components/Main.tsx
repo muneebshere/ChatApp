@@ -10,6 +10,7 @@ import { chats } from "./prvChats";
 export default function Main({ connected, displayName }: { connected: boolean, displayName: string }) {
   const [currentChatIndex, setCurrentChatIndex] = useState<number>(null);
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
+  const typedMessages = useRef(new Map<string, string>());
 
   const currentChat = currentChatIndex ? chats[currentChatIndex] : null;
   
@@ -84,8 +85,16 @@ export default function Main({ connected, displayName }: { connected: boolean, d
       <Grid xs={12} xl={9} sx={{ minHeight: 0, maxHeight: "100%" }}>
         <Item sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
           <ChatView 
+            key={currentChat?.chatWith ?? ""}
             chatWith={currentChat?.chatWith ?? ""}
-            length={currentChat?.messages.length ?? 0}/>
+            length={currentChat?.messages.length ?? 0}
+            message={typedMessages.current.get(currentChat?.chatWith) ?? ""}
+            setMessage={(m: string) => {
+              const chatWith = currentChat?.chatWith;
+              if (chatWith) {
+                typedMessages.current.set(chatWith, m)
+              }
+            }}/>
         </Item>
       </Grid>
     </Grid>

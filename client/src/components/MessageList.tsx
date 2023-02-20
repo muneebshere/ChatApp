@@ -13,7 +13,7 @@ const chatMap = new Map(chats.map(({chatWith, messages}) => ([chatWith, messages
 const ScrollDownButton = styled.div`
   display: grid;
   position: fixed;
-  bottom: 100px;
+  bottom: 150px;
   right: 35px;
   height: 45px;
   width: 45px;
@@ -74,7 +74,7 @@ function convertMessages(messages: ListMessage[], repliedClicked: (id: string) =
   return result;
 }
 
-export const MessageList = memo(NonMemoMessageList, () => true);
+export const MessageList = memo(NonMemoMessageList);
 
 function NonMemoMessageList({ repliedClicked } : MessageListProps) {
   const { chatWith } = useContext(ChatContext);

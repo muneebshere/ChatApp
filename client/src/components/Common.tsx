@@ -1,6 +1,6 @@
 import _ from "lodash";
 import React, { useState, useRef, useEffect, memo } from "react";
-import { Sheet, FormControl, FormLabel, FormHelperText, Input, Switch } from "@mui/joy";
+import { Sheet, FormControl, FormLabel, FormHelperText, Input, Switch, Textarea as JoyTextarea } from "@mui/joy";
 import { styled as joyStyled } from "@mui/joy/styles";
 import styled from "@emotion/styled";
 
@@ -179,56 +179,36 @@ export type ControlledTextFieldProps = {
   preventSpaces?: boolean;
 }
 
-export type TextareaProps = {
-  rows: number,
-  onTextChange: (text: string, width: number) => Promise<void>,
-  scrollOn: boolean
-}
+export const StyledJoyTextarea = styled(JoyTextarea)`
 
-export const Textarea = memo(NonMemoTextarea, 
-  ({ rows: prevRows, scrollOn: prevScroll }, { rows: nextRows, scrollOn: nextScroll }) => prevRows === nextRows && prevScroll === nextScroll);
-
-export const StyledTextarea = styled.textarea`
+  padding: 0px;
   border-radius: 0px;
   border: 0px none;
-  flex: 1; 
-  flex-basis: 0;
-  max-height: 100%; 
-  overflow-x: clip;
-  overflow-y: scroll;
-  scroll-behavior: auto !important;
-  scrollbar-width: thin;
-  scrollbar-color: #afafaf #d1d1d1;
+  outline: 0px none;
+  min-height: fit-content;
 
-  &:focus {
-    outline: 0px none;
+  &::before {
+    box-shadow: none !important;
   }
 
-  ::-webkit-scrollbar {
-    width: 3px;
-  }
+  textarea {
+    overflow-x: clip;
+    overflow-y: scroll;
+    scroll-behavior: auto !important;
+    scrollbar-width: thin;
+    scrollbar-color: #afafaf #d1d1d1;
 
-  ::-webkit-scrollbar-track {
-    background-color: #d1d1d1;
-    border-radius: 4px;
-  }
+    ::-webkit-scrollbar {
+      width: 3px;
+    }
 
-  ::-webkit-scrollbar-thumb {
-    background-color: #7c7c7c;
-    border-radius: 4px;
+    ::-webkit-scrollbar-track {
+      background-color: #d1d1d1;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background-color: #7c7c7c;
+      border-radius: 4px;
+    }
   }`;
-
-function NonMemoTextarea({ rows, scrollOn, onTextChange }: TextareaProps) {
-
-  function onChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    const element = e.target;
-    onTextChange(element.value, element.clientWidth);
-  }
-
-  return(<StyledTextarea
-            placeholder="Type a message"
-            rows={rows}
-            onChange={onChange}
-            style={{ resize: "none", fontFamily: "Public Sans", fontSize: "1rem", overflowY: scrollOn ? "scroll" : "clip" }}
-        />)
-}
