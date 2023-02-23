@@ -2,8 +2,9 @@ import _ from "lodash";
 import  { match } from "ts-pattern";
 import React, { createContext, memo, useContext, useLayoutEffect, useRef, useState } from "react";
 import { useUpdateEffect } from "usehooks-ts";
-import { Grid, Link, Sheet, Stack, Tooltip, Typography } from "@mui/joy";
+import { Grid, Link, Sheet, Stack, Typography } from "@mui/joy";
 import { DoneSharp, DoneAllSharp, HourglassTop } from "@mui/icons-material";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip";
 import { Item } from "./Common";
 import { ReactMarkdownOptions } from "react-markdown/lib/react-markdown";
 import ReactMarkdown from "react-markdown";
@@ -127,19 +128,30 @@ function MessageCardNonMemo({ message }: { message: ViewMessage}) {
                   remarkPlugins={[remarkGfm, remarkMath, twemoji]}
                   rehypePlugins={[rehypeKatex, rehypeRaw]}/>
               </Typography>
-              <Tooltip 
-                title={DateTime.fromMillis(timestamp).toFormat("d LLLL, h:mm a")} 
-                placement="bottom" 
-                size="sm"
-                variant="outlined"
-                sx={{ backgroundColor: "#f8f7f5", borderColor: "rgba(237, 237, 237, 0.7)", boxShadow: "0px 0.5px 2px #e4e4e4" }}>
-                <Stack direction="row" spacing={1} sx={{ justifyContent: "end" }}>
-                  <Typography level="body3">
-                    {DateTime.fromMillis(timestamp).toLocaleString(DateTime.TIME_SIMPLE)}
-                  </Typography>
+              <div style={{ width: "100%", display: "flex", justifyContent: "end" }}>
+                <Stack direction="row" spacing={1} sx={{ width: "fit-content" }}>
+                  <Tooltip placement="left" mainAxisOffset={120} crossAxisOffset={-10}>
+                    <TooltipTrigger>
+                      <Typography level="body3">
+                        {DateTime.fromMillis(timestamp).toLocaleString(DateTime.TIME_SIMPLE)}
+                      </Typography>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <div style={{ width: "fit-content",
+                                    backgroundColor: "#f8f7f5", 
+                                    borderColor: "rgba(237, 237, 237, 0.7)", 
+                                    boxShadow: "0px 0.5px 4px #e4e4e4",
+                                    position: "absolute",
+                                    zIndex: 2 }}>
+                        <Typography level="body3" noWrap>
+                          {DateTime.fromMillis(timestamp).toFormat("d LLLL, h:mm a")}
+                        </Typography>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
                   {statusIcon}
                 </Stack>
-              </Tooltip>
+              </div>
             </Stack>
           </SvgMessageCard>
         </Item>        

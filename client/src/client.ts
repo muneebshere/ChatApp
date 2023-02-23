@@ -57,7 +57,7 @@ export enum Status {
 export class Client {
   private readonly url: string;
   private readonly axInstance: Axios;
-  private readonly notifyCallback: (status: Status) => void;
+  private notifyCallback: (status: Status) => void;
   private connecting = false;
   private retryingConnect = false;
   private reportDone: (arg0: any) => void = undefined;
@@ -93,9 +93,12 @@ export class Client {
     return this.#socket?.id;
   }
 
-  constructor(url: string, notifyCallback?: (status: Status) => void) {
+  constructor(url: string) {
     this.url = url;
     this.axInstance = axios.create({ baseURL: `${this.url}/`, maxRedirects:0 });
+  }
+
+  subscribeStatusChange(notifyCallback?: (status: Status) => void) {
     if (notifyCallback) this.notifyCallback = notifyCallback;
   }
 
@@ -223,9 +226,10 @@ export class Client {
         this.notifyCallback?.(Status.FailedCreateNewUser);
         return failure(CommonStrings.ProcessFailed);
       }
+      const keyBundles = await x3dhUser.publishKeyBundles();
       const [encryptedX3DH, hSalt] = await x3dhUser.exportUser(encryptionBaseVector);
       const x3dhInfo: UserEncryptedData = { ...encryptedX3DH, hSalt };
-      const newUserData: NewUserData = { username, displayName, serverProof, encryptionBase, x3dhInfo };
+      const newUserData: NewUserData = { username, displayName, serverProof, encryptionBase, x3dhInfo, keyBundles };
       if (!encryptedX3DH) {
         this.notifyCallback?.(Status.FailedCreateNewUser);
         return failure(CommonStrings.ProcessFailed);

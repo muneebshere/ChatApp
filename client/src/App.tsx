@@ -3,13 +3,17 @@ import LogInSignUp from "./components/LogInSignUp";
 import Main from "./components/Main";
 import { LogInContext, defaultLogInDataReducer, defaultLogInData, logInAction } from "./components/Login";
 import { SignUpContext, defaultSignUpDataReducer, defaultSignUpData, signUpAction } from "./components/Signup";
-import React, { useState, useRef, useEffect, useReducer } from "react";
+import React, { useState, useRef, useEffect, useReducer, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import { Container, CircularProgress } from "@mui/joy";
 import { CssVarsProvider } from "@mui/joy/styles";
 import { Status, Client } from "./client";
+import { useEffectOnce } from "usehooks-ts";
 
 const PORT = 8080;
+const { hostname, protocol } = window.location;
+const client = new Client(`${protocol}//${hostname}:${PORT}`);
+client.establishSession();
 
 createRoot(document.getElementById("root")).render(<App/>);
 
@@ -21,10 +25,11 @@ function App() {
   const [signedIn, setSignedIn] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [currentTab, setCurrentTab] = useState(0);
-  const { hostname, protocol } = window.location;
-  const client = useRef(new Client(`${protocol}//${hostname}:${PORT}`, setStatus));
-  useEffect(() => { client.current.establishSession(); }, []);
-  useEffect(() => window.addEventListener("beforeunload", client.current.terminateCurrentSession.bind(client.current), { capture: true, once: true }), []);
+  const notifyStatus = useCallback(setStatus, []);
+  useEffectOnce(() => { 
+    client.subscribeStatusChange(notifyStatus);
+    window.addEventListener("beforeunload", client.terminateCurrentSession.bind(client), { capture: true, once: true })
+  });
   
   useEffect(() => {
     switch (status) {
@@ -41,7 +46,7 @@ function App() {
         setConnected(false);
         break;
       case Status.Connected: 
-        client.current.userLogIn().then(({ reason }) => {
+        client.userLogIn().then(({ reason }) => {
           if (!reason) {
             setSignedIn(true);
           }
@@ -57,7 +62,7 @@ function App() {
       case Status.CreatedNewUser: break;
       case Status.SignedIn: 
         setSignedIn(true);
-        setDisplayName(client.current.displayName);
+        setDisplayName(client.displayName);
         break;
       case Status.SigningOut: break;
       case Status.SignedOut:
@@ -76,20 +81,20 @@ function App() {
   }, [connected]);
 
   function usernameExists(username: string) {
-    return client.current.checkUsernameExists(username);
+    return client.checkUsernameExists(username);
   }
 
   function userLoginPermitted(username: string) {
-    return client.current.userLogInPermitted(username);
+    return client.userLogInPermitted(username);
   }
 
   function logIn({ username, password, savePassword }: SubmitResponse) {
-    return client.current.userLogIn(username, password, savePassword);
+    return client.userLogIn(username, password, savePassword);
   }
 
   function signUp({ displayName, username, password, savePassword }: SubmitResponse) {
     displayName ||= username;
-    return client.current.registerNewUser(username, password, displayName, savePassword);
+    return client.registerNewUser(username, password, displayName, savePassword);
   }
   
   return (
@@ -110,7 +115,7 @@ function App() {
           </LogInContext.Provider>
         }
         {signedIn &&
-        <Main connected={connected} displayName={displayName}/>
+        <Main client={client} connected={connected} displayName={displayName}/>
         }
       </Container>
     </CssVarsProvider>);

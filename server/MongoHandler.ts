@@ -60,7 +60,16 @@ export class MongoHandler {
     },
     publicDHIdentityKey: this.exposedSignedKey,
     publicSignedPreKey: this.exposedSignedKey,
-    publicOneTimeKey: this.exposedSignedKey
+    publicOneTimeKey: {
+      exportedPublicKey: {
+        type: Schema.Types.Buffer,
+        required: false
+      },
+      signature: {
+        type: Schema.Types.Buffer,
+        required: false
+      }
+    }
   });
   
   private readonly messageHeaderSchema = new Schema({
@@ -235,12 +244,12 @@ export class MongoHandler {
     keyBundles: {
       defaultKeyBundle: {
         type: this.keyBundleSchema,
-        required: false,
-        default: null
+        required: true
       },
       oneTimeKeyBundles: {
         type: [this.keyBundleSchema],
-        required: false
+        required: false,
+        default: []
       },
     },
     accessedKeyBundles: {
@@ -431,7 +440,7 @@ export function bufferReplaceFromLean(obj: any): any {
     return obj;
   }
   if (obj instanceof Array) {
-    return Array.from(obj.map(v => this.bufferReplaceFromLean(v)));
+    return Array.from(obj.map(v => bufferReplaceFromLean(v)));
   }
   const newObj: any = {};
   for (const [key, value] of Object.entries(obj)) {

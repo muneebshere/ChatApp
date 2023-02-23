@@ -245,8 +245,8 @@ class SocketHandler {
     const { username, serverProof, encryptionBase } = result;
     const authInfo: UserAuthInfo = { dInfo, originalData, signedData, serverProof, encryptionBase };
     if ("x3dhInfo" in result) {
-      const { displayName, x3dhInfo } = result;
-      return { username, displayName, x3dhInfo, ...authInfo };
+      const { displayName, x3dhInfo, keyBundles } = result;
+      return { username, displayName, x3dhInfo, keyBundles, ...authInfo };
     }
     return { ...authInfo, username };
   }
@@ -264,10 +264,14 @@ class SocketHandler {
   private async registerNewUser(request: RegisterNewUserRequest): Promise<Failure> {
     const newAuthCreated = await this.processAuth(request);
     if ("reason" in newAuthCreated) return newAuthCreated;
-    const { username, displayName, x3dhInfo: x3dh, ...userAuthInfo } = newAuthCreated;
+    const { username, displayName, x3dhInfo: x3dh, keyBundles: kb, ...userAuthInfo } = newAuthCreated;
+    if (!this.validateKeyBundleOwner(kb, username)) {
+      return failure(CommonStrings.IncorrectData);
+    }
     const authInfo = bufferReplaceForMongo(userAuthInfo);
     const x3dhInfo = bufferReplaceForMongo(x3dh);
-    const newUser = new mongoHandler.User({ username, displayName, authInfo, x3dhInfo });
+    const keyBundles = bufferReplaceForMongo(kb);
+    const newUser = new mongoHandler.User({ username, displayName, authInfo, x3dhInfo, keyBundles });
     try {
       const savedUser = await newUser.save();
       if (savedUser === newUser) {
@@ -354,20 +358,24 @@ class SocketHandler {
     return await mongoHandler.getSavedDetails(saveToken) ?? { };
   }
 
+  private validateKeyBundleOwner(keyBundles: PublishKeyBundlesRequest, username: string) {
+    let { defaultKeyBundle, oneTimeKeyBundles } = keyBundles;
+    return [defaultKeyBundle.owner, ...oneTimeKeyBundles.map((kb) => kb.owner)].every((kb: any) => kb.owner === username)
+  }
+
   private async publishKeyBundles(keyBundles: PublishKeyBundlesRequest): Promise<Failure>  {
     if (!this.#username) return failure(CommonStrings.InvalidRequest);
-    const username = this.#username;
-    if (keyBundles.oneTimeKeyBundles.some((kb: any) => kb.owner !== username) || keyBundles.defaultKeyBundle.owner !== username) {
+    if (!this.validateKeyBundleOwner(keyBundles, this.#username)) {
       return failure(CommonStrings.IncorrectData);
     }
-    const user = await mongoHandler.getUser(username);
+    const user = await mongoHandler.getUser(this.#username);
     if (!user) {
       return failure(CommonStrings.ProcessFailed);
     }
     let { defaultKeyBundle, oneTimeKeyBundles } = keyBundles;
     user.keyBundles.defaultKeyBundle = bufferReplaceForMongo(defaultKeyBundle);
     oneTimeKeyBundles = Array.from(oneTimeKeyBundles.map((kb: any) => bufferReplaceForMongo(kb)));
-    const leanUser = await mongoHandler.getLeanUser(username);
+    const leanUser = await mongoHandler.getLeanUser(this.#username);
     const oldOneTimes = Array.from(leanUser.keyBundles.oneTimeKeyBundles ?? []).map((okb: any) => okb.identifier);
     const dontAdd = [...(leanUser.accessedKeyBundles ?? []), ...oldOneTimes];
     for (const oneTime of oneTimeKeyBundles) {
@@ -394,12 +402,13 @@ class SocketHandler {
     if (!otherUser) return failure(CommonStrings.IncorrectData);
     let keyBundle;
     let saveRequired = false;
-    if ((otherUser.keyBundles?.oneTimeKeyBundles ?? []).length > 0) {
-      keyBundle = getPOJO(otherUser.keyBundles.oneTimeKeyBundles.pop());
+    const { oneTimeKeyBundles, defaultKeyBundle } = otherUser?.keyBundles;
+    if ((oneTimeKeyBundles ?? []).length > 0) {
+      keyBundle = getPOJO(oneTimeKeyBundles.pop());
       saveRequired = true;
     }
-    else if (otherUser.keyBundles.defaultKeyBundle) {
-      keyBundle = getPOJO(otherUser.keyBundles.defaultKeyBundle);
+    else if (defaultKeyBundle) {
+      keyBundle = getPOJO(defaultKeyBundle);
     }
     if (!keyBundle) return failure(CommonStrings.ProcessFailed);
     if (saveRequired) {

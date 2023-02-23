@@ -59,7 +59,7 @@ type ExportedX3DHUser = {
     readonly identitySigningKeyPair: ExportedSigningKeyPair;
     readonly identityDHKeyPair: ExportedSignedKeyPair;
     readonly signedPreKeyPair: ExportedSignedKeyPair;
-    readonly signedOneTimeKeys: Map<string, [ExportedSignedKeyPair, number]>;
+    readonly signedOneTimeKeys: Map<string, ExportedSignedKeyPair>;
     readonly keyLastReplaced: number;
     readonly preKeyVersion: number
 }
@@ -94,7 +94,7 @@ export class X3DHUser {
     #identitySigningKey: CryptoKey;
     #identityDHKeyPair: SignedKeyPair;
     #signedPreKeyPair: SignedKeyPair;
-    #signedOneTimeKeys = new Map<string, [SignedKeyPair, number]>();
+    #signedOneTimeKeys = new Map<string, SignedKeyPair>();
     #waitingMessageRequests = new Map<string, MessageRequestInWaiting>();
     #keyLastReplaced: number = null;
     #preKeyVersion = 0;
@@ -126,9 +126,9 @@ export class X3DHUser {
         const identitySigningKeyPair = await crypto.exportSigningKeyPair(this.#identitySigningKeyPair, encryptionKeyBits, salt, "X3DH User Identity");
         const identityDHKeyPair = await crypto.exportSignedKeyPair(this.#identityDHKeyPair, encryptionKeyBits, salt, "X3DH User Identity DH");
         const signedPreKeyPair = await crypto.exportSignedKeyPair(this.#signedPreKeyPair, encryptionKeyBits, salt, "X3DH User PreKey");
-        const signedOneTimeKeys = new Map<string, [ExportedSignedKeyPair, number]>();
-        for (const [id, [key, firstPublished]] of this.#signedOneTimeKeys.entries()) {
-            signedOneTimeKeys.set(id, [await crypto.exportSignedKeyPair(key, encryptionKeyBits, salt, `X3DH User OneTimeKey ${id}`), firstPublished]);
+        const signedOneTimeKeys = new Map<string, ExportedSignedKeyPair>();
+        for (const [id, key] of this.#signedOneTimeKeys.entries()) {
+            signedOneTimeKeys.set(id, await crypto.exportSignedKeyPair(key, encryptionKeyBits, salt, `X3DH User OneTimeKey ${id}`));
         }
         const keyLastReplaced = this.#keyLastReplaced;
         const preKeyVersion = this.#preKeyVersion;
@@ -172,9 +172,9 @@ export class X3DHUser {
             user.#identitySigningKeyPair = await crypto.importSigningKeyPair(exportedidentityKeyPair, decryptionKeyBits, salt, "X3DH User Identity");
             user.#identityDHKeyPair = await crypto.importSignedKeyPair(exportedIdentityDHKeyPair, decryptionKeyBits, salt, "X3DH User Identity DH");
             user.#signedPreKeyPair = await crypto.importSignedKeyPair(exportedSignedPreKeyPair, decryptionKeyBits, salt, "X3DH User PreKey");
-            const signedOneTimeKeys = new Map<string, [SignedKeyPair, number]>();
-            for (const [id, [key, firstPublished]] of exportedSignedOneTimeKeys.entries()) {
-                signedOneTimeKeys.set(id, [await crypto.importSignedKeyPair(key, decryptionKeyBits, salt, `X3DH User OneTimeKey ${id}`), firstPublished]);
+            const signedOneTimeKeys = new Map<string, SignedKeyPair>();
+            for (const [id, key] of exportedSignedOneTimeKeys.entries()) {
+                signedOneTimeKeys.set(id, await crypto.importSignedKeyPair(key, decryptionKeyBits, salt, `X3DH User OneTimeKey ${id}`));
             }
             user.#identitySigningKey = user.#identitySigningKeyPair.privateKey;
             user.#signedOneTimeKeys = signedOneTimeKeys;
@@ -201,35 +201,20 @@ export class X3DHUser {
         return user;
     }
 
-    async publishKeyBundles(forceClearEarly?: number): Promise<[{ defaultKeyBundle: KeyBundle, oneTimeKeyBundles: KeyBundle[] }, string[]]> {
+    async publishKeyBundles(): Promise<{ defaultKeyBundle: KeyBundle, oneTimeKeyBundles: KeyBundle[] }> {
         await this.regularProtocolRun();
-        let clearedKeys: string[] = [];
-        if (!!forceClearEarly && forceClearEarly > 0) {
-            const toClear = Math.min(forceClearEarly, this.#signedOneTimeKeys.size);
-            const firstPublishedMap = new Map(Array.from(this.#signedOneTimeKeys, ([id, [_, published]]) => [published, id] as [number, string]));
-            const publishTimes = Array.from(firstPublishedMap.keys()).sort().slice(0, toClear);
-            for (const publishTime of publishTimes) {
-                const idToClear = firstPublishedMap.get(publishTime);
-                clearedKeys.push(idToClear);
-                this.#signedOneTimeKeys.delete(idToClear);
-            }
-        }
         const owner = this.username;
         const publicSigningIdentityKey = await crypto.exportKey(this.#identitySigningKeyPair.publicKey);
-        const publicDHIdentityKey = await crypto.exposeSignedKey(this.#identityDHKeyPair);
-        const publicSignedPreKey = await crypto.exposeSignedKey(this.#signedPreKeyPair);
+        const publicDHIdentityKey = crypto.exposeSignedKey(this.#identityDHKeyPair);
+        const publicSignedPreKey = crypto.exposeSignedKey(this.#signedPreKeyPair);
         const preKeyVersion = this.#preKeyVersion;
         const oneTimeKeyBundles: KeyBundle[] = [];
-        for (const [identifier, [oneTimeKey, published]] of this.#signedOneTimeKeys.entries()) {
-            const publicOneTimeKey = await crypto.exposeSignedKey(oneTimeKey);
-            if (!published) {
-                this.#signedOneTimeKeys.set(identifier, [oneTimeKey, Date.now()]);
-            }
+        for (const [identifier, key] of this.#signedOneTimeKeys.entries()) {
+            const publicOneTimeKey = crypto.exposeSignedKey(key);
             oneTimeKeyBundles.push({ identifier, owner, verifyingIdentityKey: publicSigningIdentityKey, publicDHIdentityKey, publicSignedPreKey, publicOneTimeKey, preKeyVersion });
         }
         const defaultKeyBundle = { identifier: `${preKeyVersion}`, owner, verifyingIdentityKey: publicSigningIdentityKey, publicDHIdentityKey, publicSignedPreKey, preKeyVersion };
-        const bundles = { defaultKeyBundle, oneTimeKeyBundles };
-        return [bundles, clearedKeys];
+        return { defaultKeyBundle, oneTimeKeyBundles };
     }
 
     async generateMessageRequest(keyBundle: KeyBundle, firstMessage: string): Promise<MessageRequestHeader | "Invalid Identity Signature" | "Invalid PreKey Signature" | "Invalid OneTimeKey Signature"> {
@@ -260,7 +245,7 @@ export class X3DHUser {
             yourOneTimeKeyIdentifier = identifier;
         }
         const ephemeralKeyPair = await crypto.generateSignedKeyPair(this.#identitySigningKey);
-        const myPublicEphemeralKey = await crypto.exposeSignedKey(ephemeralKeyPair);
+        const myPublicEphemeralKey = crypto.exposeSignedKey(ephemeralKeyPair);
         const dh1 = await crypto.deriveSymmetricBits(this.#identityDHKeyPair.keyPair.privateKey, importedPreKey, 512);
         const dh2 = await crypto.deriveSymmetricBits(ephemeralKeyPair.keyPair.privateKey, importedDHIdentityKey, 512);
         const dh3 = await crypto.deriveSymmetricBits(ephemeralKeyPair.keyPair.privateKey, importedPreKey, 512);
@@ -272,7 +257,7 @@ export class X3DHUser {
         const yourKeySignature = otherDHIdentityKey.signature.toString("base64");
         const myUsername = this.username;
         const dhRatchetInitializer = await crypto.generateSignedKeyPair(this.#identitySigningKey);
-        const myDHRatchetInititalizer = await crypto.exposeSignedKey(dhRatchetInitializer);
+        const myDHRatchetInititalizer = crypto.exposeSignedKey(dhRatchetInitializer);
         const timestamp = Date.now();
         const initialData: MessageRequestBody = { 
             myKeySignature, 
@@ -284,7 +269,7 @@ export class X3DHUser {
             firstMessage };
         const initialCiphertext = await crypto.deriveSignEncrypt(buffConcat, serialize(initialData), nullSalt(48), "Message Request", this.#identitySigningKey);
         const myPublicSigningIdentityKey = await crypto.exportKey(this.#identitySigningKeyPair.publicKey);
-        const myPublicDHIdentityKey = await crypto.exposeSignedKey(this.#identityDHKeyPair);
+        const myPublicDHIdentityKey = crypto.exposeSignedKey(this.#identityDHKeyPair);
         const initialMessage = {
             addressedTo: myUsername,
             myVerifyingIdentityKey: myPublicSigningIdentityKey,
@@ -325,17 +310,14 @@ export class X3DHUser {
             }
             let oneTimeKey: SignedKeyPair = undefined;
             if (!myOneTimeKeyIdentifier !== undefined) {
-                const oneTime = this.#signedOneTimeKeys.get(myOneTimeKeyIdentifier);
-                if (oneTime !== undefined) {
-                    oneTimeKey = oneTime[0];
+                const oneTimeKey = this.#signedOneTimeKeys.get(myOneTimeKeyIdentifier);
+                if (oneTimeKey !== undefined) {
+                    this.#signedOneTimeKeys.delete(myOneTimeKeyIdentifier);
+                    await this.regularProtocolRun();
                 }
                 else {
                     return "OneTimeKey Not Found";
                 }
-            }
-            if (oneTimeKey !== undefined) {
-                this.#signedOneTimeKeys.delete(myOneTimeKeyIdentifier);
-                await this.regularProtocolRun();
             }
             const importedVerifyingIdentityKey = await this.importVerifyingKey(otherVerifyingIdentityKey);
             const importedDHIdentityKey = await crypto.verifyKey(otherPublicDHIdentityKey, importedVerifyingIdentityKey);
@@ -446,9 +428,10 @@ export class X3DHUser {
             return;
         }
         for (let k = 0; k < (this.#maxOneTimeKeys - currentKeys); k++) {
-            const identifier = `${getRandomString()}-${Date.now()}`;
-            const signedPair = await crypto.generateSignedKeyPair(this.#identitySigningKey);
-            this.#signedOneTimeKeys.set(identifier, [signedPair, null]);
+            const createdAt = Date.now();
+            const identifier = `${getRandomString()}-${createdAt}`;
+            const key = await crypto.generateSignedKeyPair(this.#identitySigningKey);
+            this.#signedOneTimeKeys.set(identifier, key);
         }
     }
 

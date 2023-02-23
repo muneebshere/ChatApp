@@ -116,7 +116,7 @@ function NonMemoMessageList({ repliedClicked } : MessageListProps) {
   </Card>);
   
   return (
-    <StyledScrollbar ref={scrollRef} style={{ visibility: "visible" }}>
+    <StyledScrollbar ref={scrollRef}>
       <div 
         style={{ display: "flex", 
                 justifyContent: "center",
