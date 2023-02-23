@@ -44,10 +44,10 @@ function NonMemoChatView({ chatWith, message, setMessage }: ChatViewProps) {
     <Stack direction="column" spacing={1} sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column" }}>
       <Stack direction="row" spacing={2}>
         {belowXL && 
-          <IconButton variant="outlined" color="neutral" onClick={() => window.history.back() }>
-            <ArrowBackSharp sx={{ fontSize: "2rem" }}/>
+          <IconButton variant="outlined" color="neutral" onClick={() => { window.location.hash = "" }}>
+            <ArrowBackSharp sx={{ fontSize: "2rem", color: "neutral.contrastText", backgroundColor: "neutral.main" }}/>
           </IconButton>}
-        <Typography sx={{ textAlign: "left", flex: 0, flexBasis: "content", display: "flex", flexWrap: "wrap", alignContent: "center" }}>
+        <Typography level="h5" sx={{ textAlign: "left", flex: 0, flexBasis: "content", display: "flex", flexWrap: "wrap", alignContent: "center" }}>
           {chatWith}
         </Typography>
       </Stack>

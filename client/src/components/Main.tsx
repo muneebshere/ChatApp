@@ -1,7 +1,7 @@
 import React, { useState, useRef, memo, useCallback } from "react";
-import { Alert, Grid, Input, LinearProgress, List, ListItem, ListItemButton, Stack, Typography } from "@mui/joy";
+import { Alert, Grid, IconButton, Input, LinearProgress, List, ListItem, ListItemButton, Stack, Typography } from "@mui/joy";
 import { useMediaQuery, Theme } from "@mui/material";
-import { ReportProblem, PersonAddAltOutlined, Search } from "@mui/icons-material";
+import { ReportProblem, PersonAddAltOutlined, Search, ClearSharp } from "@mui/icons-material";
 import { Item, StyledScrollbar } from "./Common";
 import { ChatView } from "./ChatView";
 import { useEffectOnce } from "usehooks-ts";
@@ -9,8 +9,6 @@ import { Client } from "../client";
 import { chats } from "./prvChats";
 
 const chatMap = chats.map((c) => c.chatWith);
-
-const InputMemo = memo(Input, () => true);
 
 export default function Main({ connected, displayName, client }: { connected: boolean, displayName: string, client: Client }) {
   const [currentChatWith, setCurrentChatWith] = useState("");
@@ -20,13 +18,18 @@ export default function Main({ connected, displayName, client }: { connected: bo
   const onSearchChange = (e: any) => setSearch(e.target.value);
   
   useEffectOnce(() => {
-    const currentChatWith = window.history.state?.currentChatWith ?? "";
-    window.history.replaceState({ currentChatWith }, "", "");
+    const currentChatWith = window.history.state?.currentChatWith || "";
+    window.history.replaceState({ currentChatWith }, "", currentChatWith || `#${currentChatWith}`);
     setCurrentChatWith(currentChatWith);
-    const popStateListener = (event: PopStateEvent) => setCurrentChatWith(event.state?.currentChatWith);
+    const popStateListener = (event: PopStateEvent) => setCurrentChatWith(event.state?.currentChatWith || "");
     window.addEventListener("popstate", popStateListener);
     return () => window.removeEventListener("popstate", popStateListener);
   });
+
+  function openChat(chat: string) {
+    window.history.pushState({ currentChatWith: chat }, "", `#${chat}`);
+    setCurrentChatWith(chat);
+  }
 
   const disconnectedAlert = (
     connected ||
@@ -49,11 +52,6 @@ export default function Main({ connected, displayName, client }: { connected: bo
       </Item>
     </Grid>);
 
-  function openChat(chat: string) {
-    window.history.pushState({ currentChatWith: chat }, "", `#${chat}`);
-    setCurrentChatWith(chat);
-  }
-
   return (
   <Grid container direction="column" sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column" }}>
     <React.Fragment>
@@ -61,7 +59,7 @@ export default function Main({ connected, displayName, client }: { connected: bo
     </React.Fragment>
     <Grid xs={12} sx={{ flex: 0, flexBasis: "content" }}>
       <Item>
-        <Typography sx={{ textAlign: "center" }}>
+        <Typography level="h4" sx={{ textAlign: "center" }}>
           {displayName}
         </Typography>
       </Item>
@@ -84,12 +82,15 @@ export default function Main({ connected, displayName, client }: { connected: bo
             </div>
           </div>
           <div style={{ display: "flex", alignContent: "center", justifyContent: "stretch", paddingBlock: 10, paddingInline: 15 }}>
-            <InputMemo 
-              placeholder="Search for chat" 
+            <Input 
+              placeholder="Search for chat"
+              value={search}
               style={{ width: "100%" }}
               onChange={onSearchChange}
               endDecorator={
-                <Search sx={{ fontSize: "1rem" }}/>
+                search 
+                  ? (<IconButton variant="soft" color="neutral" onClick={() => setSearch("")}><ClearSharp sx={{ fontSize: "1.2rem" }}/></IconButton>)
+                  : (<Search sx={{ fontSize: "1.2rem" }}/>) 
               }/>
           </div>
           <StyledScrollbar>
