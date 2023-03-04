@@ -1,14 +1,16 @@
-import React, { useState, useRef, memo, useCallback } from "react";
+import React, { useState, useRef, useEffect } from "react";
+import { flushSync } from 'react-dom';
 import { Alert, Grid, IconButton, Input, LinearProgress, List, ListItem, ListItemButton, Stack, Typography } from "@mui/joy";
 import { useMediaQuery, Theme } from "@mui/material";
 import { ReportProblem, PersonAddAltOutlined, Search, ClearSharp } from "@mui/icons-material";
-import { Item, StyledScrollbar } from "./Common";
-import { ChatView } from "./ChatView";
+import { Popover, PopoverTrigger, PopoverContent } from "./Popover";
+import { Item, StyledScrollbar, ControlledTextField } from "./Common";
+import { ChatViewMemo } from "./ChatView";
 import { useEffectOnce } from "usehooks-ts";
 import { Client } from "../client";
 import { chats } from "./prvChats";
 
-const chatMap = chats.map((c) => c.chatWith);
+const chatWithList = chats.map((c) => c.chatWith);
 
 export default function Main({ connected, displayName, client }: { connected: boolean, displayName: string, client: Client }) {
   const [currentChatWith, setCurrentChatWith] = useState("");
@@ -19,12 +21,18 @@ export default function Main({ connected, displayName, client }: { connected: bo
   
   useEffectOnce(() => {
     const currentChatWith = window.history.state?.currentChatWith || "";
-    window.history.replaceState({ currentChatWith }, "", currentChatWith || `#${currentChatWith}`);
+    window.history.replaceState({ currentChatWith }, "", `#${currentChatWith}`);
     setCurrentChatWith(currentChatWith);
     const popStateListener = (event: PopStateEvent) => setCurrentChatWith(event.state?.currentChatWith || "");
     window.addEventListener("popstate", popStateListener);
     return () => window.removeEventListener("popstate", popStateListener);
   });
+
+  async function validateNewChat(username: string) {
+    if (!username) return "";
+    if (chatWithList.some((chatWith) => chatWith.toLowerCase() === username.toLowerCase())) return "There is already an existing chat with this user.";
+    return (await client.checkUsernameExists(username)) ? "" : "No such user.";
+  }
 
   function openChat(chat: string) {
     window.history.pushState({ currentChatWith: chat }, "", `#${chat}`);
@@ -78,7 +86,16 @@ export default function Main({ connected, displayName, client }: { connected: bo
               </Typography>
             </div>
             <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-end", alignContent: "center", paddingRight: 40 }}>
-              <PersonAddAltOutlined color="success" sx={{ fontSize: "1.5rem" }}/>
+            <Popover modal={true}>
+              <PopoverTrigger>
+                <IconButton variant="plain" color="success">
+                  <PersonAddAltOutlined color="success" sx={{ fontSize: "1.5rem" }}/>
+                </IconButton>
+              </PopoverTrigger>
+              <PopoverContent>
+                <NewChatPopup validate={validateNewChat}/>
+              </PopoverContent>
+            </Popover>
             </div>
           </div>
           <div style={{ display: "flex", alignContent: "center", justifyContent: "stretch", paddingBlock: 10, paddingInline: 15 }}>
@@ -89,13 +106,15 @@ export default function Main({ connected, displayName, client }: { connected: bo
               onChange={onSearchChange}
               endDecorator={
                 search 
-                  ? (<IconButton variant="soft" color="neutral" onClick={() => setSearch("")}><ClearSharp sx={{ fontSize: "1.2rem" }}/></IconButton>)
+                  ? (<IconButton variant="soft" color="neutral" onClick={() => setSearch("")}>
+                      <ClearSharp sx={{ fontSize: "1.2rem" }}/>
+                    </IconButton>)
                   : (<Search sx={{ fontSize: "1.2rem" }}/>) 
               }/>
           </div>
           <StyledScrollbar>
             <List variant="plain" color="neutral">
-              {chatMap.filter((chatWith) => !search || chatWith.toLowerCase().includes(search.toLowerCase())).map((chatWith) =>
+              {chatWithList.filter((chatWith) => !search || chatWith.toLowerCase().includes(search.toLowerCase())).map((chatWith) =>
               <ListItem key={chatWith}>
                 <ListItemButton 
                   onClick={() => openChat(chatWith)} 
@@ -113,7 +132,7 @@ export default function Main({ connected, displayName, client }: { connected: bo
       {(!belowXL || currentChatWith) &&
       <Grid xs={12} xl={9} sx={{ minHeight: 0, maxHeight: "100%" }}>
         <Item sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
-          <ChatView 
+          <ChatViewMemo 
             key={currentChatWith ?? ""}
             chatWith={currentChatWith ?? ""}
             message={typedMessages.current.get(currentChatWith) ?? ""}
@@ -126,4 +145,35 @@ export default function Main({ connected, displayName, client }: { connected: bo
       </Grid>}
     </Grid>
   </Grid>)
+}
+
+function NewChatPopup({ validate }: { validate: (username: string) => Promise<string> }) {
+  const [newChat, setNewChat] = useState("");
+  const [newChatInvalid, setNewChatInvalid] = useState("");
+  
+  useEffect(() => {
+    validate(newChat).then((message) => setNewChatInvalid(message));
+  }, [newChat]);
+
+  return (
+    <div style={{ borderRadius: 8, padding: 10, border: "1.5px solid #d8d8df", backgroundColor: "white" }}>
+      <Stack direction="column" spacing={1}>
+        <Typography level="h5" fontWeight="md">
+          New chat
+        </Typography>
+        <div style={{ display: "flex", alignContent: "center", justifyContent: "stretch" }}>
+        <ControlledTextField 
+          variant="outlined"
+          placeholder="Begin chat with" 
+          type="text"
+          value={newChat}
+          setValue={setNewChat}
+          forceInvalid
+          preventSpaces
+          valid={!newChatInvalid}
+          errorMessage={newChatInvalid}
+          onEnter={ () => {}}/>
+        </div>
+      </Stack>
+    </div>)
 }

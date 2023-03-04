@@ -99,22 +99,24 @@ export function ControlledTextField(args: ControlledTextFieldProps) {
 
   return (
     <FormControl sx={{ justifyContent: "stretch" }}>
+      {args.label && 
       <FormLabel sx={{ flexGrow: 1, width: "100%" }}>
-        <Input
-          ref={ref} 
-          variant={args.variant}
-          type={args.type}
-          placeholder={args.placeholder}
-          value={args.value}
-          error={ !args.valid && (args.forceInvalid || touched) }
-          disabled={args.disabled}
-          onChange={onChange}
-          onBlur={onBlur}
-          onFocus={onFocus}
-          onKeyDown={ (e) => onKey(e, "down") }
-          onKeyUp={ (e) => onKey(e, "up") }
-          sx={{ width: "100%" }}/>
-      </FormLabel>
+        {args.label}
+      </FormLabel>}
+      <Input
+        ref={ref} 
+        variant={args.variant}
+        type={args.type}
+        placeholder={args.placeholder}
+        value={args.value}
+        error={ !args.valid && (args.forceInvalid || touched) }
+        disabled={args.disabled}
+        onChange={onChange}
+        onBlur={onBlur}
+        onFocus={onFocus}
+        onKeyDown={ (e) => onKey(e, "down") }
+        onKeyUp={ (e) => onKey(e, "up") }
+        sx={{ width: "100%" }}/>
       {(errorText() || args.helperText) &&
       <FormHelperText sx={{ justifyItems: "flex-start", textAlign: "start", color: !args.valid && (args.forceInvalid || touched) ? "var(--joy-palette-danger-outlinedColor)" : "neutral" }}>
         { errorText() ? args.errorMessage : args.helperText }
@@ -147,7 +149,7 @@ type UsernameExists = {
 }
 
 export type ControlledTextFieldProps = {  
-  label: string;
+  label?: string;
   placeholder: string;
   type: string;
   value: string;

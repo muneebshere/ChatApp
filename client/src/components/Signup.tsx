@@ -134,9 +134,8 @@ export default function SignUpForm() {
     <React.Fragment>
       <Stack spacing={2}>
         <ControlledTextField 
-          variant="outlined" 
-          label="Display Name (Optional)" 
-          placeholder="Display Name" 
+          variant="outlined"
+          placeholder="Display Name (Optional)" 
           type="text"
           value={displayName}
           setValue={setDisplayName}
@@ -145,8 +144,7 @@ export default function SignUpForm() {
           helperText="If you don't specify a display name, your username will be used as your display name."
           onEnter={submitLocal}/>
         <ControlledTextField 
-          variant="outlined" 
-          label="Username" 
+          variant="outlined"
           placeholder="Please choose a unique username" 
           type="text"
           value={username}
@@ -158,8 +156,7 @@ export default function SignUpForm() {
           errorMessage={usernameError}
           onEnter={submitLocal}/>
         <ControlledTextField 
-          variant="outlined" 
-          label="Password" 
+          variant="outlined"
           placeholder="Please choose a new password" 
           type={ showPassword ? "text" : "password" }
           value={password}
@@ -171,8 +168,7 @@ export default function SignUpForm() {
           errorMessage="Please choose a password at least 8 characters long, with at least one uppercase letter, one lowercase letter, one digit and one special character (#?!@$%^&*-])."
           onEnter={submitLocal}/>
         <ControlledTextField 
-          variant="outlined" 
-          label="Re-enter password" 
+          variant="outlined"
           placeholder="Please re-enter password" 
           type={ showPassword ? "text" : "password" }
           value={repeatPassword}

@@ -3,7 +3,7 @@ import { useEffectOnce } from "usehooks-ts";
 import { IconButton, Stack, Typography } from "@mui/joy";
 import { SendRounded, ArrowBackSharp } from "@mui/icons-material";
 import { FocusContext, ChatContext } from "./MessageCard";
-import { MessageList } from "./MessageList";
+import { MessageListMemo } from "./MessageList";
 import { StyledJoyTextarea } from "./Common";
 import styled from "@emotion/styled";
 import { Theme, useMediaQuery } from "@mui/material";
@@ -32,9 +32,7 @@ const TextareaBorder = styled.div`
   }
 `;
 
-export const ChatView = memo(NonMemoChatView, ({ chatWith: prevChat, message: prevMess }, { chatWith: nextChat, message: nextMess }) => prevChat === nextChat && prevMess === nextMess);
-
-function NonMemoChatView({ chatWith, message, setMessage }: ChatViewProps) {
+const ChatView = function({ chatWith, message, setMessage }: ChatViewProps) {
   const [currentFocus, setCurrentFocus] = useState<string>(null);
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
 
@@ -45,7 +43,7 @@ function NonMemoChatView({ chatWith, message, setMessage }: ChatViewProps) {
       <Stack direction="row" spacing={2}>
         {belowXL && 
           <IconButton variant="outlined" color="neutral" onClick={() => { window.location.hash = "" }}>
-            <ArrowBackSharp sx={{ fontSize: "2rem", color: "neutral.contrastText", backgroundColor: "neutral.main" }}/>
+            <ArrowBackSharp sx={{ fontSize: "2rem" }}/>
           </IconButton>}
         <Typography level="h5" sx={{ textAlign: "left", flex: 0, flexBasis: "content", display: "flex", flexWrap: "wrap", alignContent: "center" }}>
           {chatWith}
@@ -53,7 +51,7 @@ function NonMemoChatView({ chatWith, message, setMessage }: ChatViewProps) {
       </Stack>
       <ChatContext.Provider value={{ chatWith }}>
         <FocusContext.Provider value={{ currentFocus, clearFocus: () => setCurrentFocus(null) }} >
-        <MessageList
+        <MessageListMemo
           repliedClicked={repliedClicked}/>
         </FocusContext.Provider>
       </ChatContext.Provider>
@@ -76,3 +74,5 @@ function NonMemoChatView({ chatWith, message, setMessage }: ChatViewProps) {
       </Stack>
     </Stack>);
 }
+
+export const ChatViewMemo = memo(ChatView, ({ chatWith: prevChat, message: prevMess }, { chatWith: nextChat, message: nextMess }) => prevChat === nextChat && prevMess === nextMess);

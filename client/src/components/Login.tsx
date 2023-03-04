@@ -155,8 +155,7 @@ export default function LogInForm() {
       {!usernameEntered &&
         <React.Fragment>
           <ControlledTextField 
-            variant="outlined" 
-            label="Username" 
+            variant="outlined"
             placeholder="Please enter your username" 
             type="text"
             value={username}
@@ -181,8 +180,7 @@ export default function LogInForm() {
       {usernameEntered &&
         <React.Fragment>
           <ControlledTextField 
-            variant="outlined" 
-            label="Password" 
+            variant="outlined"
             placeholder="Please enter your password" 
             type={ showPassword ? "text" : "password" }
             value={password}

@@ -1,8 +1,9 @@
 import _ from "lodash";
 import React, { useState, useLayoutEffect, useRef, useContext, memo } from "react";
-import { Card, CircularProgress, List, ListItem, ListSubheader, Tooltip, Typography } from "@mui/joy";
+import { Card, CircularProgress, List, ListItem, ListSubheader, Typography } from "@mui/joy";
 import { DateTime } from "luxon";
-import { MessageCard, ViewMessage, ChatContext } from "./MessageCard";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip";
+import { MessageCardMemo, ViewMessage, ChatContext } from "./MessageCard";
 import styled from "@emotion/styled";
 import { KeyboardDoubleArrowDownOutlined } from "@mui/icons-material";
 import { StyledScrollbar } from "./Common";
@@ -74,9 +75,7 @@ function convertMessages(messages: ListMessage[], repliedClicked: (id: string) =
   return result;
 }
 
-export const MessageList = memo(NonMemoMessageList);
-
-function NonMemoMessageList({ repliedClicked } : MessageListProps) {
+const MessageList = function({ repliedClicked } : MessageListProps) {
   const { chatWith } = useContext(ChatContext);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showScrollDown, setShowScrollDown] = useState(false);
@@ -132,21 +131,29 @@ function NonMemoMessageList({ repliedClicked } : MessageListProps) {
           <ListItem nested key={date}>
             <ListSubheader sticky sx={{ display: "flex", justifyContent: "center", backgroundColor: "transparent" }}>
               { formatDate(date).search(/^\d{1,2}\/\d{1,2}\/\d{4}$/) === -1
-                ? 
-                <Tooltip 
-                  title={DateTime.fromISO(date).toFormat("d LLLL y")} 
-                  placement="right" 
-                  variant="outlined"
-                  size="sm"
-                  sx={{ backgroundColor: "#f8f7f5", borderColor: "rgba(237, 237, 237, 0.7)", boxShadow: "0px 0.5px 2px #e4e4e4" }}>
-                    { dayCard(date) }
-                </Tooltip>
+                ?(<Tooltip placement="left" mainAxisOffset={120} crossAxisOffset={-10}>
+                    <TooltipTrigger>
+                      {dayCard(date)}
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <div style={{ width: "fit-content",
+                                    backgroundColor: "#f8f7f5", 
+                                    borderColor: "rgba(237, 237, 237, 0.7)", 
+                                    boxShadow: "0px 0.5px 4px #e4e4e4",
+                                    position: "absolute",
+                                    zIndex: 2 }}>
+                        <Typography level="body3" noWrap>
+                          {DateTime.fromISO(date).toFormat("d LLLL y")}
+                        </Typography>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>)
                 : dayCard(date) }
             </ListSubheader>
             <List component="ol" sx={{ "--List-gap": 5 }}>
               {messages.map((m) => (
                 <ListItem key={m.timestamp} sx={{ display: "flex", flexDirection: "row" }}>
-                  <MessageCard message={m}/>
+                  <MessageCardMemo message={m}/>
                 </ListItem>
               ))}
             </List>
@@ -160,3 +167,5 @@ function NonMemoMessageList({ repliedClicked } : MessageListProps) {
     </StyledScrollbar>
   )
 }
+
+export const MessageListMemo = memo(MessageList);

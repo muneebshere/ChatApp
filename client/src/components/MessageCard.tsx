@@ -63,9 +63,7 @@ export type ViewMessage = {
   readonly first: boolean;
 }
 
-export const MessageCard = memo(MessageCardNonMemo, ({ message: { id: prevId } }, { message: { id: nextId } }) => prevId === nextId);
-
-function MessageCardNonMemo({ message }: { message: ViewMessage}) {
+const MessageCard = function ({ message }: { message: ViewMessage}) {
   const { currentFocus, clearFocus } = useContext(FocusContext);
   const { chatWith } = useContext(ChatContext);
   const { id, content, timestamp, replyingTo, status, first } = message;
@@ -159,3 +157,5 @@ function MessageCardNonMemo({ message }: { message: ViewMessage}) {
     </Grid>
   )
 }
+
+export const MessageCardMemo = memo(MessageCard, ({ message: { id: prevId } }, { message: { id: nextId } }) => prevId === nextId);
