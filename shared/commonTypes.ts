@@ -24,47 +24,47 @@ export function randomFunctions() {
     return { getRandomVector, getRandomString };
 }
 
-export function failure(reason: CommonStrings, details: any = null): Failure {
+export function failure(reason: ErrorStrings, details: any = null): Failure {
     return details ? { reason, details } : { reason };
 }
 
-export type ExposedSignedPublicKey = {
-    readonly exportedPublicKey: Buffer;
-    readonly signature: Buffer; 
-}
+export type ExposedSignedPublicKey = Readonly<{
+    exportedPublicKey: Buffer;
+    signature: Buffer; 
+}>;
 
 export type SignedKeyPair = ExposedSignedPublicKey & {
     readonly keyPair: CryptoKeyPair;
 }
 
-export type ExportedSigningKeyPair = {
-    readonly wrappedPrivateKey: Buffer;
-    readonly exportedPublicKey: Buffer;
-}
+export type ExportedSigningKeyPair = Readonly<{
+    wrappedPrivateKey: Buffer;
+    exportedPublicKey: Buffer;
+}>;
 
 export type ExportedSignedKeyPair = ExportedSigningKeyPair & {
     readonly signature: Buffer;
 }
 
-export type KeyBundle = {
-    readonly owner: string;
-    readonly identifier: string;
-    readonly preKeyVersion: number;
-    readonly verifyingIdentityKey: Buffer;
-    readonly publicDHIdentityKey: ExposedSignedPublicKey;
-    readonly publicSignedPreKey: ExposedSignedPublicKey;
-    readonly publicOneTimeKey?: ExposedSignedPublicKey; 
-}
+export type KeyBundle = Readonly<{
+    owner: string;
+    identifier: string;
+    preKeyVersion: number;
+    verifyingIdentityKey: Buffer;
+    publicDHIdentityKey: ExposedSignedPublicKey;
+    publicSignedPreKey: ExposedSignedPublicKey;
+    publicOneTimeKey?: ExposedSignedPublicKey; 
+}>;
 
-export type PasswordDeriveInfo = {
+export type PasswordDeriveInfo = Readonly<{
     pSalt: Buffer;
     iterSeed: number;
-} 
+}>;
 
-export type EncryptInfo = {
+export type EncryptInfo = Readonly<{
     encryptKey: CryptoKey;
     iv: Buffer
-}
+}>
 
 export type EncryptedData = {
     readonly ciphertext: Buffer;
@@ -78,36 +78,89 @@ export type UserEncryptedData = EncryptedData & { hSalt: Buffer };
 
 export type PasswordEncryptedData = EncryptedData & PasswordDeriveInfo & { hSalt: Buffer };
 
-export type MessageHeader = {
-    readonly addressedTo: string;
-    readonly sessionId: string;
-    readonly receivingRatchetNumber: number;
-    readonly sendingRatchetNumber: number;
-    readonly sendingChainNumber: number;
-    readonly previousChainNumber: number;
-    readonly nextDHRatchetKey: ExposedSignedPublicKey;
-    readonly messageBody: SignedEncryptedData; 
+export type Profile = Readonly<{
+    username: string;
+    displayName: string;
+    profilePicture: string;
+}>;
+
+export type Contact = Profile & {
+    readonly contactName?: string;
 }
 
-export type MessageRequestHeader = {
-    readonly addressedTo: string;
-    readonly myVerifyingIdentityKey: Buffer;
-    readonly myPublicDHIdentityKey: ExposedSignedPublicKey;
-    readonly myPublicEphemeralKey: ExposedSignedPublicKey;
-    readonly yourSignedPreKeyVersion: number;
-    readonly yourOneTimeKeyIdentifier?: string;
-    readonly initialMessage: SignedEncryptedData; 
-}
+export type MessageBody = Readonly<{
+    sender: string;
+    recipient: string;
+    messageId: string;
+    replyingTo?: string;
+    timestamp: number;
+    content: string;
+}>;
 
-export type Message = {
-    readonly sentByMe: boolean;
-    readonly messageId: string;
-    readonly replyingTo?: string;
-    readonly timestamp: number;
-    readonly content: string;
-    delivered: number | false;
-    read: number | false;
-}
+export type PlainMessage = Readonly<{
+    sentByMe: boolean;
+    messageId: string;
+    replyingTo?: { id: string, replyToOwn: boolean, displayText: string };
+    timestamp: number;
+    content: string;
+}>;
+
+export type DisplayMessage = Omit<PlainMessage, "sentByMe"> & ({ readonly sentByMe: false } | {
+    readonly sentByMe: true;
+    delivery?: {
+        readonly delivered?: number | false;
+        readonly seen?: number | false;
+    }
+})
+
+export type MessageHeader = Readonly<{
+    addressedTo: string;
+    sessionId: string;
+    messageId: string;
+    timestamp: number;
+    receivingRatchetNumber: number;
+    sendingRatchetNumber: number;
+    sendingChainNumber: number;
+    previousChainNumber: number;
+    nextDHRatchetKey: ExposedSignedPublicKey;
+    messageBody: SignedEncryptedData; 
+}>;
+
+export type MessageRequestHeader = Readonly<{
+    sessionId: string;
+    timestamp: number;
+    addressedTo: string;
+    myVerifyingIdentityKey: Buffer;
+    myPublicDHIdentityKey: ExposedSignedPublicKey;
+    myPublicEphemeralKey: ExposedSignedPublicKey;
+    yourSignedPreKeyVersion: number;
+    yourOneTimeKeyIdentifier?: string;
+    initialMessage: SignedEncryptedData; 
+}>;
+
+export type StoredMessage = Readonly<{
+    sessionId: string;
+    messageId: string;
+    timestamp: number;
+    content: UserEncryptedData;
+    delivered?: number | false;
+    seen?: number | false;
+}>;
+
+export type ChatData = Readonly<{
+  sessionId: string,
+  lastActivity: number,
+  chatDetails: UserEncryptedData,
+  exportedChattingSession: UserEncryptedData
+}>;
+
+export type MessageEvent = Readonly<{
+    addressedTo: string;
+    sessionId: string;
+    messageId: string;
+    timestamp: number;
+    event: "delivered" | "seen";
+}>;
 
 export type Username = { 
     username: string 
@@ -128,6 +181,12 @@ type SecretData = {
     serverProof: PasswordEncryptedData,
     encryptionBase: PasswordEncryptedData
 };
+
+export type EstablishData = {
+    sessionReference: string,
+    publicKey: Buffer,
+    verifyingKey: Buffer
+}
 
 export type AuthSetupKey = {
     authKeyData: EncryptedData,
@@ -160,9 +219,9 @@ export type RegisterNewUserRequest = {
 };
 
 export type NewUserData = SecretData & {
-    username: string, 
-    displayName: string,
+    username: string,
     x3dhInfo: UserEncryptedData,
+    userDetails: PasswordEncryptedData,
     keyBundles: PublishKeyBundlesRequest
 };
 
@@ -185,7 +244,7 @@ export type AuthChangeData = SecretData & {
 };
 
 export type SignInResponse = {
-    displayName: string,
+    userDetails: PasswordEncryptedData,
     x3dhInfo: UserEncryptedData
 };
 
@@ -203,18 +262,47 @@ export enum SocketEvents {
     UsernameExists = "username-exists",
     UserLoginPermitted = "user-login-permitted",
     RequestAuthSetupKey = "request-auth-setup-key",
+
     RegisterNewUser = "register-new-user",
     InitiateAuthentication = "initiate-authentication",
     ConcludeAuthentication = "conclude-authentication",
+
     SetSavedDetails = "set-saved-details",
     GetSavedDetails = "get-saved-details",
+
     PublishKeyBundles = "publish-key-bundles",
     RequestKeyBundle = "request-key-bundle",
+    
+    SendMessageRequest = "send-message-request",
+    SendMessage = "send-message",
+    SendMessageEvent = "send-message-event",
+    DeleteMessageRequest = "delete-message-request",
+
+    MessageReceived = "message-received",
+    MessageRequestReceived = "message-request-received",
+    MessageEventLogged = "message-event-logged",
+
+    GetAllChats = "get-all-chats",
+    GetAllRequests = "get-all-requests",
+    GetUnprocessedMessages = "get-unprocessed-messages",
+    GetMessagesByNumber = "get-messages-by-number",
+    GetMessagesUptoTimestamp = "get-messages-upto-timestamp",
+    GetMessagesUptoId = "get-messages-upto-id",
+    GetMessageById = "get-message-by-id",
+
+    StoreMessage = "store-message",
+    UpdateMessage = "update-message",
+    CreateChat = "create-chat",
+    UpdateChat = "update-chat",
+
+    RequestRoom = "request-room",
+    RoomEstablished = "room-established",
+    
     TerminateCurrentSession = "terminate-current-session",
     LogOut = "log-out"
 }
 
-export enum CommonStrings {
+export enum ErrorStrings {
     NoConnectivity = "NoConnectivity",
     DecryptFailure = "DecryptFailure",
     ProcessFailed = "ProcessFailed",

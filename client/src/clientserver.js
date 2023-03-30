@@ -13,6 +13,7 @@ const httpsOptions = {
   key: fs.readFileSync(`..\\..\\certificates\\key.pem`),
   cert: fs.readFileSync(`..\\..\\certificates\\cert.pem`)
 }
+/* 
 startApp.get("/", async (req, res, next) => {
   const { hostname } = req;
   let targetPort = targetPorts.get(hostname) ?? null;
@@ -28,6 +29,7 @@ startApp.get("/", async (req, res, next) => {
   }
   res.status(301).redirect(`https://${hostname}:${targetPort}/`);
   next();
-});
+}); */
+startApp.use(express.static("../public"));
 const httpsServer = createServer(httpsOptions, startApp);
 httpsServer.listen(PORT, () => console.log(`Server started on port ${PORT}`));

@@ -17,6 +17,7 @@ import { DateTime } from "luxon";
 import styled from "@emotion/styled";
 import SvgMessageCard from "./SvgMessageCard";
 import "katex/dist/katex.min.css"
+import { DisplayMessage } from "../../../shared/commonTypes";
 
 interface HTMLDivElementScroll extends HTMLDivElement {
   scrollIntoViewIfNeeded(centerIfNeeded?: boolean): void;
@@ -47,52 +48,53 @@ const StyledReactMarkdown = styled(ReactMarkdown as unknown as React.ComponentCl
 `
 export type FocusData = {
   readonly currentFocus: string;
-  readonly clearFocus: () => void;
+  readonly setCurrentFocus: (id: string) => void;
 }
 
 export const FocusContext = createContext<FocusData>(null);
 
 export const ChatContext = createContext({ chatWith: "Unknown" });
 
-export type ViewMessage = {
-  readonly id: string;
-  readonly content: string;
-  readonly timestamp: number;
-  readonly replyingTo?: { click: () => void, replyToOwn: boolean, text: string };
-  readonly status: "read" | "delivered" | "sent" | "pending";
-  readonly first: boolean;
-}
+export type ViewMessage = Readonly<DisplayMessage & { first: boolean }>;
 
-const MessageCard = function ({ message }: { message: ViewMessage}) {
-  const { currentFocus, clearFocus } = useContext(FocusContext);
+const MessageCard = function ({ message }: { message: ViewMessage }) {
+  const { currentFocus, setCurrentFocus } = useContext(FocusContext);
   const { chatWith } = useContext(ChatContext);
-  const { id, content, timestamp, replyingTo, status, first } = message;
+  const { messageId, content, timestamp, replyingTo, sentByMe, first } = message;
   const [darken, setDarken] = useState(false);
   const sheetRef = useRef<HTMLDivElementScroll>(null);
   useUpdateEffect(() => {
-    if (currentFocus === id) { 
+    if (currentFocus === messageId) { 
       sheetRef.current.scrollIntoViewIfNeeded();
       setDarken(true);
-      clearFocus();
+      setCurrentFocus(null);
     } 
   }, [currentFocus]);
-  const sentByMe = status !== null;
-  const statusIcon = 
-    status !== null ? match(status)
-                        .with("pending", () => <HourglassTop sx={{ color: "gold", rotate: "-90deg", fontSize: "1rem" }}/>)
-                        .with("sent", () => <DoneSharp sx={{ color: "gray", fontSize: "1rem" }}/>)
-                        .with("delivered", () => <DoneAllSharp sx={{ color: "gray", fontSize: "1rem" }}/>)
-                        .with("read", () => <DoneAllSharp sx={{ color: "blue", fontSize: "1rem" }}/>)
-                        .exhaustive() : null;
+  let statusIcon: any = null;
+  if (sentByMe) {
+    const { delivery } = message;
+    if (!delivery) {
+      statusIcon = <HourglassTop sx={{ color: "gold", rotate: "-90deg", fontSize: "1rem" }}/>;
+    }
+    else {
+      const { delivered, seen } = delivery;
+      if (!delivered && !seen) {
+        statusIcon = <DoneSharp sx={{ color: "gray", fontSize: "1rem" }}/>;
+      }
+      else {
+        statusIcon = <DoneAllSharp sx={{ color: seen ? "blue" : "gray", fontSize: "1rem" }}/>;
+      }
+    }
+  }
   const repliedMessage = 
     replyingTo !== null ? (() => {
-      const { click, replyToOwn, text } = replyingTo
+      const { id: replyId, replyToOwn, displayText } = replyingTo;
       const repliedColor = sentByMe ? "#e8fae5" : "#f2f2f2";
       const repliedOutlineColor = replyToOwn ? "#53bdeb" : "#06cf9c";
       const repliedBorderColor = sentByMe ? "#bddcb8" : "#c7c7c7";
       const repliedBorder = `thin solid ${repliedBorderColor}`;
       return (
-          <Link component="button" underline="none" onClick={click}>
+          <Link component="button" underline="none" onClick={() => setCurrentFocus(replyId) }>
             <Stack direction="row" sx={{ width: "100%", paddingBottom: 0.5 }}>
               <Sheet sx={{ width: "4px", backgroundColor: repliedOutlineColor, borderLeftColor: repliedOutlineColor, borderTopLeftRadius: "10px", borderBottomLeftRadius: "10px" }}/>
               <Sheet variant="soft" sx={{ flexGrow: 1, backgroundColor: repliedColor, padding: 1, borderTopRightRadius: "10px", borderBottomRightRadius: "10px", borderTop: "thin solid transparent", borderBottom: repliedBorder, borderRight: repliedBorder, boxShadow: `1px 0px 2px ${repliedBorderColor}`, "&:hover": { boxShadow: `1px 0px 7px ${repliedBorderColor}` } }}>
@@ -101,7 +103,7 @@ const MessageCard = function ({ message }: { message: ViewMessage}) {
                     {replyToOwn ? "You" : chatWith }
                   </Typography>
                   <Typography component="span" level="body3">
-                    <ReactMarkdown components={{ p: "span" }}  children={text} remarkPlugins={[remarkGfm]}/>
+                    <ReactMarkdown components={{ p: "span" }}  children={displayText} remarkPlugins={[remarkGfm]}/>
                   </Typography>
                 </Stack>
               </Sheet>
@@ -158,4 +160,7 @@ const MessageCard = function ({ message }: { message: ViewMessage}) {
   )
 }
 
-export const MessageCardMemo = memo(MessageCard, ({ message: { id: prevId } }, { message: { id: nextId } }) => prevId === nextId);
+export const MessageCardMemo = memo(MessageCard, 
+  ({ message: prev }, { message: next }) => 
+    prev.messageId === next.messageId 
+    && (!prev.sentByMe || !next.sentByMe || !(prev.delivery || next.delivery) || _.isEqual(prev.delivery, next.delivery)));

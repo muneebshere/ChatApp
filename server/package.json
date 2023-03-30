@@ -14,7 +14,7 @@
     "mongoose": "^6.9.0",
     "nodemon": "^2.0.20",
     "safe-stable-stringify": "^2.4.2",
-    "socket.io": "^4.5.4",
+    "socket.io": "4.6.1",
     "ts-node": "^10.9.1",
     "underscore": "^1.13.6"
   },

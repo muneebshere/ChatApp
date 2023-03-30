@@ -3,7 +3,7 @@ import { match } from "ts-pattern";
 import { SubmitResponse, SubmitProps, ControlledTextField, StyledSwitch } from "./Common";
 import React, { useState, useRef, useEffect, useReducer, useContext, createContext, Dispatch } from "react";
 import { FormControl, FormLabel, Stack, Button, CircularProgress, Modal, ModalClose, Sheet, Typography, Alert } from "@mui/joy";
-import { CommonStrings, Failure } from "../../../shared/commonTypes";
+import { ErrorStrings, Failure } from "../../../shared/commonTypes";
 
 type LogInData = {
   readonly username: string;
@@ -131,11 +131,11 @@ export default function LogInForm() {
     const { reason, details } = (await submit({ username, password, savePassword })) ?? {};
     if (!reason) setPasswordValid(true);
     else {
-      if (reason === CommonStrings.IncorrectPassword) {
+      if (reason === ErrorStrings.IncorrectPassword) {
         setLastIncorrectPasswords([...lastIncorrectPasswords, [username, password]]);
         setPasswordValid(false);
       }
-      else if (reason === CommonStrings.TooManyWrongTries) {
+      else if (reason === ErrorStrings.TooManyWrongTries) {
         setPasswordValid(false);
         const { tries, allowsAt } = details ?? {};
         if (allowsAt && allowsAt > Date.now()) {

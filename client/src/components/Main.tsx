@@ -14,10 +14,8 @@ const chatWithList = chats.map((c) => c.chatWith);
 
 export default function Main({ connected, displayName, client }: { connected: boolean, displayName: string, client: Client }) {
   const [currentChatWith, setCurrentChatWith] = useState("");
-  const [search, setSearch] = useState("");
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const typedMessages = useRef(new Map<string, string>());
-  const onSearchChange = (e: any) => setSearch(e.target.value);
   
   useEffectOnce(() => {
     const currentChatWith = window.history.state?.currentChatWith || "";
@@ -28,43 +26,14 @@ export default function Main({ connected, displayName, client }: { connected: bo
     return () => window.removeEventListener("popstate", popStateListener);
   });
 
-  async function validateNewChat(username: string) {
-    if (!username) return "";
-    if (chatWithList.some((chatWith) => chatWith.toLowerCase() === username.toLowerCase())) return "There is already an existing chat with this user.";
-    return (await client.checkUsernameExists(username)) ? "" : "No such user.";
-  }
-
   function openChat(chat: string) {
     window.history.pushState({ currentChatWith: chat }, "", `#${chat}`);
     setCurrentChatWith(chat);
   }
 
-  const disconnectedAlert = (
-    connected ||
-    <Grid xs={12} sx={{ flex: 0, flexBasis: "content" }}>
-      <Item>
-        <Stack direction="column" sx={{ justifyContent: "stretch", justifySelf: "center" }}>
-          <Alert 
-            variant="soft" 
-            size="lg"
-            sx={{ justifyContent: "center", borderBottomRightRadius: 0, borderBottomLeftRadius: 0 }} 
-            color="danger" 
-            startDecorator={<ReportProblem/>}>
-            <Typography sx={{ textAlign: "center" }}>
-              Disconnected. Reconnecting...
-            </Typography>
-          </Alert>
-          <LinearProgress variant="soft" color="danger" 
-            sx={{ borderTopRightRadius: 0, borderTopLeftRadius: 0 }} />
-        </Stack>
-      </Item>
-    </Grid>);
-
   return (
   <Grid container direction="column" sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column" }}>
-    <React.Fragment>
-      {disconnectedAlert}
-    </React.Fragment>
+    <DisconnectedAlert connected={connected}/>
     <Grid xs={12} sx={{ flex: 0, flexBasis: "content" }}>
       <Item>
         <Typography level="h4" sx={{ textAlign: "center" }}>
@@ -78,73 +47,112 @@ export default function Main({ connected, displayName, client }: { connected: bo
       sx={{ flex: 1, flexBasis: 0, minHeight: 0 }}>
       {(!belowXL || !currentChatWith) &&
       <Grid xs={12} xl={3} sx={{ minHeight: 0, maxHeight: "100%", display: "flex", flexDirection: "column" }}>
-        <Stack direction="column" style={{ height: "100%" }}>
-          <div style={{ display: "flex" }}>
-            <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-start", alignContent: "center", paddingLeft: 20 }}>
-              <Typography level="h4" fontWeight="md">
-                Chats
-              </Typography>
-            </div>
-            <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-end", alignContent: "center", paddingRight: 40 }}>
-            <Popover modal={true}>
-              <PopoverTrigger>
-                <IconButton variant="plain" color="success">
-                  <PersonAddAltOutlined color="success" sx={{ fontSize: "1.5rem" }}/>
-                </IconButton>
-              </PopoverTrigger>
-              <PopoverContent>
-                <NewChatPopup validate={validateNewChat}/>
-              </PopoverContent>
-            </Popover>
-            </div>
-          </div>
-          <div style={{ display: "flex", alignContent: "center", justifyContent: "stretch", paddingBlock: 10, paddingInline: 15 }}>
-            <Input 
-              placeholder="Search for chat"
-              value={search}
-              style={{ width: "100%" }}
-              onChange={onSearchChange}
-              endDecorator={
-                search 
-                  ? (<IconButton variant="soft" color="neutral" onClick={() => setSearch("")}>
-                      <ClearSharp sx={{ fontSize: "1.2rem" }}/>
-                    </IconButton>)
-                  : (<Search sx={{ fontSize: "1.2rem" }}/>) 
-              }/>
-          </div>
-          <StyledScrollbar>
-            <List variant="plain" color="neutral">
-              {chatWithList.filter((chatWith) => !search || chatWith.toLowerCase().includes(search.toLowerCase())).map((chatWith) =>
-              <ListItem key={chatWith}>
-                <ListItemButton 
-                  onClick={() => openChat(chatWith)} 
-                  selected={currentChatWith === chatWith} 
-                  sx={{ borderRadius: "10px" }}
-                  variant={currentChatWith === chatWith ? "soft" : "plain"}
-                  color="success">
-                  {chatWith}
-                </ListItemButton>
-              </ListItem>)}
-            </List>            
-          </StyledScrollbar>
-        </Stack>
+        <Sidebar currentChatWith={currentChatWith} openChat={openChat} client={client}/>
       </Grid>}
       {(!belowXL || currentChatWith) &&
       <Grid xs={12} xl={9} sx={{ minHeight: 0, maxHeight: "100%" }}>
-        <Item sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
-          <ChatViewMemo 
-            key={currentChatWith ?? ""}
-            chatWith={currentChatWith ?? ""}
-            message={typedMessages.current.get(currentChatWith) ?? ""}
-            setMessage={(message: string) => {
-              if (currentChatWith) {
-                typedMessages.current.set(currentChatWith, message)
-              }
-            }}/>
-        </Item>
+        <ChatViewMemo 
+          key={currentChatWith ?? ""}
+          chatWith={currentChatWith ?? ""}
+          message={typedMessages.current.get(currentChatWith) ?? ""}
+          setMessage={(message: string) => {
+            if (currentChatWith) {
+              typedMessages.current.set(currentChatWith, message)
+            }}}/>
       </Grid>}
     </Grid>
   </Grid>)
+}
+
+type SidebarProps = {
+  currentChatWith: string,
+  openChat: (chatWith: string) => void,
+  client: Client
+}
+
+function Sidebar({ currentChatWith, openChat, client }: SidebarProps) {
+  const [search, setSearch] = useState("");
+
+  async function validateNewChat(username: string) {
+    if (!username) return "";
+    if (chatWithList.some((chatWith) => chatWith.toLowerCase() === username.toLowerCase())) return "There is already an existing chat with this user.";
+    return (await client.checkUsernameExists(username)) ? "" : "No such user.";
+  }
+
+  return (
+    <Stack direction="column" style={{ height: "100%" }}>
+      <div style={{ display: "flex" }}>
+        <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-start", alignContent: "center", paddingLeft: 20 }}>
+          <Typography level="h4" fontWeight="md">
+            Chats
+          </Typography>
+        </div>
+        <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-end", alignContent: "center", paddingRight: 40 }}>
+        <Popover modal={true}>
+          <PopoverTrigger>
+            <IconButton variant="plain" color="success">
+              <PersonAddAltOutlined color="success" sx={{ fontSize: "1.5rem" }}/>
+            </IconButton>
+          </PopoverTrigger>
+          <PopoverContent>
+            <NewChatPopup validate={validateNewChat}/>
+          </PopoverContent>
+        </Popover>
+        </div>
+      </div>
+      <div style={{ display: "flex", alignContent: "center", justifyContent: "stretch", paddingBlock: 10, paddingInline: 15 }}>
+        <Input 
+          placeholder="Search for chat"
+          value={search}
+          style={{ width: "100%" }}
+          onChange={(e: any) => setSearch(e.target.value)}
+          endDecorator={
+            search 
+              ? (<IconButton variant="soft" color="neutral" onClick={() => setSearch("")}>
+                  <ClearSharp sx={{ fontSize: "1.2rem" }}/>
+                </IconButton>)
+              : (<Search sx={{ fontSize: "1.2rem" }}/>) 
+          }/>
+      </div>
+      <StyledScrollbar>
+        <List variant="plain" color="neutral">
+          {chatWithList.filter((chatWith) => !search || chatWith.toLowerCase().includes(search.toLowerCase())).map((chatWith) =>
+          <ListItem key={chatWith}>
+            <ListItemButton 
+              onClick={() => openChat(chatWith)} 
+              selected={currentChatWith === chatWith} 
+              sx={{ borderRadius: "10px" }}
+              variant={currentChatWith === chatWith ? "soft" : "plain"}
+              color="success">
+              {chatWith}
+            </ListItemButton>
+          </ListItem>)}
+        </List>            
+      </StyledScrollbar>
+    </Stack>)
+}
+
+function DisconnectedAlert({ connected }: { connected: boolean }) {
+  return !connected
+    ? (<Grid xs={12} sx={{ flex: 0, flexBasis: "content" }}>
+        <Item>
+          <Stack direction="column" sx={{ justifyContent: "stretch", justifySelf: "center" }}>
+            <Alert 
+              variant="soft" 
+              size="lg"
+              sx={{ justifyContent: "center", borderBottomRightRadius: 0, borderBottomLeftRadius: 0 }} 
+              color="danger" 
+              startDecorator={<ReportProblem/>}>
+              <Typography sx={{ textAlign: "center" }}>
+                Disconnected. Reconnecting...
+              </Typography>
+            </Alert>
+            <LinearProgress variant="soft" color="danger" 
+              sx={{ borderTopRightRadius: 0, borderTopLeftRadius: 0 }} />
+         </Stack>
+        </Item>
+      </Grid>)
+    : null;
 }
 
 function NewChatPopup({ validate }: { validate: (username: string) => Promise<string> }) {

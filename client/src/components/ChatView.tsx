@@ -2,9 +2,9 @@ import React, { useState, useCallback, memo } from "react";
 import { useEffectOnce } from "usehooks-ts";
 import { IconButton, Stack, Typography } from "@mui/joy";
 import { SendRounded, ArrowBackSharp } from "@mui/icons-material";
-import { FocusContext, ChatContext } from "./MessageCard";
+import { ChatContext } from "./MessageCard";
 import { MessageListMemo } from "./MessageList";
-import { StyledJoyTextarea } from "./Common";
+import { Item, StyledJoyTextarea } from "./Common";
 import styled from "@emotion/styled";
 import { Theme, useMediaQuery } from "@mui/material";
 
@@ -33,46 +33,42 @@ const TextareaBorder = styled.div`
 `;
 
 const ChatView = function({ chatWith, message, setMessage }: ChatViewProps) {
-  const [currentFocus, setCurrentFocus] = useState<string>(null);
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
 
-  const repliedClicked = useCallback((id: string) => setCurrentFocus(id), [currentFocus]);
-
   return (
-    <Stack direction="column" spacing={1} sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column" }}>
-      <Stack direction="row" spacing={2}>
-        {belowXL && 
-          <IconButton variant="outlined" color="neutral" onClick={() => { window.location.hash = "" }}>
-            <ArrowBackSharp sx={{ fontSize: "2rem" }}/>
-          </IconButton>}
-        <Typography level="h5" sx={{ textAlign: "left", flex: 0, flexBasis: "content", display: "flex", flexWrap: "wrap", alignContent: "center" }}>
-          {chatWith}
-        </Typography>
+    <Item sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      <Stack direction="column" spacing={1} sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column" }}>
+        <Stack direction="row" spacing={2}>
+          {belowXL && 
+            <IconButton variant="outlined" color="neutral" onClick={() => { window.location.hash = "" }}>
+              <ArrowBackSharp sx={{ fontSize: "2rem" }}/>
+            </IconButton>}
+          <Typography level="h5" sx={{ textAlign: "left", flex: 0, flexBasis: "content", display: "flex", flexWrap: "wrap", alignContent: "center" }}>
+            {chatWith}
+          </Typography>
+        </Stack>
+        <ChatContext.Provider value={{ chatWith }}>
+            <MessageListMemo/>
+        </ChatContext.Provider>
+        <Stack direction="row" spacing={1} sx={{ flex: 0, flexBasis: "content", display: "flex", flexDirection: "row", flexWrap: "nowrap" }}>
+          <TextareaBorder>
+            <StyledJoyTextarea 
+              placeholder="Type a message"
+              defaultValue={message}
+              onChange={ (e) => setMessage(e.target.value) }
+              minRows={1} 
+              maxRows={5} 
+              style={{ flex: 1 }}/>
+          </TextareaBorder>
+          <IconButton 
+            variant="outlined"
+            color="success" 
+            sx={{ flexGrow: 0, flexBasis: "content", height: "fit-content", alignSelf: "center", borderRadius: 20 }}>
+            <SendRounded sx={{ fontSize: "2rem"}}/>
+          </IconButton>
+        </Stack>
       </Stack>
-      <ChatContext.Provider value={{ chatWith }}>
-        <FocusContext.Provider value={{ currentFocus, clearFocus: () => setCurrentFocus(null) }} >
-        <MessageListMemo
-          repliedClicked={repliedClicked}/>
-        </FocusContext.Provider>
-      </ChatContext.Provider>
-      <Stack direction="row" spacing={1} sx={{ flex: 0, flexBasis: "content", display: "flex", flexDirection: "row", flexWrap: "nowrap" }}>
-        <TextareaBorder>
-          <StyledJoyTextarea 
-            placeholder="Type a message"
-            defaultValue={message}
-            onChange={ (e) => setMessage(e.target.value) }
-            minRows={1} 
-            maxRows={5} 
-            style={{ flex: 1 }}/>
-        </TextareaBorder>
-        <IconButton 
-          variant="outlined"
-          color="success" 
-          sx={{ flexGrow: 0, flexBasis: "content", height: "fit-content", alignSelf: "center", borderRadius: 20 }}>
-          <SendRounded sx={{ fontSize: "2rem"}}/>
-        </IconButton>
-      </Stack>
-    </Stack>);
+    </Item>);
 }
 
 export const ChatViewMemo = memo(ChatView, ({ chatWith: prevChat, message: prevMess }, { chatWith: nextChat, message: nextMess }) => prevChat === nextChat && prevMess === nextMess);
