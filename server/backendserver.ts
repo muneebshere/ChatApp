@@ -12,13 +12,9 @@ import { Server as SocketServer, Socket } from "socket.io";
 import { Buffer } from "./node_modules/buffer";
 import { SessionCrypto } from "../shared/sessionCrypto";
 import * as crypto from "../shared/cryptoOperator";
+import { serialize, deserialize } from "../shared/cryptoOperator";
 import { failure, Failure, ErrorStrings, Username, AuthSetupKey, AuthInfo, RegisterNewUserRequest, InitiateAuthenticationResponse, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, PasswordDeriveInfo, UserAuthInfo, randomFunctions, SavedDetails, AuthSetupKeyData, NewUserData, ConcludeAuthenticationRequest, AuthChangeData, MessageRequestHeader, KeyBundle, EstablishData, UserEncryptedData, MessageHeader, MessageEvent, StoredMessage } from "../shared/commonTypes";
-import BufferSerializer from "./custom_modules/buffer-serializer";
 import { MongoHandlerCentral, MongoUserHandler, bufferReplaceForMongo } from "./MongoHandler";
-
-const serializer = new BufferSerializer();
-const serialize: (thing: any) => Buffer = serializer.toBuffer.bind(serializer);
-const deserialize: (buff: Buffer) => any = serializer.fromBuffer.bind(serializer);
 
 try {
   config({ debug: true, path:"./config.env" });
@@ -103,6 +99,8 @@ class SocketHandler {
   }
 
   setSaveToken(sessionReference: string, saveToken: string) {
+    const _saveToken = this.#saveToken;
+    const _sessionRef = this.#sessionReference;
     if (!this.#saveToken && sessionReference === this.#sessionReference) {
       this.#saveToken = saveToken;
       return true;
@@ -382,7 +380,7 @@ class SocketHandler {
 
   private validateKeyBundleOwner(keyBundles: PublishKeyBundlesRequest, username: string) {
     let { defaultKeyBundle, oneTimeKeyBundles } = keyBundles;
-    return [defaultKeyBundle.owner, ...oneTimeKeyBundles.map((kb) => kb.owner)].every((kb: any) => kb.owner === username)
+    return [defaultKeyBundle.owner, ...oneTimeKeyBundles.map((kb) => kb.owner)].every((owner) => owner === username);
   }
 
   private async publishKeyBundles(keyBundles: PublishKeyBundlesRequest): Promise<Failure>  {
@@ -756,6 +754,7 @@ function logError(err: any): void {
   }
 }
 const mongoUrl = "mongodb://localhost:27017/chatapp";
+MongoHandlerCentral.connect(mongoUrl);
 const MongoDBStore = ConnectMongoDBSession(session);
 const store = new MongoDBStore({ uri: mongoUrl, collection: "user_sessions" });
 const httpsOptions : ServerOptions = {
@@ -773,12 +772,6 @@ const httpsServer = createServer(httpsOptions, app);
 const socketHandlers = new Map<string, SocketHandler>();
 const interruptedSessions = new Map<string, (socket: Socket, sessionReference: string) => boolean>();
 const onlineUsers = new Map<string, string>();
-
-function keepFresh() {
-  MongoHandlerCentral.getUser("");
-  setTimeout(() => keepFresh(), 300000);
-}
-keepFresh();
 
 const io = new SocketServer(httpsServer, {
   cors: {

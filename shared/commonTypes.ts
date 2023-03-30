@@ -221,7 +221,7 @@ export type RegisterNewUserRequest = {
 export type NewUserData = SecretData & {
     username: string,
     x3dhInfo: UserEncryptedData,
-    userDetails: PasswordEncryptedData,
+    userDetails: UserEncryptedData,
     keyBundles: PublishKeyBundlesRequest
 };
 
@@ -244,7 +244,7 @@ export type AuthChangeData = SecretData & {
 };
 
 export type SignInResponse = {
-    userDetails: PasswordEncryptedData,
+    userDetails: UserEncryptedData,
     x3dhInfo: UserEncryptedData
 };
 

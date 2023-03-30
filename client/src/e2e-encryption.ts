@@ -1,25 +1,9 @@
 import { Buffer } from "./node_modules/buffer";
-import BufferSerializer from "./custom_modules/buffer-serializer";
 import * as crypto from "../../shared/cryptoOperator";
+import { serialize, deserialize } from "../../shared/cryptoOperator";
 import { ExposedSignedPublicKey, SignedKeyPair, ExportedSignedKeyPair, ExportedSigningKeyPair, KeyBundle, EncryptedData, SignedEncryptedData, MessageHeader, MessageRequestHeader, randomFunctions, UserEncryptedData, MessageBody, Profile } from "../../shared/commonTypes";
-import stringify from "safe-stable-stringify";
 
 const { getRandomVector, getRandomString } = randomFunctions();
-const serializer = new BufferSerializer();
-const serializeToB64 = (arg: any) => serialize(arg).toString("base64");
-const deserializeFromB64 = (str: string) => deserialize(Buffer.from(str, "base64"));
-const serializeMap = (map: Map<any, any>, bufferWriter: any) => {
-    const entries = Array.from(map.entries())
-        .map(([k, v]) => ({ key: serializeToB64(k), value: serializeToB64(v) }))
-    serializer.toBufferInternal(serialize(entries), bufferWriter);
-}
-const deserializeMap = (bufferReader: any) => {
-    const entries: Array<[any, any]> = deserialize(serializer.fromBufferInternal(bufferReader)).map(({ key, value }) => ([deserializeFromB64(key), deserializeFromB64(value)]));
-    return new Map(entries);
-}
-serializer.register("Map", (value: any) => value instanceof Map, serializeMap, deserializeMap);
-const serialize: (thing: any) => Buffer = serializer.toBuffer.bind(serializer);
-const deserialize: (buff: Buffer) => any = serializer.fromBuffer.bind(serializer);
 
 const nullSalt = (length: number) => Buffer.alloc(length);
 
@@ -180,12 +164,11 @@ export class X3DHUser {
 
     static async importUser(encryptedUser: UserEncryptedData, encryptionBaseVector: CryptoKey) : Promise<X3DHUser> {
         const { hSalt } = encryptedUser
-        const decryptedUser = await crypto.decryptData(encryptedUser, encryptionBaseVector, "Export|Import X3DH User");
-        if (!decryptedUser) {
-            return null;
-        }
         try {
-            const importedUser: ExportedX3DHUser = deserialize(decryptedUser);
+            const importedUser: ExportedX3DHUser = await crypto.decryptData(encryptedUser, encryptionBaseVector, "Export|Import X3DH User");
+            if (!importedUser) {
+                return null;
+            }
             const {
                 username,
                 version,
@@ -437,7 +420,7 @@ export class X3DHUser {
                 sharedRoot,
                 this.maxSkip,
                 importedDHInitializer);
-            const content = serializeToB64({ ...profileDetails, username: this.username });
+            const content = serialize({ ...profileDetails, username: this.username }).toString("base64");
             const exportedChattingSession = await chattingSession.sendMessage({ content, timestamp }, sendResponse);
             if (exportedChattingSession && myOneTimeKeyIdentifier) {
                 this.#currentOneTimeKeys.delete(myOneTimeKeyIdentifier);
@@ -476,7 +459,7 @@ export class X3DHUser {
                 return false;
             }
             const { timestamp: respondedAt, content } = messageBody;
-            const profile: Profile = deserializeFromB64(content);
+            const profile: Profile = deserialize(Buffer.from(content, "base64"));
             if (!profile || typeof profile.displayName !== "string" || typeof profile.username !== "string" || typeof profile.profilePicture !== "string") {
                 console.log("Request response violated protocol.");
                 return false;
@@ -877,7 +860,7 @@ export class ChattingSession {
             let messageBody: MessageBody = { sender, recipient, messageId, timestamp, content };
             messageBody = replyingTo ? { ...messageBody, replyingTo } : messageBody;
             const { ciphertext, signature } = 
-            await crypto.deriveSignEncrypt(messageKeyBits,serialize(messageBody), nullSalt(48), "Message Send|Receive", this.#mySignKey);
+            await crypto.deriveSignEncrypt(messageKeyBits, serialize(messageBody), nullSalt(48), "Message Send|Receive", this.#mySignKey);
             const messageHeader = {
                 addressedTo: recipient,
                 sessionId,

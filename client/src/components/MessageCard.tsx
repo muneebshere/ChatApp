@@ -2,9 +2,10 @@ import _ from "lodash";
 import  { match } from "ts-pattern";
 import React, { createContext, memo, useContext, useLayoutEffect, useRef, useState } from "react";
 import { useUpdateEffect } from "usehooks-ts";
-import { Grid, Link, Sheet, Stack, Typography } from "@mui/joy";
+import { Grid, IconButton, Link, Sheet, Stack, Typography } from "@mui/joy";
 import { DoneSharp, DoneAllSharp, HourglassTop } from "@mui/icons-material";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip";
+import { Popover, PopoverTrigger, PopoverContent } from "./Popover";
 import { Item } from "./Common";
 import { ReactMarkdownOptions } from "react-markdown/lib/react-markdown";
 import ReactMarkdown from "react-markdown";
@@ -57,6 +58,16 @@ export const ChatContext = createContext({ chatWith: "Unknown" });
 
 export type ViewMessage = Readonly<DisplayMessage & { first: boolean }>;
 
+const formatTooltipDate = (timestamp: number) => {
+  const date = DateTime.fromMillis(timestamp);
+  return `${date.toFormat("d LLLL ")}'${date.toFormat("yy")}, ${date.toFormat("h:mm a")}`;
+}
+
+const pendingIcon = <HourglassTop sx={{ color: "gold", rotate: "-90deg", fontSize: "1rem" }}/>;
+const sentIcon = <DoneSharp sx={{ color: "gray", fontSize: "1rem" }}/>;
+const deliveredIcon = <DoneAllSharp sx={{ color: "gray", fontSize: "1rem" }}/>;
+const seenIcon = <DoneAllSharp sx={{ color: "blue", fontSize: "1rem" }}/>;
+
 const MessageCard = function ({ message }: { message: ViewMessage }) {
   const { currentFocus, setCurrentFocus } = useContext(FocusContext);
   const { chatWith } = useContext(ChatContext);
@@ -70,24 +81,47 @@ const MessageCard = function ({ message }: { message: ViewMessage }) {
       setCurrentFocus(null);
     } 
   }, [currentFocus]);
-  let statusIcon: any = null;
+  let statusButton: JSX.Element = null;
   if (sentByMe) {
     const { delivery } = message;
     if (!delivery) {
-      statusIcon = <HourglassTop sx={{ color: "gold", rotate: "-90deg", fontSize: "1rem" }}/>;
+      statusButton = pendingIcon;
     }
     else {
       const { delivered, seen } = delivery;
-      if (!delivered && !seen) {
-        statusIcon = <DoneSharp sx={{ color: "gray", fontSize: "1rem" }}/>;
-      }
-      else {
-        statusIcon = <DoneAllSharp sx={{ color: seen ? "blue" : "gray", fontSize: "1rem" }}/>;
-      }
+      const statusIcon = delivered ? (seen ? seenIcon : deliveredIcon) : sentIcon;
+      const deliveredText = delivered ? DateTime.fromMillis(delivered).toFormat("dd/LL/y, h:mm a") : "Not delivered";
+      const seenText = seen ? DateTime.fromMillis(seen).toFormat("dd/LL/y, h:mm a") : "Not seen";
+      statusButton = (
+        <Popover modal={false}>
+          <PopoverTrigger>
+            <button style={{ all: "unset" }}>
+              {statusIcon}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent>
+            <div style={{ borderRadius: 8, padding: 10, border: "0.1px solid #d8d8df", backgroundColor: "rgba(244, 246, 244, 0.8)", boxShadow: "0px 1px 3px 1.5px #eeeeee", backdropFilter: "blur(4px)" }}>
+              <Stack direction="row">
+                <Stack direction="column" spacing={1.5} sx={{ maxWidth: "fit-content", paddingTop: 0.3 }}>
+                  {deliveredIcon}
+                  {seenIcon}
+                </Stack>
+                <Stack direction="column" spacing={1} sx={{ maxWidth: "fit-content", paddingLeft: 1.5, paddingRight: 3, alignItems: "start" }}>
+                  <Typography level="body2">Delivered</Typography>
+                  <Typography level="body2">Seen</Typography>
+                </Stack>
+                <Stack direction="column" spacing={1} sx={{ maxWidth: "fit-content" }}>
+                  <Typography level="body2">{deliveredText}</Typography>
+                  <Typography level="body2">{seenText}</Typography>
+                </Stack>
+              </Stack>
+            </div>
+          </PopoverContent>
+        </Popover>)
     }
   }
   const repliedMessage = 
-    replyingTo !== null ? (() => {
+    replyingTo ? (() => {
       const { id: replyId, replyToOwn, displayText } = replyingTo;
       const repliedColor = sentByMe ? "#e8fae5" : "#f2f2f2";
       const repliedOutlineColor = replyToOwn ? "#53bdeb" : "#06cf9c";
@@ -129,11 +163,11 @@ const MessageCard = function ({ message }: { message: ViewMessage }) {
                   rehypePlugins={[rehypeKatex, rehypeRaw]}/>
               </Typography>
               <div style={{ width: "100%", display: "flex", justifyContent: "end" }}>
-                <Stack direction="row" spacing={1} sx={{ width: "fit-content" }}>
-                  <Tooltip placement="left" mainAxisOffset={120} crossAxisOffset={-10}>
+                <Stack direction="row" spacing={1} sx={{ width: "fit-content", alignItems: "center" }}>
+                  <Tooltip placement="left" mainAxisOffset={140} crossAxisOffset={-10}>
                     <TooltipTrigger>
                       <Typography level="body3">
-                        {DateTime.fromMillis(timestamp).toLocaleString(DateTime.TIME_SIMPLE)}
+                        {DateTime.fromMillis(timestamp).toFormat("h:mm a")}
                       </Typography>
                     </TooltipTrigger>
                     <TooltipContent>
@@ -144,12 +178,12 @@ const MessageCard = function ({ message }: { message: ViewMessage }) {
                                     position: "absolute",
                                     zIndex: 2 }}>
                         <Typography level="body3" noWrap>
-                          {DateTime.fromMillis(timestamp).toFormat("d LLLL, h:mm a")}
+                          {formatTooltipDate(timestamp)}
                         </Typography>
                       </div>
                     </TooltipContent>
                   </Tooltip>
-                  {statusIcon}
+                  {statusButton}
                 </Stack>
               </div>
             </Stack>

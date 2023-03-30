@@ -164,7 +164,7 @@ function NewChatPopup({ validate }: { validate: (username: string) => Promise<st
   }, [newChat]);
 
   return (
-    <div style={{ borderRadius: 8, padding: 10, border: "1.5px solid #d8d8df", backgroundColor: "white" }}>
+    <div style={{ borderRadius: 8, padding: 10, border: "1.5px solid #d8d8df", backgroundColor: "rgba(244, 246, 244, 0.8)", boxShadow: "0px 1px 3px 1.5px #eeeeee", backdropFilter: "blur(4px)" }}>
       <Stack direction="column" spacing={1}>
         <Typography level="h5" fontWeight="md">
           New chat

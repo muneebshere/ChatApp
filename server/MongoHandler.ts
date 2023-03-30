@@ -390,7 +390,11 @@ export class MongoHandlerCentral {
 
   private static readonly MessageEvent = mongoose.model("MessageEvent", messageEventSchema.index({ addressedTo: "hashed", sessionId: "hashed" }).index({ addressedTo: 1, sessionId: 1, messageId: 1, event: 1 }, { unique: true }), "message_event");
 
-  static async createNewUser(user: { username: string, userDetails: PasswordEncryptedData, authInfo: UserAuthInfo, x3dhInfo: UserEncryptedData, keyBundles: PublishKeyBundlesRequest }) {
+  static async connect(url: string, options?: mongoose.ConnectOptions) {
+    await mongoose.connect(url, options);
+  }
+
+  static async createNewUser(user: { username: string, userDetails: UserEncryptedData, authInfo: UserAuthInfo, x3dhInfo: UserEncryptedData, keyBundles: PublishKeyBundlesRequest }) {
     try {
       const newUser = new this.User(bufferReplaceForMongo(user));
       return (newUser === await newUser.save());

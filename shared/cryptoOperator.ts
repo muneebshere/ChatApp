@@ -5,8 +5,20 @@ import BufferSerializer from "./custom_modules/buffer-serializer";
 import { EncryptedData, SignedEncryptedData, EncryptInfo, PasswordDeriveInfo, randomFunctions, SignedKeyPair, ExposedSignedPublicKey, ExportedSigningKeyPair, ExportedSignedKeyPair, UserEncryptedData } from "./commonTypes";
 
 const serializer = new BufferSerializer();
-const serialize: (data: any) => Buffer = serializer.toBuffer.bind(serializer);
-const deserialize: (data: Buffer) => any = serializer.fromBuffer.bind(serializer);
+const serializeToB64 = (arg: any) => serialize(arg).toString("base64");
+const deserializeFromB64 = (str: string) => deserialize(Buffer.from(str, "base64"));
+const serializeMap = (map: Map<any, any>, bufferWriter: any) => {
+    const entries = Array.from(map.entries())
+        .map(([k, v]) => ({ key: serializeToB64(k), value: serializeToB64(v) }))
+    serializer.toBufferInternal(serialize(entries), bufferWriter);
+}
+const deserializeMap = (bufferReader: any) => {
+    const entries: Array<[any, any]> = deserialize(serializer.fromBufferInternal(bufferReader)).map(({ key, value }: { key: any, value: any }) => ([deserializeFromB64(key), deserializeFromB64(value)]));
+    return new Map(entries);
+}
+serializer.register("Map", (value: any) => value instanceof Map, serializeMap, deserializeMap);
+export const serialize = (thing: any) => serializer.toBuffer(thing);
+export const deserialize = (buff: Buffer) => serializer.fromBuffer(buff);
 const { getRandomVector } = randomFunctions();
 const subtle = assignSubtle();
 

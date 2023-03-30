@@ -50,7 +50,7 @@ function formatDate(date: string): string {
   const diff = -(dt.diffNow("day").as("day"));
   if (diff < 4) return dt.toRelativeCalendar();
   if (diff < 7) return dt.weekdayLong;
-  return dt.toFormat("d/L/y");
+  return dt.toFormat("dd/LL/y");
 }
 
 function labelFirsts(messages: DisplayMessage[]): ViewMessage[] {

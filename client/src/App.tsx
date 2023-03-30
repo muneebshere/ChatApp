@@ -94,7 +94,7 @@ function App() {
 
   function signUp({ displayName, username, password, savePassword }: SubmitResponse) {
     displayName ||= username;
-    return client.registerNewUser(username, password, displayName, savePassword);
+    return client.registerNewUser(username, password, displayName, "", savePassword);
   }
   
   return (

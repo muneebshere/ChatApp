@@ -7,36 +7,11 @@ import { stringify } from "safe-stable-stringify";
 import { SessionCrypto } from "../../shared/sessionCrypto";
 import { ChattingSession, ViewMessageRequest, ViewPendingRequest, X3DHUser } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
+import { serialize, deserialize } from "../../shared/cryptoOperator";
 import { ErrorStrings, Failure, Username, AuthSetupKey, UserEncryptedData, RegisterNewUserRequest, InitiateAuthenticationResponse, ConcludeAuthenticationRequest, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, randomFunctions, failure, SavedDetails, PasswordEncryptedData, AuthSetupKeyData, NewUserData, AuthChangeData, EstablishData, MessageHeader, MessageRequestHeader, StoredMessage, MessageEvent, ChatData, PlainMessage, MessageBody, DisplayMessage, Contact, Profile } from "../../shared/commonTypes";
-import BufferSerializer from "./custom_modules/buffer-serializer";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;
-const serializer = new BufferSerializer();
-const serialize: (data: any) => Buffer = serializer.toBuffer.bind(serializer);
-function deserialize(buff: Buffer, offset = 0): any {
-  let result;
-  if (!buff) {
-    throw "Nothing to deserialize.";
-  }
-  try {
-    result = serializer.fromBuffer(buff, offset);
-    if (result && result instanceof Uint8Array) {
-      result = null;
-    }
-  }
-  catch(err) {
-    logError(err)
-    result = null;
-  }
-  if (result) {
-    return result;
-  }
-  if (offset < 50) {
-    return deserialize(buff, offset + 1);
-  }
-  return {};
-}
 
 export enum Status {
   Disconnected, 
@@ -390,7 +365,7 @@ export class Client {
       }
       const keyBundles = await x3dhUser.publishKeyBundles();
       const x3dhInfo = await x3dhUser.exportUser();
-      const userDetails = await this.encrypt(username, password, serialize({ displayName, profilePicture }), "User Details");
+      const userDetails = await crypto.encryptData({ profilePicture, displayName }, this.#encryptionBaseVector, "User Details");
       const newUserData: NewUserData = { username, userDetails, serverProof, encryptionBase, x3dhInfo, keyBundles };
       if (!x3dhInfo) {
         this.notifyCallback?.(Status.FailedCreateNewUser);
@@ -431,7 +406,12 @@ export class Client {
     this.notifyCallback?.(Status.SigningIn);
     try {
       if (!username) {
-        const { saveToken, cookieSavedDetails  } = JSON.parse(window.localStorage.getItem("SavedDetails"));
+        const savedDetails = JSON.parse(window.localStorage.getItem("SavedDetails"));
+        if (!savedDetails) {
+          this.notifyCallback?.(Status.FailedSignIn);
+          return failure(ErrorStrings.InvalidRequest);
+        }
+        const { saveToken, cookieSavedDetails  } = savedDetails;
         window.localStorage.removeItem("SavedDetails");
         if (!saveToken) {
           this.notifyCallback?.(Status.FailedSignIn);
@@ -479,7 +459,7 @@ export class Client {
         this.notifyCallback?.(Status.FailedSignIn);
         return failure(ErrorStrings.ProcessFailed);
       }
-      const { displayName, profilePicture } = deserialize(await this.decrypt(username, password, userDetails, "User Details"));
+      const { displayName, profilePicture } = await crypto.decryptData(userDetails, this.#encryptionBaseVector, "User Details");
       this.#username = username;
       this.#displayName = displayName;
       this.#profilePicture = profilePicture;
@@ -545,17 +525,17 @@ export class Client {
   }
 
   private async encrypt(username: string, password: string, data: Buffer, purpose: string): Promise<PasswordEncryptedData> {
-    const [serverProofMasterKeyBits, pInfo] = await crypto.deriveMasterKeyBits(`${username}#${password}`);
+    const [masterKeyBits, pInfo] = await crypto.deriveMasterKeyBits(`${username}#${password}`);
     const hSalt = getRandomVector(48);
     data ??= serialize({ username });
-    const encrypted = await crypto.deriveSignEncrypt(serverProofMasterKeyBits, data, hSalt, purpose);
+    const encrypted = await crypto.deriveSignEncrypt(masterKeyBits, data, hSalt, purpose);
     return { ...encrypted, ...pInfo, hSalt };
   }
 
   private async decrypt(username: string, password: string, data: PasswordEncryptedData, purpose: string) {
     const { ciphertext, hSalt, ...pInfo } = data;
-    const serverProofMasterKeyBits = await crypto.deriveMasterKeyBits(`${username}#${password}`, pInfo);
-    return await crypto.deriveDecryptVerify(serverProofMasterKeyBits, ciphertext, hSalt, purpose);
+    const masterKeyBits = await crypto.deriveMasterKeyBits(`${username}#${password}`, pInfo);
+    return await crypto.deriveDecryptVerify(masterKeyBits, ciphertext, hSalt, purpose);
   }
 
   private async processAuthSetupKey(username: string, authSetupKey: AuthSetupKey): Promise<AuthSetupKeyData> {
