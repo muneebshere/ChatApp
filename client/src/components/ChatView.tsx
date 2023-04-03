@@ -11,7 +11,9 @@ import { Theme, useMediaQuery } from "@mui/material";
 type ChatViewProps = {
   chatWith: string,
   message: string,
-  setMessage: (m: string) => void
+  setMessage: (m: string) => void,
+  lastScroll: number,
+  setLastScroll: (scroll: number) => void
 }
 
 const TextareaBorder = styled.div`
@@ -32,7 +34,7 @@ const TextareaBorder = styled.div`
   }
 `;
 
-const ChatView = function({ chatWith, message, setMessage }: ChatViewProps) {
+const ChatView = function({ chatWith, message, setMessage, lastScroll, setLastScroll }: ChatViewProps) {
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
 
   return (
@@ -48,7 +50,7 @@ const ChatView = function({ chatWith, message, setMessage }: ChatViewProps) {
           </Typography>
         </Stack>
         <ChatContext.Provider value={{ chatWith }}>
-            <MessageListMemo/>
+            <MessageListMemo lastScroll={lastScroll} setLastScroll={setLastScroll}/>
         </ChatContext.Provider>
         <Stack direction="row" spacing={1} sx={{ flex: 0, flexBasis: "content", display: "flex", flexDirection: "row", flexWrap: "nowrap" }}>
           <TextareaBorder>

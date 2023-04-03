@@ -1,5 +1,5 @@
 import _ from "lodash";
-import { SubmitProps, ControlledTextField, SubmitResponse, StyledSwitch } from "./Common";
+import { SubmitProps, ControlledTextField, SubmitResponse, StyledSwitch, WarnSavePassword } from "./Common";
 import React, { useState, useEffect, createContext, useReducer, Dispatch, useContext } from "react";
 import {  } from "@mui/material";
 import { FormControl, FormLabel, Stack, Button, CircularProgress, Modal, ModalClose, Sheet, Typography, Alert } from "@mui/joy";
@@ -156,6 +156,7 @@ export default function SignUpForm() {
           errorMessage={usernameError}
           onEnter={submitLocal}/>
         <ControlledTextField 
+          autoComplete="new-password"
           variant="outlined"
           placeholder="Please choose a new password" 
           type={ showPassword ? "text" : "password" }
@@ -168,6 +169,7 @@ export default function SignUpForm() {
           errorMessage="Please choose a password at least 8 characters long, with at least one uppercase letter, one lowercase letter, one digit and one special character (#?!@$%^&*-])."
           onEnter={submitLocal}/>
         <ControlledTextField 
+          autoComplete="new-password"
           variant="outlined"
           placeholder="Please re-enter password" 
           type={ showPassword ? "text" : "password" }
@@ -211,39 +213,7 @@ export default function SignUpForm() {
           <Typography color="danger" fontWeight="sm">Sign up failed! Please try again.</Typography>
         </Alert>}
       </Stack>
-      <Modal
-            open={savePassword && !warned}
-            onClose={() => setWarned(true)}
-            sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-            <Sheet
-              variant="outlined"
-              sx={{
-                maxWidth: 500,
-                borderRadius: 'md',
-                p: 3,
-              boxShadow: 'lg'}}>
-              <ModalClose
-                variant="outlined"
-                sx={{
-                  top: 'calc(-1/4 * var(--IconButton-size))',
-                  right: 'calc(-1/4 * var(--IconButton-size))',
-                  boxShadow: '0 2px 12px 0 rgba(0 0 0 / 0.2)',
-                  borderRadius: '50%',
-                  bgcolor: 'background.body'}}/>
-              <Typography
-                component="h2"
-                id="modal-title"
-                level="h4"
-                textColor="inherit"
-                fontWeight="lg"
-                mb={1}>
-                Save password?
-              </Typography>
-              <Typography id="modal-desc" textColor="text.tertiary">
-                The browser will save your password so you won't have to re-enter it on future visits. However, this compromises the security of your account. Anyone with access to your browser may be able to extract the password from its cookies. You may disable password saving later from your settings.
-              </Typography>
-            </Sheet>
-      </Modal>
+      <WarnSavePassword open={savePassword && !warned} setWarned={setWarned}/>
     </React.Fragment>
   )
 }

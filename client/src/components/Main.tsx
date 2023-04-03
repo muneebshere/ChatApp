@@ -1,6 +1,5 @@
-import React, { useState, useRef, useEffect } from "react";
-import { flushSync } from 'react-dom';
-import { Alert, Grid, IconButton, Input, LinearProgress, List, ListItem, ListItemButton, Stack, Typography } from "@mui/joy";
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { Alert, Grid, IconButton, Input, LinearProgress, List, ListItem, ListItemButton, Modal, ModalClose, Sheet, Stack, Typography } from "@mui/joy";
 import { useMediaQuery, Theme } from "@mui/material";
 import { ReportProblem, PersonAddAltOutlined, Search, ClearSharp } from "@mui/icons-material";
 import { Popover, PopoverTrigger, PopoverContent } from "./Popover";
@@ -9,6 +8,10 @@ import { ChatViewMemo } from "./ChatView";
 import { useEffectOnce } from "usehooks-ts";
 import { Client } from "../client";
 import { chats } from "./prvChats";
+import styled from "@emotion/styled";
+
+const ToggledIconButton = styled(IconButton)`
+`
 
 const chatWithList = chats.map((c) => c.chatWith);
 
@@ -16,6 +19,7 @@ export default function Main({ connected, displayName, client }: { connected: bo
   const [currentChatWith, setCurrentChatWith] = useState("");
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const typedMessages = useRef(new Map<string, string>());
+  const lastScrollPositions = useRef(new Map<string, number>());
   
   useEffectOnce(() => {
     const currentChatWith = window.history.state?.currentChatWith || "";
@@ -47,18 +51,24 @@ export default function Main({ connected, displayName, client }: { connected: bo
       sx={{ flex: 1, flexBasis: 0, minHeight: 0 }}>
       {(!belowXL || !currentChatWith) &&
       <Grid xs={12} xl={3} sx={{ minHeight: 0, maxHeight: "100%", display: "flex", flexDirection: "column" }}>
-        <Sidebar currentChatWith={currentChatWith} openChat={openChat} client={client}/>
+        <Sidebar currentChatWith={currentChatWith} openChat={openChat} client={client} belowXL={belowXL}/>
       </Grid>}
       {(!belowXL || currentChatWith) &&
       <Grid xs={12} xl={9} sx={{ minHeight: 0, maxHeight: "100%" }}>
         <ChatViewMemo 
           key={currentChatWith ?? ""}
           chatWith={currentChatWith ?? ""}
-          message={typedMessages.current.get(currentChatWith) ?? ""}
+          message={typedMessages.current.get(currentChatWith) || ""}
           setMessage={(message: string) => {
             if (currentChatWith) {
               typedMessages.current.set(currentChatWith, message)
-            }}}/>
+            }}}
+          lastScroll={ lastScrollPositions.current.get(currentChatWith) || 0 }
+          setLastScroll={(scroll) => {
+            if (currentChatWith) {
+              lastScrollPositions.current.set(currentChatWith, scroll);
+            }
+          }}/>
       </Grid>}
     </Grid>
   </Grid>)
@@ -67,20 +77,32 @@ export default function Main({ connected, displayName, client }: { connected: bo
 type SidebarProps = {
   currentChatWith: string,
   openChat: (chatWith: string) => void,
-  client: Client
+  client: Client,
+  belowXL: boolean
 }
 
-function Sidebar({ currentChatWith, openChat, client }: SidebarProps) {
+function Sidebar({ currentChatWith, openChat, client, belowXL }: SidebarProps) {
   const [search, setSearch] = useState("");
+  const [newChat, setNewChat] = useState("");
+  const [isPopupOpen, setIsPopupOpen] = useState(false);
+  const [warn, setWarn] = useState(false);
+  const newMessageRef = useRef("");
 
   async function validateNewChat(username: string) {
     if (!username) return "";
     if (chatWithList.some((chatWith) => chatWith.toLowerCase() === username.toLowerCase())) return "There is already an existing chat with this user.";
-    return (await client.checkUsernameExists(username)) ? "" : "No such user.";
+    return (await client.checkUsernameExists(username)) ? (username !== client.username ? "" : "Cannot chat with yourself.") : "No such user.";
   }
 
   return (
     <Stack direction="column" style={{ height: "100%" }}>
+      <NewMessageModal open={!!newChat} 
+        warn={warn} 
+        setWarn={setWarn} 
+        belowXL={belowXL} 
+        eraseNewChat={() => setNewChat("")}
+        setNewMessage={(message) => { newMessageRef.current = message; }}
+        />
       <div style={{ display: "flex" }}>
         <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-start", alignContent: "center", paddingLeft: 20 }}>
           <Typography level="h4" fontWeight="md">
@@ -88,14 +110,20 @@ function Sidebar({ currentChatWith, openChat, client }: SidebarProps) {
           </Typography>
         </div>
         <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-end", alignContent: "center", paddingRight: 40 }}>
-        <Popover modal={true}>
+        <Popover modal={true}
+          placement={ belowXL ? "bottom-end" : "bottom-start" }
+          changeOpenTo={isPopupOpen}
+          notifyChange={(open) => setIsPopupOpen(open)}>
           <PopoverTrigger>
-            <IconButton variant="plain" color="success">
+            <IconButton variant="plain" color="success" sx={ isPopupOpen ? { backgroundColor: "var(--joy-palette-success-plainHoverBg)" } : {} }>
               <PersonAddAltOutlined color="success" sx={{ fontSize: "1.5rem" }}/>
             </IconButton>
           </PopoverTrigger>
           <PopoverContent>
-            <NewChatPopup validate={validateNewChat}/>
+            <NewChatPopup belowXL={belowXL} validate={validateNewChat} returnUser={(chatWith) => {
+              setIsPopupOpen(false);
+              setNewChat(chatWith);
+            }}/>
           </PopoverContent>
         </Popover>
         </div>
@@ -155,33 +183,143 @@ function DisconnectedAlert({ connected }: { connected: boolean }) {
     : null;
 }
 
-function NewChatPopup({ validate }: { validate: (username: string) => Promise<string> }) {
-  const [newChat, setNewChat] = useState("");
-  const [newChatInvalid, setNewChatInvalid] = useState("");
+type NewChatPopupProps = { 
+  validate: (username: string) => Promise<string>, 
+  returnUser: (username: string) => void,
+  belowXL: boolean
+};
+
+function NewChatPopup({ validate, returnUser, belowXL }: NewChatPopupProps) {
+  const [chatWithUser, setChatWithUser] = useState("");
+  const [usernameInvalid, setUsernameInvalid] = useState("");
   
   useEffect(() => {
-    validate(newChat).then((message) => setNewChatInvalid(message));
-  }, [newChat]);
+    let ignore = false;
+    const setUserValid = async () => {
+      const message = await validate(chatWithUser);
+      if (!ignore) {
+        setUsernameInvalid(message);
+      }
+    };
+    setUserValid();
+    return () => {
+      ignore = true;
+    }
+  }, [chatWithUser]);
 
   return (
-    <div style={{ borderRadius: 8, padding: 10, border: "1.5px solid #d8d8df", backgroundColor: "rgba(244, 246, 244, 0.8)", boxShadow: "0px 1px 3px 1.5px #eeeeee", backdropFilter: "blur(4px)" }}>
+    <div style={{ borderRadius: 8, padding: 10, border: "1.5px solid #d8d8df", backgroundColor: "rgba(244, 246, 244, 0.8)", boxShadow: "0px 1px 3px 1.5px #eeeeee", backdropFilter: "blur(4px)", width: belowXL ? "80vw" : "20vw" }}>
       <Stack direction="column" spacing={1}>
         <Typography level="h5" fontWeight="md">
           New chat
         </Typography>
         <div style={{ display: "flex", alignContent: "center", justifyContent: "stretch" }}>
-        <ControlledTextField 
+        <ControlledTextField
+          autoComplete="new-random"
+          role="presentation"
           variant="outlined"
           placeholder="Begin chat with" 
           type="text"
-          value={newChat}
-          setValue={setNewChat}
+          value={chatWithUser}
+          setValue={setChatWithUser}
           forceInvalid
           preventSpaces
-          valid={!newChatInvalid}
-          errorMessage={newChatInvalid}
-          onEnter={ () => {}}/>
+          valid={!usernameInvalid}
+          errorMessage={usernameInvalid}
+          onEnter={ () => {
+            if (!usernameInvalid && chatWithUser) {
+              returnUser(chatWithUser);
+            }
+          }}/>
         </div>
       </Stack>
     </div>)
+}
+
+type NewMessageModalProps = {
+  open: boolean,
+  warn: boolean,
+  belowXL: boolean,
+  setWarn: (warn: boolean) => void,
+  eraseNewChat: () => void,
+  setNewMessage: (newMessage: string) => void
+};
+
+function NewMessageModal({ open, warn, belowXL, setWarn, eraseNewChat, setNewMessage }: NewMessageModalProps) {
+  return (
+    <Modal
+      disableEnforceFocus
+      open={open}
+      onClose={ (_, reason) => {
+        if (reason === "closeClick" || reason === "escapeKeyDown") {
+          setWarn(true);
+        }
+      } }
+      sx={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+      <Sheet
+        variant="outlined"
+        sx={{
+          width: belowXL ? "90vw" : "60vw",
+          borderRadius: "md",
+          p: 3,
+          boxShadow: "lg"}}>
+        <Modal
+          disableEnforceFocus
+          open={warn}
+          onClose={ () => {
+            setWarn(false);
+            eraseNewChat();
+            setNewMessage("");
+          } }
+          sx={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+          <Sheet
+            variant="outlined"
+            sx={{
+              maxWidth: 500,
+              borderRadius: "md",
+              p: 3,
+              boxShadow: "lg"}}>
+            <ModalClose
+              variant="outlined"
+              sx={{
+                top: "calc(-1/4 * var(--IconButton-size))",
+                right: "calc(-1/4 * var(--IconButton-size))",
+                boxShadow: "0 2px 12px 0 rgba(0 0 0 / 0.2)",
+                borderRadius: "50%",
+                bgcolor: "background.body"}}/>
+            <Typography
+              component="h2"
+              id="modal-title"
+              level="h4"
+              textColor="inherit"
+              fontWeight="lg"
+              mb={1}>
+              Cancel message request?
+            </Typography>
+            <Typography id="modal-desc" textColor="text.tertiary">
+              You will lose the message you're typing.
+            </Typography>
+          </Sheet>
+        </Modal>
+        <ModalClose
+          variant="outlined"
+          sx={{
+            top: "calc(-1/4 * var(--IconButton-size))",
+            right: "calc(-1/4 * var(--IconButton-size))",
+            boxShadow: "0 2px 12px 0 rgba(0 0 0 / 0.2)",
+            borderRadius: "50%",
+            bgcolor: "background.body"}}/>
+        <Typography
+          component="h2"
+          id="modal-title"
+          level="h4"
+          textColor="inherit"
+          fontWeight="lg"
+          mb={1}>
+            Type Message
+        </Typography>
+        <Typography id="modal-desc" textColor="text.tertiary">
+        </Typography>
+      </Sheet>
+    </Modal>)
 }

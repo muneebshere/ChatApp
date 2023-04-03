@@ -29,12 +29,9 @@ const ScrollDownButton = styled.div`
     filter: brightness(0.9);
   }`;
 
-export type ListMessage = {
-  readonly id: string;
-  readonly content: string;
-  readonly timestamp: number;
-  readonly replyingTo?: { id: string, replyToOwn: boolean, displayText: string };
-  readonly status: "seen" | "delivered" | "sent" | "pending";
+type MessageListProps = {
+  lastScroll: number,
+  setLastScroll: (scroll: number) => void
 }
 
 function truncateText(text: string) {
@@ -64,7 +61,7 @@ function labelFirsts(messages: DisplayMessage[]): ViewMessage[] {
   return result;
 }
 
-const MessageList = function() {
+const MessageList = function({ lastScroll, setLastScroll }: MessageListProps) {
   const { chatWith } = useContext(ChatContext);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [currentFocus, setCurrentFocus] = useState<string>(null);
@@ -81,11 +78,14 @@ const MessageList = function() {
   const debouncedScrollHandler = _.debounce(scrollHandler, 50, { trailing: true, maxWait: 50 });
 
   useLayoutEffect(() => {
-    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    scrollRef.current.addEventListener("scroll", debouncedScrollHandler);
+    const scroller = scrollRef.current;
+    scroller.scrollTop = scroller.scrollHeight - (lastScroll || 0);
+    scroller.addEventListener("scroll", debouncedScrollHandler);
     return () => {
+      const scroller = scrollRef.current;
+      setLastScroll(scroller.scrollHeight - scroller.scrollTop);
       debouncedScrollHandler.cancel();
-      scrollRef.current.removeEventListener("scroll", debouncedScrollHandler);
+      scroller.removeEventListener("scroll", debouncedScrollHandler);
     }
   }, []);
 
@@ -119,8 +119,8 @@ const MessageList = function() {
       <FocusContext.Provider value={{ currentFocus, setCurrentFocus }} >
         <List>
           {convertedMessages.map(({ date, messages }) => (
-            <ListItem nested key={date}>
-              <ListSubheader sticky sx={{ display: "flex", justifyContent: "center", backgroundColor: "transparent" }}>
+            <ListItem nested key={date} sx={{ display: "grid" }}>
+              <ListSubheader sticky sx={{ display: "flex", justifyContent: "center", backgroundColor: "transparent", width: "fit-content", justifySelf: "center" }}>
                 { formatDate(date).search(/^\d{1,2}\/\d{1,2}\/\d{4}$/) === -1
                   ?(<Tooltip placement="left" mainAxisOffset={120} crossAxisOffset={-10}>
                       <TooltipTrigger>

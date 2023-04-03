@@ -94,13 +94,11 @@ const MessageCard = function ({ message }: { message: ViewMessage }) {
       const seenText = seen ? DateTime.fromMillis(seen).toFormat("dd/LL/y, h:mm a") : "Not seen";
       statusButton = (
         <Popover modal={false}>
-          <PopoverTrigger>
-            <button style={{ all: "unset" }}>
+          <PopoverTrigger asChild>
               {statusIcon}
-            </button>
           </PopoverTrigger>
           <PopoverContent>
-            <div style={{ borderRadius: 8, padding: 10, border: "0.1px solid #d8d8df", backgroundColor: "rgba(244, 246, 244, 0.8)", boxShadow: "0px 1px 3px 1.5px #eeeeee", backdropFilter: "blur(4px)" }}>
+            <div style={{ position: "relative", zIndex: 10, borderRadius: 8, padding: 10, border: "0.1px solid #d8d8df", backgroundColor: "rgba(244, 246, 244, 0.8)", boxShadow: "0px 1px 3px 1.5px #eeeeee", backdropFilter: "blur(4px)" }}>
               <Stack direction="row">
                 <Stack direction="column" spacing={1.5} sx={{ maxWidth: "fit-content", paddingTop: 0.3 }}>
                   {deliveredIcon}

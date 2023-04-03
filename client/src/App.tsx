@@ -9,15 +9,24 @@ import { Container, CircularProgress } from "@mui/joy";
 import { CssVarsProvider } from "@mui/joy/styles";
 import { Status, Client } from "./client";
 import { useEffectOnce } from "usehooks-ts";
+import { Theme, useMediaQuery } from "@mui/material";
 
 const PORT = 8080;
 const { hostname, protocol } = window.location;
 const client = new Client(`${protocol}//${hostname}:${PORT}`);
 client.establishSession();
 
-createRoot(document.getElementById("root")).render(<App/>);
+createRoot(document.getElementById("root")).render(<Root/>);
+
+function Root() {
+  return (
+    <CssVarsProvider>
+      <App/>
+    </CssVarsProvider>)
+}
 
 function App() {
+  const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const [logInData, logInDispatch] = useReducer(defaultLogInDataReducer, { ...defaultLogInData, usernameExists, userLoginPermitted, submit: logIn });
   const [signUpData, signUpDispatch] = useReducer(defaultSignUpDataReducer, { ...defaultSignUpData, usernameExists, submit: signUp });
   const [status, setStatus] = useState<Status>(null);
@@ -98,25 +107,23 @@ function App() {
   }
   
   return (
-    <CssVarsProvider>
-      <Container maxWidth={false} disableGutters={true} sx={{ height: "100vh", overflow: "clip", display: "flex", flexDirection: "column" }}>
-        {(!connected && !signedIn) &&
-        <React.Fragment>
-          <Spacer units={2}/>
-          <div style={{ display: "flex", justifyContent: "center" }}>
-            <CircularProgress size="lg" variant="soft"/>
-          </div>
-        </React.Fragment>}
-        {connected && !signedIn &&
-          <LogInContext.Provider value={{ logInData, logInDispatch }}>
-            <SignUpContext.Provider value={{ signUpData, signUpDispatch }}>
-              <LogInSignUp currentTab={currentTab} setCurrentTab={setCurrentTab}/>
-            </SignUpContext.Provider>
-          </LogInContext.Provider>
-        }
-        {signedIn &&
-        <Main client={client} connected={connected} displayName={displayName}/>
-        }
-      </Container>
-    </CssVarsProvider>);
+    <Container maxWidth={false} disableGutters={true} sx={{ height: "100vh", width: belowXL ? "90vw" : "100vw", overflow: "clip", display: "flex", flexDirection: "column" }}>
+    {(!connected && !signedIn) &&
+    <React.Fragment>
+      <Spacer units={2}/>
+      <div style={{ display: "flex", justifyContent: "center" }}>
+        <CircularProgress size="lg" variant="soft"/>
+      </div>
+    </React.Fragment>}
+    {connected && !signedIn &&
+      <LogInContext.Provider value={{ logInData, logInDispatch }}>
+        <SignUpContext.Provider value={{ signUpData, signUpDispatch }}>
+          <LogInSignUp currentTab={currentTab} setCurrentTab={setCurrentTab}/>
+        </SignUpContext.Provider>
+      </LogInContext.Provider>
+    }
+    {signedIn &&
+    <Main client={client} connected={connected} displayName={displayName}/>
+    }
+  </Container>);
 }

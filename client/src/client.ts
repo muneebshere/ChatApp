@@ -35,7 +35,7 @@ export type AwaitedRequest = Readonly<{
   sessionId: string,
   otherUser: string,
   lastActivity: number,
-  message: string
+  message: DisplayMessage
 }>;
 
 type ChatEvent = {
@@ -71,7 +71,8 @@ export class Client {
   ]);
   private readonly url: string;
   private readonly axInstance: Axios;
-  private notifyCallback: (status: Status) => void;
+  private notifyStatusChange: (status: Status) => void;
+  private notifyChange: () => void;
   private connecting = false;
   private retryingConnect = false;
   private reportDone: (arg0: any) => void = undefined;
@@ -89,8 +90,9 @@ export class Client {
   private readonly chatsBySessionId = new Map<string, Chat>();
   private readonly chatRequestsBySessionId = new Map<string, ChatRequest>();
   private readonly awaitedRequestsBySessionId = new Map<string, AwaitedRequest>();
-  private readonly chatList: Array<[string, "Chat" | "ChatRequest" | "AwaitedRequest"]> = [];
+  private readonly chatList: string[] = [];
   private readonly chatSessionIdsList = new Map<string, "Chat" | "ChatRequest" | "AwaitedRequest">();
+  private readonly chatUsernamesList = new Map<string, "Chat" | "ChatRequest" | "AwaitedRequest">();
 
   private readonly chatInterface: (sessionId: string) => ClientChatInterface = (sessionId) => ({
     SendMessage: (data: MessageHeader, timeout = 0) => {
@@ -128,22 +130,31 @@ export class Client {
   private addChat(chat: Chat) {
     this.chatsByUsername.set(chat.otherUser, chat);
     this.chatsBySessionId.set(chat.sessionId, chat);
-    this.chatList.push([chat.otherUser, "Chat"]);
     this.chatSessionIdsList.set(chat.sessionId, "Chat");
+    this.chatUsernamesList.set(chat.otherUser, "Chat");
+    this.chatList.push(chat.otherUser);
+    if (this.notifyChange) {
+      chat.subscribe("client", this.notifyChange);
+    }
+    this.notifyChange?.();
   }
  
   private addChatRequest(chat: ChatRequest) {
     this.chatRequestsByUsername.set(chat.otherUser, chat);
     this.chatRequestsBySessionId.set(chat.sessionId, chat);
-    this.chatList.push([chat.otherUser, "ChatRequest"]);
     this.chatSessionIdsList.set(chat.sessionId, "ChatRequest");
+    this.chatUsernamesList.set(chat.otherUser, "ChatRequest");
+    this.chatList.push(chat.otherUser);
+    this.notifyChange?.();
   }
  
   private addAwaitedRequest(chat: AwaitedRequest) {
     this.awaitedRequestsByUsername.set(chat.otherUser, chat);
     this.awaitedRequestsBySessionId.set(chat.sessionId, chat);
-    this.chatList.push([chat.otherUser, "AwaitedRequest"]);
     this.chatSessionIdsList.set(chat.sessionId, "AwaitedRequest");
+    this.chatUsernamesList.set(chat.otherUser, "AwaitedRequest");
+    this.chatList.push(chat.otherUser);
+    this.notifyChange?.();
   }
  
   private removeChat(key: string, keyType: "username" | "sessionId") {
@@ -151,7 +162,10 @@ export class Client {
     this.chatsByUsername.delete(chat.otherUser);
     this.chatsBySessionId.delete(chat.sessionId);
     this.chatSessionIdsList.delete(chat.sessionId);
+    this.chatUsernamesList.delete(chat.otherUser);
     _.remove(this.chatList, ([user, _]) => user === chat.otherUser);
+    chat.dispose();
+    this.notifyChange?.();
   }
  
   private removeChatRequest(key: string, keyType: "username" | "sessionId") {
@@ -159,7 +173,9 @@ export class Client {
     this.chatRequestsByUsername.delete(chat.otherUser);
     this.chatRequestsBySessionId.delete(chat.sessionId);
     this.chatSessionIdsList.delete(chat.sessionId);
+    this.chatUsernamesList.delete(chat.otherUser);
     _.remove(this.chatList, ([user, _]) => user === chat.otherUser);
+    this.notifyChange?.();
   }
  
   private removeAwaitedRequest(key: string, keyType: "username" | "sessionId") {
@@ -167,34 +183,40 @@ export class Client {
     this.awaitedRequestsByUsername.delete(chat.otherUser);
     this.awaitedRequestsBySessionId.delete(chat.sessionId);
     this.chatSessionIdsList.delete(chat.sessionId);
+    this.chatUsernamesList.delete(chat.otherUser);
     _.remove(this.chatList, ([user, _]) => user === chat.otherUser);
+    this.notifyChange?.();
   }
 
-  public getChatByUser([otherUser, type]: [string, "Chat"]): Chat;
-  public getChatByUser([otherUser, type]: [string, "ChatRequest"]): ChatRequest;
-  public getChatByUser([otherUser, type]: [string, "AwaitedRequest"]): AwaitedRequest;
-  public getChatByUser([otherUser, type]: [string, "Chat" | "ChatRequest" | "AwaitedRequest"]): Chat | ChatRequest | AwaitedRequest;
-  public getChatByUser([otherUser, type]: [string, "Chat" | "ChatRequest" | "AwaitedRequest"]): Chat | ChatRequest | AwaitedRequest {
+  public getChatByUser(otherUser: string): Chat | ChatRequest | AwaitedRequest {
+    const type = this.chatUsernamesList.get(otherUser);
     if (type === "Chat") {
       return this.chatsByUsername.get(otherUser);
     }
     else if (type === "ChatRequest") {
       return this.chatRequestsByUsername.get(otherUser);
     }
-    else {
+    else if (type === "AwaitedRequest"){
       return this.awaitedRequestsByUsername.get(otherUser);
+    }
+    else {
+      return null;
     }
   }
 
-  public getChatDetailsByUser([otherUser, type]: [string, "Chat" | "ChatRequest" | "AwaitedRequest"]): { displayName?: string, contactName?: string, profilePicture?: string, lastActivity: number } {
-    const chat = this.getChatByUser([otherUser, type]);
+  public getChatDetailsByUser(otherUser: string): { type: "Chat" | "ChatRequest" | "AwaitedRequest", displayName?: string, contactName?: string, profilePicture?: string, lastActivity: number } {
+    const type = this.chatUsernamesList.get(otherUser);
+    if (typeof type !== "string") {
+      return null;
+    }
+    const chat = this.getChatByUser(otherUser);
     const { lastActivity } = chat;
     if ("contactDetails" in chat) {
       const { contactDetails: { displayName, profilePicture, contactName } } = chat;
-      return { displayName, contactName, profilePicture, lastActivity };
+      return { type, displayName, contactName, profilePicture, lastActivity };
     }
     else {
-      return { displayName: otherUser, lastActivity };
+      return { type, displayName: otherUser, lastActivity };
     }
   }
 
@@ -232,13 +254,17 @@ export class Client {
   }
 
   subscribeStatusChange(notifyCallback?: (status: Status) => void) {
-    if (notifyCallback) this.notifyCallback = notifyCallback;
+    if (notifyCallback) this.notifyStatusChange = notifyCallback;
+  }
+
+  subscribeChange(notifyCallback?: () => void) {
+    if (notifyCallback) this.notifyChange = notifyCallback;
   }
 
   async establishSession() {
     if (!this.connected) {
       console.log(`Attempting to establish secure session.`);
-      this.notifyCallback?.(Status.Connecting);
+      this.notifyStatusChange?.(Status.Connecting);
       this.connecting = true;
       const { privateKey, publicKey } = await crypto.generateKeyPair("ECDH");
       const { privateKey: signingKey, publicKey: verifyingKey } = await crypto.generateKeyPair("ECDSA");
@@ -265,7 +291,7 @@ export class Client {
           this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBits, signingKey, serverVerifyingKey);
           console.log(`Connected with session reference: ${sessionReference}`);
           if (this.#username) {
-            this.notifyCallback?.(Status.SignedOut);
+            this.notifyStatusChange?.(Status.SignedOut);
             this.#displayName = null;
             this.#username = null;
             this.#x3dhUser = null;
@@ -302,7 +328,7 @@ export class Client {
       nevermind = true;
       this.connecting = false;
       console.log(success && this.connected ? "Secure session established." : "Failed to establish secure session.");
-      this.notifyCallback?.(this.connected ? Status.Connected : Status.FailedToConnect);
+      this.notifyStatusChange?.(this.connected ? Status.Connected : Status.FailedToConnect);
       if (!success || !this.connected) {
         this.#socket?.offAny?.();
         this.#socket?.disconnect?.();
@@ -321,8 +347,8 @@ export class Client {
     this.#socket?.offAny?.();
     this.#socket?.disconnect?.();
     this.#socket = null;
-    this.notifyCallback?.(Status.Disconnected);
-    this.notifyCallback?.(Status.SignedOut);
+    this.notifyStatusChange?.(Status.Disconnected);
+    this.notifyStatusChange?.(Status.SignedOut);
     if (reason === "io client disconnect") return;
     this.retryingConnect = true;
     while(!this.connected) {
@@ -331,7 +357,7 @@ export class Client {
         window.setTimeout(() => resolve(null), 10000); });
       if (!this.connecting) {
         console.log("Retrying connect");
-        this.notifyCallback?.(Status.Reconnecting);
+        this.notifyStatusChange?.(Status.Reconnecting);
         this.establishSession();
       }
       await wait;
@@ -351,7 +377,7 @@ export class Client {
 
   async registerNewUser(username: string, password: string, displayName: string, profilePicture: string, savePassword: boolean): Promise<Failure> {
     if (!this.connected) return failure(ErrorStrings.NoConnectivity);
-    this.notifyCallback?.(Status.CreatingNewUser);
+    this.notifyStatusChange?.(Status.CreatingNewUser);
     try {
       displayName ??= username;
       const encryptionBaseVector = getRandomVector(64);
@@ -360,7 +386,7 @@ export class Client {
       this.#encryptionBaseVector = await crypto.importRaw(encryptionBaseVector);
       const x3dhUser = await X3DHUser.new(username, this.#encryptionBaseVector);
       if (!x3dhUser) {
-        this.notifyCallback?.(Status.FailedCreateNewUser);
+        this.notifyStatusChange?.(Status.FailedCreateNewUser);
         return failure(ErrorStrings.ProcessFailed);
       }
       const keyBundles = await x3dhUser.publishKeyBundles();
@@ -368,19 +394,19 @@ export class Client {
       const userDetails = await crypto.encryptData({ profilePicture, displayName }, this.#encryptionBaseVector, "User Details");
       const newUserData: NewUserData = { username, userDetails, serverProof, encryptionBase, x3dhInfo, keyBundles };
       if (!x3dhInfo) {
-        this.notifyCallback?.(Status.FailedCreateNewUser);
+        this.notifyStatusChange?.(Status.FailedCreateNewUser);
         return failure(ErrorStrings.ProcessFailed);
       }
       const response = await this.RequestAuthSetupKey({ username });
       if ("reason" in response) {
-        this.notifyCallback?.(Status.FailedCreateNewUser);
+        this.notifyStatusChange?.(Status.FailedCreateNewUser);
         return response;
       }
       const keyData = await this.processAuthSetupKey(username, response);
       const newUserRequest = await this.createNewUserAuth(username, password, keyData, newUserData);
       let { reason } = await this.RegisterNewUser(newUserRequest);
       if (reason) {
-        this.notifyCallback?.(Status.FailedCreateNewUser);
+        this.notifyStatusChange?.(Status.FailedCreateNewUser);
         return { reason };
       }
       this.#username = username;
@@ -388,13 +414,13 @@ export class Client {
       this.#profilePicture = profilePicture;
       this.#x3dhUser = x3dhUser;
       await this.savePassword(savePassword, username, password);
-      this.notifyCallback?.(Status.CreatedNewUser);
-      this.notifyCallback(Status.SignedIn);
+      this.notifyStatusChange?.(Status.CreatedNewUser);
+      this.notifyStatusChange(Status.SignedIn);
       return { reason: null };
     }
     catch(err) {
       logError(err);
-      this.notifyCallback?.(Status.FailedCreateNewUser);
+      this.notifyStatusChange?.(Status.FailedCreateNewUser);
       return failure(ErrorStrings.ProcessFailed);
     }
   }
@@ -403,60 +429,60 @@ export class Client {
   async userLogIn(username: string, password: string, savePassword: boolean): Promise<Failure>;
   async userLogIn(username?: string, password?: string, savePassword?: boolean): Promise<Failure> {
     if (!this.connected) return failure(ErrorStrings.NoConnectivity);
-    this.notifyCallback?.(Status.SigningIn);
+    this.notifyStatusChange?.(Status.SigningIn);
     try {
       if (!username) {
         const savedDetails = JSON.parse(window.localStorage.getItem("SavedDetails"));
         if (!savedDetails) {
-          this.notifyCallback?.(Status.FailedSignIn);
+          this.notifyStatusChange?.(Status.FailedSignIn);
           return failure(ErrorStrings.InvalidRequest);
         }
         const { saveToken, cookieSavedDetails  } = savedDetails;
         window.localStorage.removeItem("SavedDetails");
         if (!saveToken) {
-          this.notifyCallback?.(Status.FailedSignIn);
+          this.notifyStatusChange?.(Status.FailedSignIn);
           return failure(ErrorStrings.InvalidRequest);
         }
         const details = await this.GetSavedDetails({ saveToken });
         await this.axInstance.post("/setSaveToken", { saveToken: "0" });
         if ("reason" in details) {
-          this.notifyCallback?.(Status.FailedSignIn);
+          this.notifyStatusChange?.(Status.FailedSignIn);
           return details;
         }
         [username, password] = await this.extractSavedDetails(cookieSavedDetails, details);
         if (!username) {
-          this.notifyCallback?.(Status.FailedSignIn);
+          this.notifyStatusChange?.(Status.FailedSignIn);
           return failure(ErrorStrings.ProcessFailed);
         }
         savePassword = true;
       }
       const response = await this.InitiateAuthentication({ username });
       if ("reason" in response) {
-        this.notifyCallback?.(Status.FailedSignIn);
+        this.notifyStatusChange?.(Status.FailedSignIn);
         return response;
       }
       const keyData = await this.processAuthSetupKey(username, response.newAuthSetup);
       const result = await this.createNewAuth(username, password, keyData, response);
       if (!result) {
-        this.notifyCallback?.(Status.FailedSignIn);
+        this.notifyStatusChange?.(Status.FailedSignIn);
         return failure(ErrorStrings.ProcessFailed);
       }
       const [concludeRequest, encryptionBaseVector] = result;
       this.#encryptionBaseVector = await crypto.importRaw(encryptionBaseVector);
       const concludeResponse = await this.ConcludeAuthentication(concludeRequest);
       if ("reason" in concludeResponse) {
-        this.notifyCallback?.(Status.FailedSignIn);
+        this.notifyStatusChange?.(Status.FailedSignIn);
         return concludeResponse;
       }
       if (deserialize(await this.decrypt(username, password, response.authInfo.serverProof, "Server Proof")).username !== username) {
-        this.notifyCallback?.(Status.FailedSignIn);
+        this.notifyStatusChange?.(Status.FailedSignIn);
         return failure(ErrorStrings.ProcessFailed);
       }
       const { userDetails, x3dhInfo } = concludeResponse;
       await this.savePassword(savePassword, username, password);
       const x3dhUser = await X3DHUser.importUser(x3dhInfo, this.#encryptionBaseVector);
       if (!x3dhUser) {
-        this.notifyCallback?.(Status.FailedSignIn);
+        this.notifyStatusChange?.(Status.FailedSignIn);
         return failure(ErrorStrings.ProcessFailed);
       }
       const { displayName, profilePicture } = await crypto.decryptData(userDetails, this.#encryptionBaseVector, "User Details");
@@ -465,16 +491,16 @@ export class Client {
       this.#profilePicture = profilePicture;
       this.#x3dhUser = x3dhUser;
       for (const { sessionId, timestamp, otherUser, firstMessage } of this.#x3dhUser.pendingMessageRequests) {
-        this.addAwaitedRequest({ sessionId, otherUser, lastActivity: timestamp, message: firstMessage });
+        this.addAwaitedRequest({ sessionId, otherUser, lastActivity: timestamp, message: { messageId: "0.0", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } } });
       }
-      this.notifyCallback(Status.SignedIn);
+      this.notifyStatusChange(Status.SignedIn);
       this.loadChats();
       this.loadRequests();
       return { reason: null };
     }
     catch(err) {
       logError(err);
-      this.notifyCallback?.(Status.FailedSignIn);
+      this.notifyStatusChange?.(Status.FailedSignIn);
       return failure(ErrorStrings.ProcessFailed);
     }
   }
@@ -500,14 +526,14 @@ export class Client {
 
   async userLogOut(): Promise<Failure> {
     if (!this.#username && !this.connected) return;
-    this.notifyCallback?.(Status.SigningOut);
+    this.notifyStatusChange?.(Status.SigningOut);
     const username = this.#username;
     this.#username = null;
     this.#displayName = null;
     this.#x3dhUser = null;
     this.#encryptionBaseVector = null;
     await this.request(SocketEvents.LogOut, { username });
-    this.notifyCallback?.(Status.SignedOut);
+    this.notifyStatusChange?.(Status.SignedOut);
     await this.retryConnect("");
   }
 
@@ -688,11 +714,11 @@ export class Client {
       return false;
     }
     const [{ profile, respondedAt }, exportedChattingSession] = result;
-    const { lastActivity: timestamp, message: firstMessage } = awaitedRequest;
+    const { message: { content, timestamp } } = awaitedRequest;
     const chatDetails = await crypto.encryptData(profile, this.#encryptionBaseVector, "ContactDetails");
     const chatData = { chatDetails, exportedChattingSession, lastActivity: respondedAt, sessionId };
     await this.CreateChat(chatData);
-    const newChat = await Chat.instantiate(this.#username, this.#encryptionBaseVector, this.chatInterface(sessionId), chatData, { content: firstMessage, timestamp, delivery: respondedAt });
+    const newChat = await Chat.instantiate(this.#username, this.#encryptionBaseVector, this.chatInterface(sessionId), chatData, { content, timestamp, delivery: respondedAt });
     this.addChat(newChat);
     this.removeAwaitedRequest(sessionId, "sessionId");
     await this.requestRoom(newChat);
@@ -851,12 +877,13 @@ export class Client {
 }
 
 export class Chat {
+  private disposed = false;
   private readonly loadingBatch = 10;
   private loadedUpto = Date.now();
-  private notifyChange = new Map<string, () => void>();
   private lastActivityTimestamp: number;
   private typing: boolean;
   private typingTimeout: number;
+  private readonly notifyChange = new Map<string, () => void>();
   private readonly messagesList: DisplayMessage[] = [];
   private readonly clientInterface: ClientChatInterface;
   private chatDetails: UserEncryptedData;
@@ -891,12 +918,20 @@ export class Chat {
     }
   }
 
-  register(key: string, notifyChange: () => void) {
+  subscribe(key: string, notifyChange: () => void) {
     this.notifyChange.set(key, notifyChange);
   }
 
-  deregister(key: string) {
+  unsubscribe(key: string) {
     this.notifyChange.delete(key);
+  }
+
+  dispose() {
+    this.#socket?.off(this.otherUser);
+    this.#socket = null;
+    this.#sessionCrypto = null;
+    this.notifyChange.clear();
+    this.disposed = true;
   }
 
   private notify() {
@@ -932,6 +967,9 @@ export class Chat {
   }
 
   async establishRoom(sessionCrypto: SessionCrypto, socket: Socket) {
+    if (this.disposed) {
+      return false;
+    }
     socket.emit(SocketEvents.RoomEstablished, this.otherUser);
     const confirmed = await new Promise((resolve) => {
       socket.once(this.otherUser, (confirmation: string) => resolve(confirmation === "confirmed"))
@@ -945,15 +983,16 @@ export class Chat {
     this.#socket = socket;
     this.#socket.on(this.otherUser, this.receiveMessage.bind(this));
     this.#socket.on("disconnect", () => {
-      this.#socket?.off(this.otherUser);
-      this.#socket = null;
-      this.#sessionCrypto = null;
+      this.dispose();
     })
     this.loadUnprocessedMessages();
     this.notify();
   }
 
   async sendMessage(content: string, timestamp: number, replyId?: string) {
+    if (this.disposed) {
+      return false;
+    }
     const sentByMe = true;
     const replyingTo = await this.populateReplyingTo(replyId);
     if (replyingTo === undefined) {
@@ -1000,6 +1039,9 @@ export class Chat {
   async sendEvent(event: "typing" | "stopped-typing"): Promise<boolean>;
   async sendEvent(event: "delivered" | "seen", messageId: string, timestamp: number): Promise<boolean>;
   async sendEvent(event: "typing" | "stopped-typing" | "delivered" | "seen", messageId?: string, timestamp?: number): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
     if (this.hasRoom) {
       return await new Promise<boolean>((resolve) => {
         this.#socket.emit(this.otherUser, { event, messageId, timestamp }, (response: boolean) => resolve(response));
@@ -1013,6 +1055,9 @@ export class Chat {
   }
 
   async loadNext() {
+    if (this.disposed) {
+      return;
+    }
     const messages = await this.clientInterface.GetMessagesByNumber({ limit: this.loadingBatch, olderThan: this.loadedUpto });
     if ("reason" in messages) {
       logError(messages);
@@ -1022,6 +1067,9 @@ export class Chat {
   }
 
   async loadUptoId(messageId: string) {
+    if (this.disposed) {
+      return;
+    }
     const messages = await this.clientInterface.GetMessagesUptoId({ messageId, olderThan: this.loadedUpto });
     if ("reason" in messages) {
       logError(messages);
@@ -1031,6 +1079,9 @@ export class Chat {
   }
 
   async loadUptoTime(newerThan: number) {
+    if (this.disposed) {
+      return;
+    }
     const messages = await this.clientInterface.GetMessagesUptoTimestamp({ newerThan, olderThan: this.loadedUpto });
     if ("reason" in messages) {
       logError(messages);
@@ -1040,6 +1091,9 @@ export class Chat {
   }
 
   async messageReceived(message: MessageHeader) {
+    if (this.disposed) {
+      return false;
+    }
     return await this.openEncryptedMessage(message);    
   }
 
@@ -1178,7 +1232,7 @@ export class Chat {
 export class ChatRequest {
   readonly otherUser: string;
   readonly contactDetails: Readonly<{ displayName: string, contactName?: string, profilePicture: string }>;
-  readonly message: string;
+  readonly message: DisplayMessage;
   readonly lastActivity: number;
   readonly sessionId: string;
   private readonly messageRequestHeader: MessageRequestHeader;
@@ -1189,7 +1243,7 @@ export class ChatRequest {
     this.sessionId = messageRequestHeader.sessionId;
     this.otherUser = otherUser;
     this.contactDetails = contactDetails;
-    this.message = firstMessage;
+    this.message = { messageId: "0.0", content: firstMessage, timestamp, sentByMe: false };
     this.lastActivity = timestamp;
     this.messageRequestHeader = messageRequestHeader;
     this.clientInterface = clientInterface;
