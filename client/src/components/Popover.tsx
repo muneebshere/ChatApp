@@ -58,7 +58,7 @@ export function usePopover({
   }
 
   useEffect(() => {
-    if (controlled && changeOpenTo !== undefined) {
+    if (!controlled && changeOpenTo !== undefined) {
       setUncontrolledOpen(changeOpenTo);
     }
   }, [changeOpenTo]);
@@ -82,7 +82,7 @@ export function usePopover({
   const click = useClick(context, {
     enabled: !controlled
   });
-  const dismiss = useDismiss(context);
+  const dismiss = useDismiss(context, { ancestorScroll: true });
   const role = useRole(context);
 
   const interactions = useInteractions([click, dismiss, role]);
@@ -189,7 +189,11 @@ export const PopoverContent = forwardRef<
   return (
     <FloatingPortal>
       {context.open && (
-        <FloatingFocusManager context={floatingContext} modal={context.modal}>
+        <FloatingFocusManager 
+          context={floatingContext} 
+          modal={context.modal}
+          initialFocus={-1}
+          guards={false}>
           <div
             ref={ref}
             style={{

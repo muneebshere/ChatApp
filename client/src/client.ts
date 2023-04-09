@@ -84,6 +84,7 @@ export class Client {
   #sessionReference: string;
   #sessionCrypto: SessionCrypto;
   #encryptionBaseVector: CryptoKey;
+  #fileHash: Promise<string>;
   private readonly chatsByUsername = new Map<string, Chat>();
   private readonly chatRequestsByUsername = new Map<string, ChatRequest>();
   private readonly awaitedRequestsByUsername = new Map<string, AwaitedRequest>();
@@ -251,6 +252,7 @@ export class Client {
   constructor(url: string) {
     this.url = url;
     this.axInstance = axios.create({ baseURL: `${this.url}/`, maxRedirects:0 });
+    this.#fileHash = this.calculateFileHash();
   }
 
   subscribeStatusChange(notifyCallback?: (status: Status) => void) {
@@ -259,6 +261,12 @@ export class Client {
 
   subscribeChange(notifyCallback?: () => void) {
     if (notifyCallback) this.notifyChange = notifyCallback;
+  }
+
+  private async calculateFileHash() {
+    const response = await fetch("./main.js");
+    const fileBuffer = await response.arrayBuffer();
+    return crypto.digest("SHA-256", fileBuffer);
   }
 
   async establishSession() {
@@ -271,7 +279,8 @@ export class Client {
       const sessionReference = this.#sessionReference ?? getRandomString();
       const clientPublicKey = (await crypto.exportKey(publicKey)).toString("base64");
       const clientVerifyingKey = (await crypto.exportKey(verifyingKey)).toString("base64");
-      const auth = { sessionReference, clientPublicKey, clientVerifyingKey };
+      const fileHash = await this.#fileHash;
+      const auth = { sessionReference, clientPublicKey, clientVerifyingKey, fileHash };
       this.#socket = io(this.url, { auth, withCredentials: true });
       this.#socket.on("disconnect", this.retryConnect.bind(this));
       let nevermind = false;
@@ -434,17 +443,19 @@ export class Client {
       if (!username) {
         const savedDetails = JSON.parse(window.localStorage.getItem("SavedDetails"));
         if (!savedDetails) {
+          await this.clearCookie();
           this.notifyStatusChange?.(Status.FailedSignIn);
           return failure(ErrorStrings.InvalidRequest);
         }
         const { saveToken, cookieSavedDetails  } = savedDetails;
         window.localStorage.removeItem("SavedDetails");
         if (!saveToken) {
+          await this.clearCookie();
           this.notifyStatusChange?.(Status.FailedSignIn);
           return failure(ErrorStrings.InvalidRequest);
         }
         const details = await this.GetSavedDetails({ saveToken });
-        await this.axInstance.post("/setSaveToken", { saveToken: "0" });
+        await this.clearCookie();
         if ("reason" in details) {
           this.notifyStatusChange?.(Status.FailedSignIn);
           return details;
@@ -553,7 +564,6 @@ export class Client {
   private async encrypt(username: string, password: string, data: Buffer, purpose: string): Promise<PasswordEncryptedData> {
     const [masterKeyBits, pInfo] = await crypto.deriveMasterKeyBits(`${username}#${password}`);
     const hSalt = getRandomVector(48);
-    data ??= serialize({ username });
     const encrypted = await crypto.deriveSignEncrypt(masterKeyBits, data, hSalt, purpose);
     return { ...encrypted, ...pInfo, hSalt };
   }
@@ -599,7 +609,7 @@ export class Client {
     const hSalt = getRandomVector(48);
     const { ciphertext } = await crypto.deriveSignEncrypt(keyBits, serialize({ username, password }), hSalt, "Cookie Saved Details");
     const cookieSavedDetails = ciphertext.toString("base64");
-    const savedDetails: SavedDetails = { saveToken, keyBits, hSalt };
+    const savedDetails: SavedDetails = { saveToken, keyBits, hSalt, url: this.url };
     return { cookieSavedDetails, savedDetails };
   }
 
@@ -622,8 +632,18 @@ export class Client {
         if (!reason ) {
           window.localStorage.setItem("SavedDetails", stringify({ saveToken, cookieSavedDetails }));
         }
+        else {
+          await this.clearCookie();
+        }
       }
     }
+  }
+
+  private async clearCookie() {
+    const socketId = this.#socket.id;
+    const sessionReference = this.#sessionReference;
+    const response = await this.axInstance.post("/setSaveToken", { saveToken: "0", socketId, sessionReference });
+    return response.status === 200;
   }
 
   private async loadChats() {

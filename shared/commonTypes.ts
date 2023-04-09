@@ -172,6 +172,7 @@ export type Failure = {
 }
 
 export type SavedDetails = { 
+    url: string,
     saveToken: string,
     keyBits: Buffer, 
     hSalt: Buffer

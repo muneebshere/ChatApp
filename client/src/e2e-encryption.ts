@@ -556,7 +556,7 @@ export class ChattingSession {
     }
 
     public get nextMessageId() {
-        return `${this.#dhSendingRatchetNumber}.${this.#sendingChainNumber + 1}`;
+        return `${this.#dhSendingRatchetNumber}-${this.#sendingChainNumber + 1}`;
     }
     
     static async new(encryptionBaseVector: CryptoKey,
@@ -856,7 +856,7 @@ export class ChattingSession {
             const sendingChainNumber = this.#sendingChainNumber;
             const previousChainNumber = this.#previousSendingChainNumber;
             const nextDHRatchetKey = this.#currentDHPublishKey;
-            const messageId = `${sendingRatchetNumber}.${sendingChainNumber}`;
+            const messageId = `${sendingRatchetNumber}-${sendingChainNumber}`;
             let messageBody: MessageBody = { sender, recipient, messageId, timestamp, content };
             messageBody = replyingTo ? { ...messageBody, replyingTo } : messageBody;
             const { ciphertext, signature } = 

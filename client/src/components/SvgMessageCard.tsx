@@ -8,16 +8,18 @@ export type SvgMessageProps = {
   darken: boolean,
   darkenFinished: () => void,
   first: boolean,
-  direction: "left" | "right",
+  sentByMe: boolean,
   children: JSX.Element,
   background: string,
   shadowColor: string
 }
 
 export default function SvgMessageCard(props: SvgMessageProps) {
-  const { children, direction, background, shadowColor, first, darken, darkenFinished } = props;
+  const { children, sentByMe, background, shadowColor, first, darken, darkenFinished } = props;
   const darkenNode = useRef<HTMLDivElement>(null);
   const shadowString = `drop-shadow(0px 0px 3px ${shadowColor})`;
+
+  const direction = sentByMe ? "right" : "left";
 
   useUpdateEffect(() => {
     if (darken) {
@@ -41,7 +43,7 @@ export default function SvgMessageCard(props: SvgMessageProps) {
   
   const pointWidth = 15;
   const pointHeight = 10;
-  const polygon = direction === "left" ? "polygon(0 0, 100% 0%, 100% 100%)" : "polygon(100% 0%, 0% 100%, 0% 0%)";
+  const polygon = sentByMe ? "polygon(100% 0%, 0% 100%, 0% 0%)" : "polygon(0 0, 100% 0%, 100% 100%)";
 
   const PointBefore = 
     first
@@ -61,16 +63,15 @@ export default function SvgMessageCard(props: SvgMessageProps) {
   
   const outerStyle: React.CSSProperties = {
     display: "flex",
-    justifyContent: direction === "left" ? "flex-start" : "flex-end",
+    justifyContent: sentByMe ? "flex-end" : "flex-start",
     filter: shadowString
   }
       
   const radiusPosition: React.CSSProperties = 
     first
-      ?  match(direction)
-          .with("left", () => ({ borderTopLeftRadius: 0 }))
-          .with("right", () => ({ borderTopRightRadius: 0 }))
-          .exhaustive()
+      ? (sentByMe
+        ? { borderTopRightRadius: 0 }
+        : { borderTopLeftRadius: 0 })
       : {};
 
   const innerStyle: React.CSSProperties = {

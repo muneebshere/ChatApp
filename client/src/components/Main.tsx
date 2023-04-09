@@ -4,7 +4,7 @@ import { useMediaQuery, Theme } from "@mui/material";
 import { ReportProblem, PersonAddAltOutlined, Search, ClearSharp } from "@mui/icons-material";
 import { Popover, PopoverTrigger, PopoverContent } from "./Popover";
 import { Item, StyledScrollbar, ControlledTextField } from "./Common";
-import { ChatViewMemo } from "./ChatView";
+import { ChatViewMemo, ScrollState } from "./ChatView";
 import { useEffectOnce } from "usehooks-ts";
 import { Client } from "../client";
 import { chats } from "./prvChats";
@@ -19,7 +19,7 @@ export default function Main({ connected, displayName, client }: { connected: bo
   const [currentChatWith, setCurrentChatWith] = useState("");
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const typedMessages = useRef(new Map<string, string>());
-  const lastScrollPositions = useRef(new Map<string, number>());
+  const lastScrollPositions = useRef(new Map<string, ScrollState>());
   
   useEffectOnce(() => {
     const currentChatWith = window.history.state?.currentChatWith || "";
@@ -39,7 +39,7 @@ export default function Main({ connected, displayName, client }: { connected: bo
   <Grid container direction="column" sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column" }}>
     <DisconnectedAlert connected={connected}/>
     <Grid xs={12} sx={{ flex: 0, flexBasis: "content" }}>
-      <Item>
+      <Item id="titleBar">
         <Typography level="h4" sx={{ textAlign: "center" }}>
           {displayName}
         </Typography>
@@ -63,10 +63,10 @@ export default function Main({ connected, displayName, client }: { connected: bo
             if (currentChatWith) {
               typedMessages.current.set(currentChatWith, message)
             }}}
-          lastScroll={ lastScrollPositions.current.get(currentChatWith) || 0 }
-          setLastScroll={(scroll) => {
+          lastScrolledTo={ lastScrollPositions.current.get(currentChatWith) }
+          setLastScrolledTo={(lastScrolledTo) => {
             if (currentChatWith) {
-              lastScrollPositions.current.set(currentChatWith, scroll);
+              lastScrollPositions.current.set(currentChatWith, lastScrolledTo);
             }
           }}/>
       </Grid>}

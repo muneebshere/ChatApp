@@ -7,6 +7,35 @@ import { Failure } from "../../../shared/commonTypes";
 import { Theme, useMediaQuery } from "@mui/material";
 import { Dialog, DialogContent } from "./Dialog";
 import { CloseSharp } from "@mui/icons-material";
+import useResizeObserver from "@react-hook/resize-observer";
+import { MutableRefObject } from "react";
+import { useLayoutEffect } from "react";
+import { ReactMarkdown } from "react-markdown/lib/react-markdown";
+
+function sizeFromRect(rect: DOMRect): [number, number] {
+  return rect ? [rect?.width || 0, rect?.height || 0] : [0, 0];
+}
+
+export function useSize<T extends HTMLElement>(target: MutableRefObject<T>, initialValue?: [number, number]) {
+  const [size, setSize] = useState<[number, number]>(initialValue || [0, 0]);
+
+  useLayoutEffect(() => {
+    const element = target.current;
+    if (element && !initialValue) {
+      const computedStyle = getComputedStyle(element);
+      let elementHeight = element.clientHeight;
+      let elementWidth = element.clientWidth;
+      elementHeight -= parseFloat(computedStyle.paddingTop) + parseFloat(computedStyle.paddingBottom);
+      elementWidth -= parseFloat(computedStyle.paddingLeft) + parseFloat(computedStyle.paddingRight);
+      elementHeight = Math.max(elementHeight, 0);
+      elementWidth = Math.max(elementWidth, 0);
+      setSize([elementWidth, elementHeight]);
+    }
+  }, [target]);
+  
+  useResizeObserver(target, (entry) => setSize(sizeFromRect(entry.contentRect)));
+  return size;
+}
 
 export const Item = joyStyled(Sheet)(({ theme }) => ({
   ...theme.typography.body2,
@@ -28,6 +57,7 @@ export const StyledScrollbar = styled(Item)`
   overflow-x: clip;
   overflow-y: scroll;
   scroll-behavior: auto !important;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: #afafaf #d1d1d1;
 
@@ -312,3 +342,5 @@ export const StyledJoyTextarea = styled(JoyTextarea)`
       border-radius: 4px;
     }
   }`;
+
+export const ReactMarkdownMemo = React.memo(ReactMarkdown, (prev, next) => prev.children === next.children);

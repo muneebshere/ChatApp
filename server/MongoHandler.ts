@@ -248,6 +248,11 @@ export class MongoHandlerCentral {
       immutable: true,
       unique: true
     },
+    url: {
+      type: Schema.Types.String,
+      required: true,
+      immutable: true,
+    },
     keyBits: {
       type: Schema.Types.Buffer,
       required: true,
@@ -390,8 +395,16 @@ export class MongoHandlerCentral {
 
   private static readonly MessageEvent = mongoose.model("MessageEvent", messageEventSchema.index({ addressedTo: "hashed", sessionId: "hashed" }).index({ addressedTo: 1, sessionId: 1, messageId: 1, event: 1 }, { unique: true }), "message_event");
 
+  static onError: () => void;
+
   static async connect(url: string, options?: mongoose.ConnectOptions) {
-    await mongoose.connect(url, { ...options, keepAlive: true, keepAliveInitialDelay: 300000 });
+    const mong = await mongoose.connect(url, { ...options, keepAlive: true, keepAliveInitialDelay: 300000, serverSelectionTimeoutMS: 3000000, connectTimeoutMS: 3000000, socketTimeoutMS: 3000000, maxIdleTimeMS: 3000000 });
+    if (!this.onError) {
+      this.onError = () => {
+        MongoHandlerCentral.connect(url, options);
+      };
+    }
+    mong.connection.on("error", this.onError);
   }
 
   static async createNewUser(user: { username: string, userDetails: UserEncryptedData, authInfo: UserAuthInfo, x3dhInfo: UserEncryptedData, keyBundles: PublishKeyBundlesRequest }) {
@@ -406,7 +419,9 @@ export class MongoHandlerCentral {
   }
 
   static async setSavedDetails(details: SavedDetails) {
-    try { 
+    try {
+      const { saveToken } = details;
+      await this.SavedDetails.findOneAndDelete({ saveToken });
       return !!(await this.SavedDetails.create(bufferReplaceForMongo(details)));
     }
     catch(err) {

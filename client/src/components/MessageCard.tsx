@@ -1,14 +1,13 @@
 import _ from "lodash";
 import  { match } from "ts-pattern";
-import React, { createContext, memo, useContext, useLayoutEffect, useRef, useState } from "react";
+import React, { ForwardedRef, createContext, forwardRef, memo, useContext, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { useUpdateEffect } from "usehooks-ts";
 import { Grid, IconButton, Link, Sheet, Stack, Typography } from "@mui/joy";
 import { DoneSharp, DoneAllSharp, HourglassTop } from "@mui/icons-material";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip";
 import { Popover, PopoverTrigger, PopoverContent } from "./Popover";
-import { Item } from "./Common";
+import { Item, ReactMarkdownMemo } from "./Common";
 import { ReactMarkdownOptions } from "react-markdown/lib/react-markdown";
-import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import twemoji from "../custom_modules/remark-twemoji";
@@ -24,7 +23,7 @@ interface HTMLDivElementScroll extends HTMLDivElement {
   scrollIntoViewIfNeeded(centerIfNeeded?: boolean): void;
 }
 
-const StyledReactMarkdown = styled(ReactMarkdown as unknown as React.ComponentClass<ReactMarkdownOptions, {}>)`
+const StyledReactMarkdown = styled(ReactMarkdownMemo as unknown as React.ComponentClass<ReactMarkdownOptions, {}>)`
   img.emoji {
     height: 22px;
     width: 22px;
@@ -47,16 +46,12 @@ const StyledReactMarkdown = styled(ReactMarkdown as unknown as React.ComponentCl
     margin-bottom: 0px;
   }
 `
-export type FocusData = {
-  readonly currentFocus: string;
-  readonly setCurrentFocus: (id: string) => void;
-}
 
-export const FocusContext = createContext<FocusData>(null);
-
-export const ChatContext = createContext({ chatWith: "Unknown" });
-
-export type ViewMessage = Readonly<DisplayMessage & { first: boolean }>;
+export type ViewMessage = Readonly<DisplayMessage & { 
+  chatWith: string; 
+  first: boolean;
+  highlight: string;
+  setHighlight: (id: string) => void;  }>;
 
 const formatTooltipDate = (timestamp: number) => {
   const date = DateTime.fromMillis(timestamp);
@@ -68,19 +63,25 @@ const sentIcon = <DoneSharp sx={{ color: "gray", fontSize: "1rem" }}/>;
 const deliveredIcon = <DoneAllSharp sx={{ color: "gray", fontSize: "1rem" }}/>;
 const seenIcon = <DoneAllSharp sx={{ color: "blue", fontSize: "1rem" }}/>;
 
-const MessageCard = function ({ message }: { message: ViewMessage }) {
-  const { currentFocus, setCurrentFocus } = useContext(FocusContext);
-  const { chatWith } = useContext(ChatContext);
-  const { messageId, content, timestamp, replyingTo, sentByMe, first } = message;
+const MessageCard = forwardRef(function (message: ViewMessage, ref: ForwardedRef<HTMLDivElement>) {
+  const { highlight, setHighlight } = message;
+  const { chatWith, messageId, content, timestamp, replyingTo, sentByMe, first } = message;
   const [darken, setDarken] = useState(false);
-  const sheetRef = useRef<HTMLDivElementScroll>(null);
+  const scrollRef = useRef<HTMLDivElementScroll>(null);
+
   useUpdateEffect(() => {
-    if (currentFocus === messageId) { 
-      sheetRef.current.scrollIntoViewIfNeeded();
+    if (highlight === messageId) { 
+      scrollRef.current.scrollIntoViewIfNeeded();
       setDarken(true);
-      setCurrentFocus(null);
     } 
-  }, [currentFocus]);
+  }, [highlight]);
+
+  useUpdateEffect(() => {
+    if (!darken) {
+      setHighlight("");
+    }
+  }, [darken]);
+
   let statusButton: JSX.Element = null;
   if (sentByMe) {
     const { delivery } = message;
@@ -98,7 +99,16 @@ const MessageCard = function ({ message }: { message: ViewMessage }) {
               {statusIcon}
           </PopoverTrigger>
           <PopoverContent>
-            <div style={{ position: "relative", zIndex: 10, borderRadius: 8, padding: 10, border: "0.1px solid #d8d8df", backgroundColor: "rgba(244, 246, 244, 0.8)", boxShadow: "0px 1px 3px 1.5px #eeeeee", backdropFilter: "blur(4px)" }}>
+            <div style={{ position: "relative",
+                          zIndex: 5, 
+                          borderRadius: 8, 
+                          padding: 10, 
+                          border: "0.1px solid #d8d8df", 
+                          backgroundColor: "rgba(244, 246, 244, 0.8)", 
+                          boxShadow: "0px 1px 3px 1.5px #eeeeee", 
+                          backdropFilter: "blur(4px)" }}
+                  tabIndex={-1}
+                  >
               <Stack direction="row">
                 <Stack direction="column" spacing={1.5} sx={{ maxWidth: "fit-content", paddingTop: 0.3 }}>
                   {deliveredIcon}
@@ -126,16 +136,16 @@ const MessageCard = function ({ message }: { message: ViewMessage }) {
       const repliedBorderColor = sentByMe ? "#bddcb8" : "#c7c7c7";
       const repliedBorder = `thin solid ${repliedBorderColor}`;
       return (
-          <Link component="button" underline="none" onClick={() => setCurrentFocus(replyId) }>
+          <Link component="button" underline="none" onClick={() => setHighlight(replyId) }>
             <Stack direction="row" sx={{ width: "100%", paddingBottom: 0.5 }}>
-              <Sheet sx={{ width: "4px", backgroundColor: repliedOutlineColor, borderLeftColor: repliedOutlineColor, borderTopLeftRadius: "10px", borderBottomLeftRadius: "10px" }}/>
+              <Sheet sx={{ width: "4px", minWidth: "4px", backgroundColor: repliedOutlineColor, borderLeftColor: repliedOutlineColor, borderTopLeftRadius: "10px", borderBottomLeftRadius: "10px" }}/>
               <Sheet variant="soft" sx={{ flexGrow: 1, backgroundColor: repliedColor, padding: 1, borderTopRightRadius: "10px", borderBottomRightRadius: "10px", borderTop: "thin solid transparent", borderBottom: repliedBorder, borderRight: repliedBorder, boxShadow: `1px 0px 2px ${repliedBorderColor}`, "&:hover": { boxShadow: `1px 0px 7px ${repliedBorderColor}` } }}>
                 <Stack direction="column" justifyContent="flex-start" sx={{ display: "flex", textAlign: "left" }}>
                   <Typography component="span" level="body3" fontWeight="bold" textColor={repliedOutlineColor}>
                     {replyToOwn ? "You" : chatWith }
                   </Typography>
                   <Typography component="span" level="body3">
-                    <ReactMarkdown components={{ p: "span" }}  children={displayText} remarkPlugins={[remarkGfm]}/>
+                    <ReactMarkdownMemo components={{ p: "span" }}  children={displayText} remarkPlugins={[remarkGfm]}/>
                   </Typography>
                 </Stack>
               </Sheet>
@@ -143,13 +153,12 @@ const MessageCard = function ({ message }: { message: ViewMessage }) {
           </Link>)
     })() : null;
   const side = sentByMe ? "flex-end" : "flex-start";
-  const direction = sentByMe ? "right" : "left";
   const messageColor = sentByMe ? "#d7fad1" : "white";
   return (
     <Grid container sx={{ display: "flex", flexGrow: 1, justifyContent: side, height: "fit-content", maxWidth: "100%" }}>
-      <Grid xs={10} sm={8} lg={7} sx={{ display: "flex", flexGrow: 0, justifyContent: side, height: "fit-content" }}>
-        <Item sx={{ width: "100%", display: "flex", flexGrow: 1, justifyContent: side, alignContent: "flex-start", padding: 0, margin: 0 }} ref={sheetRef} style={{ }}>
-          <SvgMessageCard background={messageColor} first={first} direction={direction} shadowColor="#adb5bd" darken={darken} darkenFinished={() => setDarken(false) }>
+      <Grid xs={10} sm={8} lg={7} sx={{ display: "flex", flexGrow: 0, justifyContent: side, height: "fit-content" }} ref={scrollRef}>
+        <Item sx={{ width: "100%", display: "flex", flexGrow: 1, justifyContent: side, alignContent: "flex-start", padding: 0, margin: 0 }} ref={ref} id={`m${messageId}`}>
+          <SvgMessageCard background={messageColor} first={first} sentByMe={sentByMe} shadowColor="#adb5bd" darken={darken} darkenFinished={() => setDarken(false) }>
             <Stack direction="column"
               sx={{ maxWidth: "max-content", width: "fit-content", padding: 1.5, paddingBottom: 0.5, alignContent: "flex-start", textAlign: "start" }}>
                 {repliedMessage && repliedMessage}
@@ -190,9 +199,10 @@ const MessageCard = function ({ message }: { message: ViewMessage }) {
       </Grid>
     </Grid>
   )
-}
+})
 
 export const MessageCardMemo = memo(MessageCard, 
-  ({ message: prev }, { message: next }) => 
+  (prev, next) => 
     prev.messageId === next.messageId 
-    && (!prev.sentByMe || !next.sentByMe || !(prev.delivery || next.delivery) || _.isEqual(prev.delivery, next.delivery)));
+    && (!prev.sentByMe || !next.sentByMe || !(prev.delivery || next.delivery) || _.isEqual(prev.delivery, next.delivery))
+    && (next.highlight === next.messageId) === (prev.highlight === prev.messageId));

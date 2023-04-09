@@ -2,7 +2,7 @@ import _ from "lodash";
 import { DateTime } from "luxon";
 import { config } from "./node_modules/dotenv";
 import { ServerOptions, createServer } from "node:https";
-import fs from "node:fs";
+import fs, { promises as fsPromises } from "node:fs";
 import session, { Session, CookieOptions as SessionCookieOptions, SessionOptions } from "express-session";
 import cookieParser from "cookie-parser";
 import ConnectMongoDBSession from "connect-mongodb-session";
@@ -101,8 +101,15 @@ class SocketHandler {
   setSaveToken(sessionReference: string, saveToken: string) {
     const _saveToken = this.#saveToken;
     const _sessionRef = this.#sessionReference;
-    if (!this.#saveToken && sessionReference === this.#sessionReference) {
-      this.#saveToken = saveToken;
+    if (sessionReference === this.#sessionReference && (!this.#saveToken || !saveToken)) {
+      if (!this.#saveToken && saveToken) {
+        this.#saveToken = saveToken;
+      }
+      else if (this.#saveToken && !saveToken) {
+        MongoHandlerCentral.getSavedDetails(saveToken).then(() => {
+          this.#saveToken = null;
+        })
+      }
       return true;
     }
     return false;
@@ -375,7 +382,7 @@ class SocketHandler {
   private async getSavedDetails({ saveToken }: { saveToken: string }) {
     if (saveToken !== this.#saveToken) return failure(ErrorStrings.IncorrectData);
     this.#saveToken = null;
-    return await MongoHandlerCentral.getSavedDetails(saveToken) ?? { };
+    return (await MongoHandlerCentral.getSavedDetails(saveToken)) ?? failure(ErrorStrings.ProcessFailed);
   }
 
   private validateKeyBundleOwner(keyBundles: PublishKeyBundlesRequest, username: string) {
@@ -772,6 +779,30 @@ const httpsServer = createServer(httpsOptions, app);
 const socketHandlers = new Map<string, SocketHandler>();
 const interruptedSessions = new Map<string, (socket: Socket, sessionReference: string) => boolean>();
 const onlineUsers = new Map<string, string>();
+let abortController: AbortController = new AbortController();
+const hashCalculator = async () => {
+  try {
+    const buffer = await fsPromises.readFile(`..\\client\\public\\main.js`, { flag: "r", signal: abortController.signal });
+    const hash = await crypto.digest("SHA-256", buffer);
+    return hash;
+  }
+  catch(err) {
+    logError(err);
+    return null;
+  } 
+};
+let jsHash = hashCalculator();
+(async () => {
+  const watcher = fsPromises.watch(`..\\client\\public\\main.js`);
+  for await (const { eventType } of watcher) {
+    if (eventType === "change") {
+      const prevController = abortController;
+      abortController = new AbortController();
+      jsHash = hashCalculator();
+      prevController.abort();
+    }
+  }
+})();
 
 const io = new SocketServer(httpsServer, {
   cors: {
@@ -784,9 +815,15 @@ const io = new SocketServer(httpsServer, {
 app.post("/setSaveToken", (req, res) => {
   const { saveToken, socketId, sessionReference } = req.body;
   if (saveToken === "0") {
-    res.clearCookie("saveToken").status(200).end();
+    if (socketHandlers.get(socketId)?.setSaveToken(sessionReference, null)) {
+      res.clearCookie("saveToken").status(200).end();
+    }
+    else {
+      res.status(403).end();
+    }
     return;
   }
+
   if (socketHandlers.get(socketId)?.setSaveToken(sessionReference, saveToken)) {
     const cookieOptions : CookieOptions = { httpOnly: true, secure: true, maxAge: 10*24*60*60*1000, sameSite: "strict", expires: DateTime.now().plus({ days: 10 }).toJSDate() };
     res.cookie("saveToken", { saveToken }, cookieOptions).status(200).end();
@@ -801,10 +838,11 @@ httpsServer.listen(PORT, () => console.log(`listening on *:${PORT}`));
 io.use((socket: Socket, next) => { sessionMiddleware(socket.request as Request, {} as Response, next as NextFunction) });
 io.use((socket: Socket, next) => { cookieParserMiddle(socket.request as Request, {} as Response, next as NextFunction) });
 io.on("connection", async (socket) => {
+  const fileHashLocal = await jsHash;
   const { session, cookies: { saveToken: saveTokenCookie } } = socket.request;
   const { saveToken } = saveTokenCookie ?? {};
-  let { sessionReference, clientPublicKey, clientVerifyingKey } = socket.handshake.auth ?? {};
-  if (!sessionReference || !clientPublicKey || !clientVerifyingKey) {
+  let { sessionReference, clientPublicKey, clientVerifyingKey, fileHash } = socket.handshake.auth ?? {};
+  if (!sessionReference || !clientPublicKey || !clientVerifyingKey || fileHash !== fileHashLocal) {
     socket.emit(SocketEvents.CompleteHandshake, "", null, null, (success: boolean) => {});
     await sleep(5000);
     socket.disconnect(true);

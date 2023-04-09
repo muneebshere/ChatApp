@@ -54,7 +54,7 @@ export function useDialog({
   }
 
   useEffect(() => {
-    if (controlled && changeOpenTo !== undefined) {
+    if (!controlled && changeOpenTo !== undefined) {
       setUncontrolledOpen(changeOpenTo);
     }
   }, [changeOpenTo]);

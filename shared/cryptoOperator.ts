@@ -30,6 +30,10 @@ const hmacKeyGenParams = (length: 256 | 512) => ({ name: "HMAC", hash: { name: `
 const aesGCM = (iv: Buffer) => ({ name: "AES-GCM", iv });
 const hkdfParams = (salt: Buffer, length: 256 | 512, info: string) => ({ name: "HKDF", hash: `SHA-${length}`, salt, info: Buffer.from(`${info}${salt.toString("base64").slice(0, 20)}`) });
 
+export async function digest(algorithm: AlgorithmIdentifier, data: BufferSource) {
+    return Buffer.from(await subtle.digest(algorithm, data)).toString("base64");
+}
+
 export async function importRaw(source: Buffer | string): Promise<CryptoKey> {
     const usePbkdf = typeof source === "string";
     const bits = usePbkdf ? Buffer.from(source) : source;
