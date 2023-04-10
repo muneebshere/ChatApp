@@ -23,10 +23,10 @@ interface HTMLDivElementScroll extends HTMLDivElement {
   scrollIntoViewIfNeeded(centerIfNeeded?: boolean): void;
 }
 
-const StyledReactMarkdown = styled(ReactMarkdownMemo as unknown as React.ComponentClass<ReactMarkdownOptions, {}>)`
+const StyledReactMarkdownVariableEmojiSize = (emojiSize: number) => styled(ReactMarkdownMemo as unknown as React.ComponentClass<ReactMarkdownOptions, {}>)`
   img.emoji {
-    height: 22px;
-    width: 22px;
+    height: ${emojiSize}px;
+    width: ${emojiSize}px;
     background-position:center;
     background-repeat:no-repeat;
     background-size:contain;
@@ -42,10 +42,14 @@ const StyledReactMarkdown = styled(ReactMarkdownMemo as unknown as React.Compone
   }
 
   & > p:last-child {
+    max-width: 100%;
     padding-bottom: 0px;
     margin-bottom: 0px;
-  }
-`
+  }`;
+
+const StyledReactMarkdownBody = StyledReactMarkdownVariableEmojiSize(22);
+
+const StyledReactMarkdownReply = StyledReactMarkdownVariableEmojiSize(18);
 
 export type ViewMessage = Readonly<DisplayMessage & { 
   chatWith: string; 
@@ -68,6 +72,8 @@ const MessageCard = forwardRef(function (message: ViewMessage, ref: ForwardedRef
   const { chatWith, messageId, content, timestamp, replyingTo, sentByMe, first } = message;
   const [darken, setDarken] = useState(false);
   const scrollRef = useRef<HTMLDivElementScroll>(null);
+  const bodyRef = useRef<HTMLSpanElement>(null);
+  const statusRef = useRef<HTMLDivElement>(null);
 
   useUpdateEffect(() => {
     if (highlight === messageId) { 
@@ -81,6 +87,12 @@ const MessageCard = forwardRef(function (message: ViewMessage, ref: ForwardedRef
       setHighlight("");
     }
   }, [darken]);
+
+  useLayoutEffect(() => {
+    const bodyElement = bodyRef.current.querySelector("div.react-markdown > p:last-child");
+    const { height, width } = statusRef.current.getBoundingClientRect();
+    bodyElement.insertAdjacentHTML("beforeend", `<div style="float: right; shape-outside: margin-box; width: ${width}px; height: ${height}px; min-width: ${width}px; min-height: ${height}px; margin: 12px 0px 0px 12px;">&nbsp;</div>`);
+  });
 
   let statusButton: JSX.Element = null;
   if (sentByMe) {
@@ -128,6 +140,7 @@ const MessageCard = forwardRef(function (message: ViewMessage, ref: ForwardedRef
         </Popover>)
     }
   }
+
   const repliedMessage = 
     replyingTo ? (() => {
       const { id: replyId, replyToOwn, displayText } = replyingTo;
@@ -145,13 +158,19 @@ const MessageCard = forwardRef(function (message: ViewMessage, ref: ForwardedRef
                     {replyToOwn ? "You" : chatWith }
                   </Typography>
                   <Typography component="span" level="body3">
-                    <ReactMarkdownMemo components={{ p: "span" }}  children={displayText} remarkPlugins={[remarkGfm]}/>
+                    <StyledReactMarkdownReply 
+                      className="react-markdown" 
+                      components={{ p: "span" }}
+                      children={displayText}
+                      remarkPlugins={[remarkGfm, remarkMath, twemoji]}
+                      rehypePlugins={[rehypeKatex, rehypeRaw]}/>
                   </Typography>
                 </Stack>
               </Sheet>
             </Stack>
           </Link>)
     })() : null;
+
   const side = sentByMe ? "flex-end" : "flex-start";
   const messageColor = sentByMe ? "#d7fad1" : "white";
   return (
@@ -162,37 +181,42 @@ const MessageCard = forwardRef(function (message: ViewMessage, ref: ForwardedRef
             <Stack direction="column"
               sx={{ maxWidth: "max-content", width: "fit-content", padding: 1.5, paddingBottom: 0.5, alignContent: "flex-start", textAlign: "start" }}>
                 {repliedMessage && repliedMessage}
-              <Typography component="span" sx={{ width: "fit-content", maxWidth: "max-content" }}>
-                <StyledReactMarkdown 
+              <Typography ref={bodyRef} component="span" sx={{ width: "fit-content", maxWidth: "max-content" }}>
+                <StyledReactMarkdownBody 
                   className="react-markdown" 
                   children={content} 
                   remarkPlugins={[remarkGfm, remarkMath, twemoji]}
                   rehypePlugins={[rehypeKatex, rehypeRaw]}/>
               </Typography>
-              <div style={{ width: "100%", display: "flex", justifyContent: "end" }}>
-                <Stack direction="row" spacing={1} sx={{ width: "fit-content", alignItems: "center" }}>
-                  <Tooltip placement="left" mainAxisOffset={140} crossAxisOffset={-10}>
-                    <TooltipTrigger>
-                      <Typography level="body3">
-                        {DateTime.fromMillis(timestamp).toFormat("h:mm a")}
+              <Stack ref={statusRef} 
+                    direction="row" 
+                    spacing={1} 
+                    sx={{ width: "fit-content", 
+                          alignItems: "center",
+                          position: "absolute",
+                          bottom: "8px",
+                          right: "12px" }}>
+                <Tooltip placement="left" mainAxisOffset={140} crossAxisOffset={-10}>
+                  <TooltipTrigger>
+                    <Typography level="body3">
+                      {DateTime.fromMillis(timestamp).toFormat("h:mm a")}
+                    </Typography>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <div style={{ width: "fit-content",
+                                  backgroundColor: "#f8f7f5", 
+                                  borderColor: "rgba(237, 237, 237, 0.7)", 
+                                  boxShadow: "0px 0.5px 4px #e4e4e4",
+                                  position: "absolute",
+                                  zIndex: 2 }}>
+                      <Typography level="body3" noWrap>
+                        {formatTooltipDate(timestamp)}
                       </Typography>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <div style={{ width: "fit-content",
-                                    backgroundColor: "#f8f7f5", 
-                                    borderColor: "rgba(237, 237, 237, 0.7)", 
-                                    boxShadow: "0px 0.5px 4px #e4e4e4",
-                                    position: "absolute",
-                                    zIndex: 2 }}>
-                        <Typography level="body3" noWrap>
-                          {formatTooltipDate(timestamp)}
-                        </Typography>
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                  {statusButton}
-                </Stack>
-              </div>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+                {statusButton}
+              </Stack>
             </Stack>
           </SvgMessageCard>
         </Item>        

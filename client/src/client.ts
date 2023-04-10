@@ -238,15 +238,11 @@ export class Client {
   }
 
   public get isConnected(): boolean {
-    return this.#socket.connected;
+    return this.#socket?.connected ?? false;
   }
 
   public get isSignedIn(): boolean {
     return !!this.#username;
-  }
-
-  private get connected(): boolean { 
-    return this.#socket?.connected ?? false;
   }
 
   constructor(url: string) {
@@ -270,7 +266,7 @@ export class Client {
   }
 
   async establishSession() {
-    if (!this.connected) {
+    if (!this.isConnected) {
       console.log(`Attempting to establish secure session.`);
       this.notifyStatusChange?.(Status.Connecting);
       this.connecting = true;
@@ -280,7 +276,7 @@ export class Client {
       const clientPublicKey = (await crypto.exportKey(publicKey)).toString("base64");
       const clientVerifyingKey = (await crypto.exportKey(verifyingKey)).toString("base64");
       const fileHash = await this.#fileHash;
-      const auth = { sessionReference, clientPublicKey, clientVerifyingKey, fileHash };
+      const auth = { sessionReference, clientPublicKey, clientVerifyingKey, fileHash, url: this.url };
       this.#socket = io(this.url, { auth, withCredentials: true });
       this.#socket.on("disconnect", this.retryConnect.bind(this));
       let nevermind = false;
@@ -336,16 +332,18 @@ export class Client {
       });
       nevermind = true;
       this.connecting = false;
-      console.log(success && this.connected ? "Secure session established." : "Failed to establish secure session.");
-      this.notifyStatusChange?.(this.connected ? Status.Connected : Status.FailedToConnect);
-      if (!success || !this.connected) {
+      console.log(success && this.isConnected ? "Secure session established." : "Failed to establish secure session.");
+      this.notifyStatusChange?.(this.isConnected ? Status.Connected : Status.FailedToConnect);
+      if (!success || !this.isConnected) {
         this.#socket?.offAny?.();
         this.#socket?.disconnect?.();
         this.#socket = null;
         this.retryConnect("");
       }
-      for (const [event, response] of this.responseMap.entries()) {
-        this.#socket.on(event, async (data: string, respond) => await this.respond(event, data, response.bind(this), respond));
+      else {
+        for (const [event, response] of this.responseMap.entries()) {
+          this.#socket.on(event, async (data: string, respond) => await this.respond(event, data, response.bind(this), respond));
+        }
       }
       this.reportDone?.(null);
     }
@@ -360,7 +358,7 @@ export class Client {
     this.notifyStatusChange?.(Status.SignedOut);
     if (reason === "io client disconnect") return;
     this.retryingConnect = true;
-    while(!this.connected) {
+    while(!this.isConnected) {
       const wait = new Promise((resolve, _) => { 
         this.reportDone = resolve;
         window.setTimeout(() => resolve(null), 10000); });
@@ -385,7 +383,7 @@ export class Client {
   }
 
   async registerNewUser(username: string, password: string, displayName: string, profilePicture: string, savePassword: boolean): Promise<Failure> {
-    if (!this.connected) return failure(ErrorStrings.NoConnectivity);
+    if (!this.isConnected) return failure(ErrorStrings.NoConnectivity);
     this.notifyStatusChange?.(Status.CreatingNewUser);
     try {
       displayName ??= username;
@@ -437,7 +435,7 @@ export class Client {
   async userLogIn(): Promise<Failure>
   async userLogIn(username: string, password: string, savePassword: boolean): Promise<Failure>;
   async userLogIn(username?: string, password?: string, savePassword?: boolean): Promise<Failure> {
-    if (!this.connected) return failure(ErrorStrings.NoConnectivity);
+    if (!this.isConnected) return failure(ErrorStrings.NoConnectivity);
     this.notifyStatusChange?.(Status.SigningIn);
     try {
       if (!username) {
@@ -517,7 +515,7 @@ export class Client {
   }
 
   async sendMessageRequest(otherUser: string, firstMessage: string, madeAt: number): Promise<Failure> {
-    if (!this.connected) return failure(ErrorStrings.NoConnectivity);
+    if (!this.isConnected) return failure(ErrorStrings.NoConnectivity);
     if (!(await this.checkUsernameExists(otherUser))) return failure(ErrorStrings.InvalidRequest);
     const keyBundleResponse = await this.RequestKeyBundle({ username: otherUser });
     if ("reason" in keyBundleResponse) {
@@ -536,7 +534,7 @@ export class Client {
   }
 
   async userLogOut(): Promise<Failure> {
-    if (!this.#username && !this.connected) return;
+    if (!this.#username && !this.isConnected) return;
     this.notifyStatusChange?.(Status.SigningOut);
     const username = this.#username;
     this.#username = null;
@@ -806,10 +804,11 @@ export class Client {
   }
 
   private async request(event: SocketEvents, data: any, timeout = 0): Promise<any | Failure> {
-    if (!this.connected) {
+    if (!this.isConnected) {
       return {};
     }
     return new Promise(async (resolve: (result: any) => void) => {
+      data = { ...data, fileHash: await this.#fileHash, url: this.url };
       this.#socket.emit(event, (await this.#sessionCrypto.signEncrypt(data, event)).toString("base64"), 
       async (response: string) => resolve(response ? await this.#sessionCrypto.decryptVerify(Buffer.from(response, "base64"), event) : {}));
       if (timeout > 0) {

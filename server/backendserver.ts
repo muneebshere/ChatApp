@@ -76,8 +76,10 @@ class SocketHandler {
   #mongoHandler: MongoUserHandler;
   #accessedBundles = new Map<string, KeyBundle>();
   #rooms: Room[] = [];
+  #url: string;
 
-  constructor(socket: Socket, session: Session, sessionReference: string, sessionKeyBits: Buffer, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey, saveToken?: string, resuming = false) {
+  constructor(socket: Socket, session: Session, sessionReference: string, sessionKeyBits: Buffer, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey, url: string, saveToken?: string, resuming = false) {
+    this.#url = url;
     this.#saveToken = saveToken;
     this.#session = session;
     this.#sessionReference = sessionReference;
@@ -182,7 +184,7 @@ class SocketHandler {
       onlineUsers.set(this.#username, newSocket.id);
     }
     this.registerNewSocket(newSocket);
-    newSocket.emit(SocketEvents.CompleteHandshake, "1", null, null, (success: boolean) => {});
+    newSocket.emit(SocketEvents.CompleteHandshake, "1", null, null, () => {});
     console.log(`Session ${this.#session.id} reconnected.`);
     return true;
   }
@@ -204,6 +206,10 @@ class SocketHandler {
     try {
       const decryptedData = await this.#sessionCrypto.decryptVerify(Buffer.from(data, "base64"), event);
       if (!decryptedData) await respond(failure(ErrorStrings.DecryptFailure));
+      else if (decryptedData.url !== this.#url || decryptedData.fileHash !== await jsHash ) {
+        await respond(failure(ErrorStrings.InvalidRequest, "Url or File Hash do not match."));
+        this.terminateCurrentSession();
+      }
       else {
         const response = await responseBy(decryptedData);
         if (!response) await respond(failure(ErrorStrings.ProcessFailed));
@@ -841,9 +847,9 @@ io.on("connection", async (socket) => {
   const fileHashLocal = await jsHash;
   const { session, cookies: { saveToken: saveTokenCookie } } = socket.request;
   const { saveToken } = saveTokenCookie ?? {};
-  let { sessionReference, clientPublicKey, clientVerifyingKey, fileHash } = socket.handshake.auth ?? {};
+  let { sessionReference, clientPublicKey, clientVerifyingKey, fileHash, url } = socket.handshake.auth ?? {};
   if (!sessionReference || !clientPublicKey || !clientVerifyingKey || fileHash !== fileHashLocal) {
-    socket.emit(SocketEvents.CompleteHandshake, "", null, null, (success: boolean) => {});
+    socket.emit(SocketEvents.CompleteHandshake, "", null, null, () => {});
     await sleep(5000);
     socket.disconnect(true);
     return;
@@ -859,7 +865,8 @@ io.on("connection", async (socket) => {
     const sessionSigningKey = await crypto.importKey(sessionSigningKeyEx, "ECDSA", "private", true);
     const sessionVerifyingKey = await crypto.importKey(sessionVerifyingKeyEx, "ECDSA", "public", true);
     console.log(`Resuming crashed session #${session.id}.`);
-    new SocketHandler(socket, session, sessionReference, sessionKeyBits, sessionSigningKey, sessionVerifyingKey, saveToken, true);
+    new SocketHandler(socket, session, sessionReference, sessionKeyBits, sessionSigningKey, sessionVerifyingKey, url, saveToken, true);
+    socket.emit(SocketEvents.CompleteHandshake, "1", null, null, () => {});
     return;
   }
   clientPublicKey = await crypto.importKey(Buffer.from(clientPublicKey, "base64"), "ECDH", "public", true);
@@ -878,5 +885,5 @@ io.on("connection", async (socket) => {
     socket.disconnect(true);
     return;
   }
-  new SocketHandler(socket, session, sessionReference, sessionKeyBits, signingKey, clientVerifyingKey, saveToken);
+  new SocketHandler(socket, session, sessionReference, sessionKeyBits, signingKey, clientVerifyingKey, url, saveToken);
 });

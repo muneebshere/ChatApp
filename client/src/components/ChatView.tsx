@@ -16,7 +16,7 @@ const chatMap = new Map(chats.map(({chatWith, messages}) => ([chatWith, messages
 
 const minKeyboard = 300;
 const barHeight = () => document.querySelector("#viewportHeight").clientHeight - window.innerHeight;
-const keyboardHeight = () => window.screen.height - window.visualViewport.height;
+const keyboardHeight = () => document.querySelector("#viewportHeight").clientHeight - window.visualViewport.height;
 const isKeyboardOpen = () => keyboardHeight() > minKeyboard;
 const orientation = () => window.screen.orientation.type;
 
@@ -36,8 +36,7 @@ const ScrollDownButton = styled.div`
   :hover {
     filter: brightness(0.9);
   }`;
-
-export type ScrollState = { id: string, offsetRatio: number };
+export type ScrollState = { id: string, index: number, offset: number, isRatio?: true };
 
 type ChatViewProps = {
   chatWith: string,
@@ -57,14 +56,14 @@ const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLa
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showScrollDown, setShowScrollDown] = useState(false);
   const [width, ] = useSize(scrollRef);
-  const previousHeightRef = useRef(24);
+  const previousMsgBarHeightRef = useRef(24);
   const previousScrollHeightRef = useRef(0);
   const showScrollDownRef = useRef(false);
   const previousUnderbarRef = useRef(barHeight());
   const lastKeyboardOpenRef = useRef(false);
   const orientationRef = useRef(orientation());
   const selectingRef = useRef(false);
-  const [messageBarHeight, setMessageBarHeight] = useState(24);
+  const [msgBarHeight, setMessageBarHeight] = useState(24);
   const [underbar, setUnderbar] = useState(previousUnderbarRef.current);
   const [first, setFirst] = useState(true);
   const { ref: titleRef } = useInView({ 
@@ -83,7 +82,35 @@ const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLa
 
   useEffect(() => { titleRef(document.querySelector("#titleBar")); }, []);
 
-  const calculateIsInView = (element: DOMRect, scroll: DOMRect) => element.top <= scroll.bottom && element.bottom >= scroll.top;
+  const calculateIsInView = (id: string): [boolean, number] => {
+    const element = messagesRef.current.get(id)?.[0];
+    if (!element) return null;
+    const elementRect = element.getBoundingClientRect();
+    const scrollRect = scrollRef.current.getBoundingClientRect();
+    const topOffset = elementRect.top - scrollRect.top - 8;
+    return [elementRect.top < scrollRect.bottom && elementRect.bottom > scrollRect.top + 10, topOffset];
+  }
+
+  /* const selectCurrentElement_ = () => {
+    if (selectingRef.current) {
+      return;
+    }
+    if (orientation() !== orientationRef.current) {
+      return;
+    }
+    selectingRef.current = true;
+    if (inViewRef.current.size === 0) {
+      currentScroll.current = null;
+      return;
+    }
+    const [inView, notInView] = _.partition(Array.from(inViewRef.current.keys()), (id) => calculateIsInView(id));
+    const sortedInViewList = _.orderBy(inView.map((id) => ({ id, ...calculateScrollLocation(id) })), [({ offsetRatio }) => Math.abs(offsetRatio)], ["asc"]);
+    const { id, offsetRatio, scrollPosition } = sortedInViewList[0];
+    currentScroll.current = { id, offsetRatio };
+    console.log(`Element ${id} with offsetRatio ${offsetRatio} selected with scrollPosition ${scrollPosition}`);
+    notInView.forEach((id) => inViewRef.current.delete(id));
+    selectingRef.current = false;
+  } */
 
   const selectCurrentElement = () => {
     if (selectingRef.current) {
@@ -97,20 +124,18 @@ const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLa
       currentScroll.current = null;
       return;
     }
-    const sortedInViewList = _.orderBy(Array.from(inViewRef.current.keys())
-      .map((id) => ({ id, ...calculateScrollLocation(id) })), 
-      [({ offsetRatio }) => Math.abs(offsetRatio)], ["asc"]);
-    const [inView, notInView] = _.partition(sortedInViewList, ({ isInView }) => isInView);
-    const { id, offsetRatio, scrollPosition } = inView[0];
-    currentScroll.current = { id, offsetRatio };
-    console.log(`Element ${id} with offsetRatio ${offsetRatio} selected with scrollPosition ${scrollPosition}`);
-    if (inView.length > 0) {
-      notInView.forEach(({ id }) => inViewRef.current.delete(id));
-    }
+    const offsets = Array.from(inViewRef.current.keys()).map((id) => {
+      const [isInView, topOffset] = calculateIsInView(id) || [];
+      return { id, isInView, topOffset };
+    })
+    const [inView, notInView] = _.partition(offsets, ({ isInView }) => isInView);
+    const closestElement = _.orderBy(inView, [({ topOffset }) => topOffset], ["asc"])[0];
+    currentScroll.current = calculateScrollState(closestElement.id);
+    notInView.forEach(({ id }) => inViewRef.current.delete(id));
     selectingRef.current = false;
   }
 
-  const calculateScrollLocation = (id: string) => {
+  /* const calculateScrollLocation = (id: string) => {
     const element = messagesRef.current.get(id)?.[0];
     if (!element) return null;
     const elementRect = element.getBoundingClientRect();
@@ -120,8 +145,7 @@ const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLa
     const scrollPosition = scrollTop + elementRect.top - scrollRect.top - 8;
     const topOffset = elementRect.top - scrollRect.top;
     const offsetRatio = topOffset / height
-    const isInView = calculateIsInView(elementRect, scrollRect);
-    return { scrollPosition, height, topOffset, offsetRatio, isInView };
+    return { scrollPosition, height, topOffset, offsetRatio };
   }
 
   const calculateScrollTo = ({ id, offsetRatio }: ScrollState) => {
@@ -129,6 +153,65 @@ const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLa
     if (!scrollPosition) return null;
     const offset = offsetRatio * height - 8;
     return [scrollPosition, scrollPosition - offset];
+  } */
+
+  const containsListTop = (listTop: number, element: Element) => {
+    if (!element) return false;
+    const { top, bottom } = element.getBoundingClientRect();
+    return listTop >= top && listTop <= bottom;
+  }
+
+  const calculateScrollState = (id: string): ScrollState => {
+    const mainElement = messagesRef.current.get(id)?.[0];
+    if (!mainElement) return null;
+    const scrollRect = scrollRef.current.getBoundingClientRect();
+    const listTop = scrollRect.top;
+    const replyElement = mainElement.querySelector("div > div > div > button > div > div > div > span > div > span");
+    const paraElements = mainElement.querySelectorAll("div > div > div > span > div > p");
+    const elements = [replyElement, ...paraElements];
+    const index = elements.findIndex((e) => containsListTop(listTop, e));
+    if (index >= 0) {
+      const elementRect = elements[index].getBoundingClientRect();
+      let offset = elementRect.top - listTop;
+      if (index >= 0) {
+        offset = offset / elementRect.height;
+      }
+      console.log(`Message ${id}, component ${index} selected with offset ratio ${offset}`);
+      return { id, index, offset, isRatio: true };
+    }
+    else {
+      const offsets = _.orderBy([mainElement, ...elements].map((e, i) => ({ i: i - 1, e, o: e?.getBoundingClientRect().top - listTop })), ["o"], ["asc"]);
+      let { e: element, i: index, o: offset } = offsets.find(({ o }) => o > 0) || {};
+      if (!element) {
+        index = -1;
+        offset = mainElement.getBoundingClientRect().top - listTop;
+      }
+      console.log(`Message ${id}, component ${index} selected with offset ${offset}`);
+      return { id, index, offset };
+    }
+  }
+
+  const calculateScrollPosition = ({ id, index, offset, isRatio }: ScrollState) => {
+    const element = messagesRef.current.get(id)?.[0];
+    if (!element) return null;
+    const scrollRect = scrollRef.current.getBoundingClientRect();
+    const scrollTop = scrollRef.current.scrollTop;
+    let selectedElement: Element = null;
+    if (index < 0) {
+      selectedElement = element;
+    }
+    else if (index === 0) {
+      selectedElement = element.querySelector("div > div > div > button > div > div > div > span > div > span");
+    }
+    else {
+      selectedElement = element.querySelector(`div > div > div > span > div > p:nth-child(${index})`);
+    }
+    const elementRect = selectedElement.getBoundingClientRect();
+    const scrollPosition = scrollTop + elementRect.top - scrollRect.top;
+    if (isRatio) {
+      offset = offset * elementRect.height;
+    }
+    return scrollPosition - offset;
   }
   
   const scrollHandler = (event: Event) => {
@@ -144,17 +227,13 @@ const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLa
   const onOrientationChange = () => {
     const scrollbar = scrollRef.current;
     const lastScrolledTo = currentScroll.current;
-    const [scrollPosition, scrollTop] = lastScrolledTo && calculateScrollTo(lastScrolledTo) || [];
-    scrollbar.scrollTop = scrollTop || scrollbar.scrollHeight;
-    console.log(`Scroll set to ${scrollbar.scrollTop} for ${lastScrolledTo.id} at ${lastScrolledTo.offsetRatio} and scrollPosition ${scrollPosition}`);
+    scrollbar.scrollTop = lastScrolledTo && calculateScrollPosition(lastScrolledTo) || scrollbar.scrollHeight;
     orientationRef.current = orientation();
   }
 
   useLayoutEffect(() => {
     const scrollbar = scrollRef.current;
-    const [, scrollTop] = lastScrolledTo && calculateScrollTo(lastScrolledTo) || [];
-    scrollbar.scrollTop = scrollTop || scrollbar.scrollHeight;
-    console.log(`Scroll set to ${scrollbar.scrollTop}`);
+    scrollbar.scrollTop = lastScrolledTo && calculateScrollPosition(lastScrolledTo) || scrollbar.scrollHeight;
     previousScrollHeightRef.current = scrollbar.clientHeight;
     scrollbar.addEventListener("scroll", debouncedScrollHandler);
     window.screen.orientation.addEventListener("change", onOrientationChange);
@@ -200,8 +279,9 @@ const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLa
         else {
           const newHeight = scrollbar.clientHeight;
           const heightDiff = newHeight - previousScrollHeightRef.current;
+          previousScrollHeightRef.current = scrollbar.clientHeight;
           if (heightDiff < 0 || (heightDiff > 0 && showScrollDown)) {
-            scrollbar.scrollTop -= heightDiff;
+            scrollbar.scrollTop -= Math.floor(heightDiff);
           }
         }
       }
@@ -244,19 +324,19 @@ const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLa
   }, [])
 
   const onHeightUpdate = (newHeight: number) => {
-    const heightDiff = newHeight - previousHeightRef.current;
+    const heightDiff = newHeight - previousMsgBarHeightRef.current;
     if (heightDiff !== 0) {
       setMessageBarHeight(newHeight);
     }
   };
 
   useUpdateEffect(() => {
-    const heightDiff = messageBarHeight - previousHeightRef.current;
+    const heightDiff = msgBarHeight - previousMsgBarHeightRef.current;
     if (heightDiff > 0 || (heightDiff < 0 && showScrollDownRef.current)) {
       scrollRef.current.scrollTop += heightDiff;
     }
-    previousHeightRef.current = messageBarHeight; 
-  }, [messageBarHeight]);
+    previousMsgBarHeightRef.current = msgBarHeight; 
+  }, [msgBarHeight]);
 
   useUpdateEffect(() => {
     previousUnderbarRef.current = underbar;
@@ -290,7 +370,7 @@ const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLa
             <KeyboardDoubleArrowDownOutlined sx={{ color: "#6e6e6e", fontSize: "2rem", placeSelf: "center" }}/>
           </ScrollDownButton>}
         </StyledScrollbar>
-        <div style={{ height: messageBarHeight + underbar, width: "100%", backgroundColor: "white", marginBottom: 8 }}/>
+        <div style={{ height: msgBarHeight + underbar, width: "100%", backgroundColor: "white", marginBottom: 8 }}/>
         <Stack
           direction="row" 
           spacing={1} 
