@@ -79,7 +79,7 @@ const MessageCard = forwardRef(function (message: ViewMessage, ref: ForwardedRef
 
   useUpdateEffect(() => {
     if (highlight === messageId) { 
-      scrollRef.current.scrollIntoViewIfNeeded();
+      scrollRef.current.scrollIntoViewIfNeeded(true);
       setDarken(true);
     } 
   }, [highlight]);

@@ -23,7 +23,7 @@ export const StyledScrollbar = styled(StyledSheet)`
   max-height: 100%; 
   overflow-x: clip;
   overflow-y: scroll;
-  scroll-behavior: auto !important;
+  scroll-behavior: smooth;
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: #afafaf #d1d1d1;
