@@ -1,9 +1,10 @@
 import _ from "lodash";
-import { SubmitResponse, Item, Spacer } from "./Common";
 import React, { useContext } from "react";
+import { Tabs, TabList, Tab, TabPanel, Grid } from "@mui/joy";
+import { SubmitResponse } from "../App";
+import { StyledSheet, Spacer } from "./CommonElementStyles";
 import LogInForm, { LogInContext } from "./Login";
 import SignUpForm, { SignUpContext } from "./Signup";
-import { Tabs, TabList, Tab, TabPanel, Grid } from "@mui/joy";
 import { Failure } from "../../../shared/commonTypes";
 
 type TabProps =  { currentTab: number, setCurrentTab: (currentTab: number) => void };
@@ -17,7 +18,7 @@ export default function LogInSignUp({ currentTab, setCurrentTab }: TabProps) {
       <Spacer units={2}/>
       <Grid container sx={{ flexGrow: 1, justifyContent: "center", alignContent: "flex-start" }}>
         <Grid xs={12} sm={8} md={6} lg={4} xl={3}>
-          <Item>
+          <StyledSheet>
             <Tabs value={currentTab}
               onChange={(_, value) => setCurrentTab(value as number)}>
               <TabList variant="outlined">
@@ -37,7 +38,7 @@ export default function LogInSignUp({ currentTab, setCurrentTab }: TabProps) {
                 <SignUpForm/>
               </TabPanel>
             </Tabs>
-          </Item>
+          </StyledSheet>
         </Grid>
       </Grid>
     </React.Fragment>)

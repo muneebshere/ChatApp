@@ -1,10 +1,12 @@
 import _ from "lodash";
-import { SubmitProps, ControlledTextField, SubmitResponse, StyledSwitch, WarnSavePassword } from "./Common";
-import React, { useState, useEffect, createContext, useReducer, Dispatch, useContext } from "react";
-import {  } from "@mui/material";
-import { FormControl, FormLabel, Stack, Button, CircularProgress, Modal, ModalClose, Sheet, Typography, Alert } from "@mui/joy";
-import { Failure } from "../../../shared/commonTypes";
 import { match } from "ts-pattern";
+import React, { createContext, Dispatch, useContext } from "react";
+import { FormControl, FormLabel, Stack, Button, CircularProgress, Typography, Alert } from "@mui/joy";
+import { SubmitResponse } from "../App";
+import { StyledJoySwitch } from "./CommonElementStyles";
+import WarnSavePassword from "./WarnSavePassword";
+import ControlledTextField from "./ControlledTextField";
+import { Failure } from "../../../shared/commonTypes";
 
 type SignUpData = {
   readonly displayName: string;
@@ -184,14 +186,14 @@ export default function SignUpForm() {
           onEnter={submitLocal}/>
         <FormControl orientation="horizontal">
           <FormLabel>Show Password</FormLabel>
-          <StyledSwitch checked={showPassword} 
+          <StyledJoySwitch checked={showPassword} 
             disabled={submitted}
             onChange={ (e) => setShowPassword(e.target.checked) } 
             color={showPassword ? "primary" : "neutral"}/>
         </FormControl>
         <FormControl orientation="horizontal">
           <FormLabel>Save password</FormLabel>
-          <StyledSwitch checked={savePassword} 
+          <StyledJoySwitch checked={savePassword} 
             disabled={submitted}
             onChange={ (e) => setSavePassword(e.target.checked) }
             color={savePassword ? "primary" : "neutral"}/>

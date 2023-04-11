@@ -6,8 +6,8 @@ import { Grid, IconButton, Link, Sheet, Stack, Typography } from "@mui/joy";
 import { DoneSharp, DoneAllSharp, HourglassTop } from "@mui/icons-material";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip";
 import { Popover, PopoverTrigger, PopoverContent } from "./Popover";
-import { Item, ReactMarkdownMemo } from "./Common";
-import { ReactMarkdownOptions } from "react-markdown/lib/react-markdown";
+import { StyledSheet } from "./CommonElementStyles";
+import { ReactMarkdownOptions, ReactMarkdown } from "react-markdown/lib/react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import twemoji from "../custom_modules/remark-twemoji";
@@ -22,6 +22,8 @@ import { DisplayMessage } from "../../../shared/commonTypes";
 interface HTMLDivElementScroll extends HTMLDivElement {
   scrollIntoViewIfNeeded(centerIfNeeded?: boolean): void;
 }
+
+const ReactMarkdownMemo = React.memo(ReactMarkdown, (prev, next) => prev.children === next.children);
 
 const StyledReactMarkdownVariableEmojiSize = (emojiSize: number) => styled(ReactMarkdownMemo as unknown as React.ComponentClass<ReactMarkdownOptions, {}>)`
   img.emoji {
@@ -176,7 +178,7 @@ const MessageCard = forwardRef(function (message: ViewMessage, ref: ForwardedRef
   return (
     <Grid container sx={{ display: "flex", flexGrow: 1, justifyContent: side, height: "fit-content", maxWidth: "100%" }}>
       <Grid xs={10} sm={8} lg={7} sx={{ display: "flex", flexGrow: 0, justifyContent: side, height: "fit-content" }} ref={scrollRef}>
-        <Item sx={{ width: "100%", display: "flex", flexGrow: 1, justifyContent: side, alignContent: "flex-start", padding: 0, margin: 0 }} ref={ref} id={`m${messageId}`}>
+        <StyledSheet sx={{ width: "100%", display: "flex", flexGrow: 1, justifyContent: side, alignContent: "flex-start", padding: 0, margin: 0 }} ref={ref} id={`m${messageId}`}>
           <SvgMessageCard background={messageColor} first={first} sentByMe={sentByMe} shadowColor="#adb5bd" darken={darken} darkenFinished={() => setDarken(false) }>
             <Stack direction="column"
               sx={{ maxWidth: "max-content", width: "fit-content", padding: 1.5, paddingBottom: 0.5, alignContent: "flex-start", textAlign: "start" }}>
@@ -219,7 +221,7 @@ const MessageCard = forwardRef(function (message: ViewMessage, ref: ForwardedRef
               </Stack>
             </Stack>
           </SvgMessageCard>
-        </Item>        
+        </StyledSheet>        
       </Grid>
     </Grid>
   )

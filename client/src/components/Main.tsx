@@ -1,17 +1,14 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect } from "react";
+import { useEffectOnce } from "usehooks-ts";
 import { Alert, Grid, IconButton, Input, LinearProgress, List, ListItem, ListItemButton, Modal, ModalClose, Sheet, Stack, Typography } from "@mui/joy";
 import { useMediaQuery, Theme } from "@mui/material";
 import { ReportProblem, PersonAddAltOutlined, Search, ClearSharp } from "@mui/icons-material";
 import { Popover, PopoverTrigger, PopoverContent } from "./Popover";
-import { Item, StyledScrollbar, ControlledTextField } from "./Common";
+import { StyledSheet, StyledScrollbar } from "./CommonElementStyles";
+import ControlledTextField from "./ControlledTextField";
 import { ChatViewMemo, ScrollState } from "./ChatView";
-import { useEffectOnce } from "usehooks-ts";
 import { Client } from "../client";
-import { chats } from "./prvChats";
-import styled from "@emotion/styled";
-
-const ToggledIconButton = styled(IconButton)`
-`
+import { chats } from "../prvChats";
 
 const chatWithList = chats.map((c) => c.chatWith);
 
@@ -39,11 +36,11 @@ export default function Main({ connected, displayName, client }: { connected: bo
   <Grid container direction="column" sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column" }}>
     <DisconnectedAlert connected={connected}/>
     <Grid xs={12} sx={{ flex: 0, flexBasis: "content" }}>
-      <Item id="titleBar">
+      <StyledSheet id="titleBar">
         <Typography level="h4" sx={{ textAlign: "center" }}>
           {displayName}
         </Typography>
-      </Item>
+      </StyledSheet>
     </Grid>
     <Grid 
       container 
@@ -163,7 +160,7 @@ function Sidebar({ currentChatWith, openChat, client, belowXL }: SidebarProps) {
 function DisconnectedAlert({ connected }: { connected: boolean }) {
   return !connected
     ? (<Grid xs={12} sx={{ flex: 0, flexBasis: "content" }}>
-        <Item>
+        <StyledSheet>
           <Stack direction="column" sx={{ justifyContent: "stretch", justifySelf: "center" }}>
             <Alert 
               variant="soft" 
@@ -178,7 +175,7 @@ function DisconnectedAlert({ connected }: { connected: boolean }) {
             <LinearProgress variant="soft" color="danger" 
               sx={{ borderTopRightRadius: 0, borderTopLeftRadius: 0 }} />
          </Stack>
-        </Item>
+        </StyledSheet>
       </Grid>)
     : null;
 }

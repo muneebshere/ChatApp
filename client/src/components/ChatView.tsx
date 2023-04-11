@@ -5,11 +5,12 @@ import { useInView } from "react-intersection-observer";
 import { IconButton, Stack, Typography } from "@mui/joy";
 import { SendRounded, ArrowBackSharp, KeyboardDoubleArrowDownOutlined } from "@mui/icons-material";
 import { MessageListMemo } from "./MessageList";
-import { Item, StyledScrollbar, useSize } from "./Common";
+import { useSize } from "./Hooks/useSize";
+import { StyledSheet, StyledScrollbar } from "./CommonElementStyles";
 import styled from "@emotion/styled";
 import { Theme, useMediaQuery } from "@mui/material";
-import { StyledScrollingTextarea } from "./TextareaAutosize/TextareaAutosize";
-import { chats } from "./prvChats";
+import { StyledScrollingTextarea } from "./TextareaAutosize";
+import { chats } from "../prvChats";
 import { flushSync } from "react-dom";
 
 export type ScrollState = { id: string, index: number, offset: number, isRatio?: true };
@@ -382,7 +383,7 @@ const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLa
   }, []);
 
   return (
-    <Item sx={{ height: "100%", display: "flex", flexDirection: "column", overflow: "clip" }}>
+    <StyledSheet sx={{ height: "100%", display: "flex", flexDirection: "column", overflow: "clip" }}>
       <Stack direction="column" spacing={1} sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column", overflow: "clip" }}>
         <Stack direction="row" spacing={2}>
           {belowXL && 
@@ -438,7 +439,7 @@ const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLa
             </IconButton>
         </Stack>
       </Stack>
-    </Item>);
+    </StyledSheet>);
 }
 
 export const ChatViewMemo = memo(ChatView, ({ chatWith: prevChat, message: prevMess }, { chatWith: nextChat, message: nextMess }) => prevChat === nextChat && prevMess === nextMess);

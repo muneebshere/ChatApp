@@ -1,8 +1,11 @@
 import _ from "lodash";
 import { match } from "ts-pattern";
-import { SubmitResponse, SubmitProps, ControlledTextField, StyledSwitch, WarnSavePassword } from "./Common";
-import React, { useState, useRef, useEffect, useReducer, useContext, createContext, Dispatch } from "react";
-import { FormControl, FormLabel, Stack, Button, CircularProgress, Modal, ModalClose, Sheet, Typography, Alert } from "@mui/joy";
+import React, { useRef, useEffect, useContext, createContext, Dispatch } from "react";
+import { FormControl, FormLabel, Stack, Button, CircularProgress, Typography, Alert } from "@mui/joy";
+import { SubmitResponse } from "../App";
+import { StyledJoySwitch } from "./CommonElementStyles";
+import ControlledTextField from "./ControlledTextField";
+import WarnSavePassword from "./WarnSavePassword";
 import { ErrorStrings, Failure } from "../../../shared/commonTypes";
 
 type LogInData = {
@@ -196,14 +199,14 @@ export default function LogInForm() {
             onEnter={submitLocal}/>
           <FormControl orientation="horizontal">
             <FormLabel>Show Password</FormLabel>
-            <StyledSwitch checked={showPassword}
+            <StyledJoySwitch checked={showPassword}
               disabled={submitted}
               onChange={ (e) => setShowPassword(e.target.checked) } 
               color={showPassword ? "primary" : "neutral"}/>
           </FormControl>
           <FormControl orientation="horizontal">
             <FormLabel>Save password</FormLabel>
-            <StyledSwitch checked={savePassword} 
+            <StyledJoySwitch checked={savePassword} 
               disabled={submitted}
               onChange={ (e) => setSavePassword(e.target.checked) }
               color={savePassword ? "primary" : "neutral"}/>

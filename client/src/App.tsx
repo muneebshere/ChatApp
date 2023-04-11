@@ -1,15 +1,22 @@
-import { SubmitResponse, Spacer } from "./components/Common";
+import React, { useState, useEffect, useReducer, useCallback } from "react";
+import { createRoot } from "react-dom/client";
+import { useEffectOnce } from "usehooks-ts";
+import { Container, CircularProgress } from "@mui/joy";
+import { CssVarsProvider } from "@mui/joy/styles";
+import { Theme, useMediaQuery } from "@mui/material";
 import LogInSignUp from "./components/LogInSignUp";
 import Main from "./components/Main";
 import { LogInContext, defaultLogInDataReducer, defaultLogInData, logInAction } from "./components/Login";
 import { SignUpContext, defaultSignUpDataReducer, defaultSignUpData, signUpAction } from "./components/Signup";
-import React, { useState, useRef, useEffect, useReducer, useCallback } from "react";
-import { createRoot } from "react-dom/client";
-import { Container, CircularProgress } from "@mui/joy";
-import { CssVarsProvider } from "@mui/joy/styles";
+import { Spacer } from "./components/CommonElementStyles";
 import { Status, Client } from "./client";
-import { useEffectOnce } from "usehooks-ts";
-import { Theme, useMediaQuery } from "@mui/material";
+
+export type SubmitResponse = {
+  displayName?: string;
+  username: string;
+  password: string;
+  savePassword: boolean;
+}
 
 const PORT = 8080;
 const { hostname, protocol } = window.location;
