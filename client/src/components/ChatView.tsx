@@ -73,91 +73,6 @@ function useUpdateHeight(scrollbar: () => HTMLDivElement): [number, (newHeight: 
   return [msgBarHeight, onHeightUpdate];
 }
 
-function useResize(scrollbar: () => HTMLDivElement,
-                  lastOrientation: () => OrientationType) {
-  const previousHeightRef = useRef(0);
-  const lastKeyboardOpenRef = useRef(false);
-  const previousUnderbarRef = useRef(barHeight());
-  const [underbar, setUnderbar] = useState(previousUnderbarRef.current);
-  const [first, setFirst] = useState(true);
-  const { ref: titleRef } = useInView({ 
-    threshold: 0.9, 
-    initialInView: true, 
-    onChange: (inView, { isIntersecting, intersectionRatio }) => {
-      const currentBar = barHeight();
-      if (currentBar > 1e-2 && !lastKeyboardOpenRef.current && !first) {
-        setUnderbar(inView && isIntersecting && intersectionRatio >= 0.5 ? currentBar : 0);
-      }
-      else { 
-        setFirst(false);
-      }
-    } 
-  });
-
-  useEffect(() => { titleRef(document.querySelector("#titleBar")); }, []);
-  
-  function onResize() {
-    if (orientation() !== lastOrientation()) {
-      return;
-    }
-    flushSync(() => {
-      const lastKeyboardOpen = lastKeyboardOpenRef.current;
-      const currentBar = barHeight();
-      const barDiff = currentBar - previousUnderbarRef.current;
-      const keyboardOpen = isKeyboardOpen();
-      let scrollBy = 0;
-      if (keyboardOpen && !lastKeyboardOpen) {
-        setUnderbar(0);
-        if (!getIsScrolledDown(scrollbar())) {
-          scrollBy += barDiff ? currentBar : -currentBar;
-        }
-      }
-      else if (!keyboardOpen && currentBar > 1e-2) {
-        setUnderbar(currentBar);
-        setTimeout(() => scrollbar().scrollBy({ top: currentBar, behavior: "instant" }), 5);
-        if (lastKeyboardOpen) {
-          window.scrollTo(0, 0);
-          (document.querySelector("#titleBar") as HTMLElement)?.click()
-        }
-      }
-      else {
-        setUnderbar(0);
-        if (!keyboardOpen && barDiff && !getIsScrolledDown(scrollbar())) {
-          scrollBy += barDiff;
-        }
-        else {
-          const newHeight = scrollbar().getBoundingClientRect().height
-          const heightDiff = newHeight - previousHeightRef.current;
-          previousHeightRef.current = newHeight;
-          if (heightDiff < 0 || (heightDiff > 0 && !getIsScrolledDown(scrollbar(), 2))) {
-            scrollBy -= heightDiff;
-          }
-        }
-      }
-      scrollbar().scrollBy({ top: scrollBy, behavior: "instant" });
-      lastKeyboardOpenRef.current = keyboardOpen;
-    })
-  }
-
-  const debouncedResizeHandler = useCallback(_.debounce(onResize, 50, { trailing: true, maxWait: 50 }), []);
-
-  useLayoutEffect(() => {
-    previousHeightRef.current = scrollbar().getBoundingClientRect().height;
-    window.addEventListener("resize", debouncedResizeHandler);
-
-    return () => {
-      debouncedResizeHandler.cancel();
-      window.removeEventListener("resize", debouncedResizeHandler);
-    }
-  }, []);
-
-  useUpdateEffect(() => {
-    previousUnderbarRef.current = underbar;
-  }, [underbar]);
-
-  return underbar;
-}
-
 function useScrollRestore(scrollbar: () => HTMLDivElement, lastScrolledTo: ScrollState, setLastScrolledTo: (scroll: ScrollState) => void): ScrollRestoreReturnType {
   
   const inViewRef = useRef(new Map<string, number>());
@@ -207,6 +122,7 @@ function useScrollRestore(scrollbar: () => HTMLDivElement, lastScrolledTo: Scrol
     selectingRef.current = true;
     if (inViewRef.current.size === 0) {
       currentScroll.current = null;
+      selectingRef.current = false;
       return;
     }
     const offsets = Array.from(inViewRef.current.keys()).map((id) => {
@@ -314,14 +230,96 @@ function useScrollRestore(scrollbar: () => HTMLDivElement, lastScrolledTo: Scrol
   return [selectCurrentElement, registerMessageRef, () => orientationRef.current];
 }
 
+function useResize(scrollbar: () => HTMLDivElement,
+                  lastOrientation: () => OrientationType) {
+  const previousHeightRef = useRef(0);
+  const lastKeyboardOpenRef = useRef(false);
+  const previousUnderbarRef = useRef(barHeight());
+  const [underbar, setUnderbar] = useState(previousUnderbarRef.current);
+  const [first, setFirst] = useState(true);
+  const { ref: titleRef } = useInView({ 
+    threshold: 0.9, 
+    initialInView: true, 
+    onChange: (inView, { isIntersecting, intersectionRatio }) => {
+      const currentBar = barHeight();
+      if (currentBar > 1e-2 && !lastKeyboardOpenRef.current && !first) {
+        setUnderbar(inView && isIntersecting && intersectionRatio >= 0.5 ? currentBar : 0);
+      }
+      else { 
+        setFirst(false);
+      }
+    } 
+  });
+
+  useEffect(() => { titleRef(document.querySelector("#titleBar")); }, []);
+  
+  function onResize() {
+    if (orientation() !== lastOrientation()) {
+      return;
+    }
+    flushSync(() => {
+      const lastKeyboardOpen = lastKeyboardOpenRef.current;
+      const currentBar = barHeight();
+      const barDiff = currentBar - previousUnderbarRef.current;
+      const keyboardOpen = isKeyboardOpen();
+      let scrollBy = 0;
+      if (keyboardOpen && !lastKeyboardOpen) {
+        setUnderbar(0);
+        if (!getIsScrolledDown(scrollbar())) {
+          scrollBy += barDiff ? currentBar : -currentBar;
+        }
+      }
+      else if (!keyboardOpen && currentBar > 1e-2) {
+        setUnderbar(currentBar);
+        setTimeout(() => scrollbar().scrollBy({ top: currentBar, behavior: "instant" }), 5);
+        if (lastKeyboardOpen) {
+          window.scrollTo(0, 0);
+          (document.querySelector("#titleBar") as HTMLElement)?.click()
+        }
+      }
+      else {
+        setUnderbar(0);
+        if (!keyboardOpen && barDiff && !getIsScrolledDown(scrollbar())) {
+          scrollBy += barDiff;
+        }
+        else {
+          const newHeight = scrollbar().getBoundingClientRect().height
+          const heightDiff = newHeight - previousHeightRef.current;
+          previousHeightRef.current = newHeight;
+          if (heightDiff < 0 || (heightDiff > 0 && !getIsScrolledDown(scrollbar(), 2))) {
+            scrollBy -= heightDiff;
+          }
+        }
+      }
+      scrollbar().scrollBy({ top: scrollBy, behavior: "instant" });
+      lastKeyboardOpenRef.current = keyboardOpen;
+    })
+  }
+
+  useLayoutEffect(() => {
+    previousHeightRef.current = scrollbar().getBoundingClientRect().height;
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      window.removeEventListener("resize", onResize);
+    }
+  }, []);
+
+  useUpdateEffect(() => {
+    previousUnderbarRef.current = underbar;
+  }, [underbar]);
+
+  return underbar;
+}
+
 const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLastScrolledTo }: ChatViewProps) {
   const messages = chatMap.get(chatWith);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollbar = () => scrollRef.current;
   const [isScrolledDown, setIsScrolledDown] = useState(false);
+  const [msgBarHeight, onHeightUpdate] = useUpdateHeight(scrollbar);
   const [updateCurrentElement, registerMessageRef, lastOrientation] = useScrollRestore(scrollbar, lastScrolledTo, setLastScrolledTo);
   const underbar = useResize(scrollbar, lastOrientation);
-  const [msgBarHeight, onHeightUpdate] = useUpdateHeight(scrollbar);
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const [width, ] = useSize(scrollRef);
 
