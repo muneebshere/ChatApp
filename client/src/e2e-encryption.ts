@@ -234,7 +234,7 @@ export class X3DHUser {
         return { defaultKeyBundle, oneTimeKeyBundles };
     }
 
-    async generateMessageRequest(keyBundle: KeyBundle, firstMessage: string, timestamp: number, profileDetails: Omit<Profile, "username">): Promise<MessageRequestHeader | "Invalid Identity Signature" | "Invalid PreKey Signature" | "Invalid OneTimeKey Signature"> {
+    async generateMessageRequest(keyBundle: KeyBundle, firstMessage: string, timestamp: number, profileDetails: Omit<Profile, "username">, sendMessageRequest: (request: MessageRequestHeader) => Promise<boolean>) : Promise<ViewPendingRequest | "Invalid Identity Signature" | "Invalid PreKey Signature" | "Invalid OneTimeKey Signature" | "Sending Request Failed"> {
         const {
             identifier,
             preKeyVersion,
@@ -289,7 +289,7 @@ export class X3DHUser {
         const myPublicSigningIdentityKey = await crypto.exportKey(this.#identitySigningKeyPair.publicKey);
         const myPublicDHIdentityKey = crypto.exposeSignedKey(this.#identityDHKeyPair);
         const sessionId = buffConcat.toString("base64").slice(0, 15);
-        const initialMessage: MessageRequestHeader = {
+        const request: MessageRequestHeader = {
             sessionId,
             timestamp,
             addressedTo: myUsername,
@@ -299,16 +299,21 @@ export class X3DHUser {
             yourSignedPreKeyVersion: preKeyVersion,
             yourOneTimeKeyIdentifier,
             initialMessage: initialCiphertext };
-        const waitingRequest: MessageRequestInWaiting = {
+        const pendingRequest: ViewPendingRequest = {
             timestamp, 
             sessionId, 
             firstMessage,
-            otherUser: yourUsername, 
+            otherUser: yourUsername };
+        const waitingRequest: MessageRequestInWaiting = {
+            ...pendingRequest,
             recipientVerifyKey: importedVerifyingIdentityKey, 
             sharedRoot: buffConcat, 
             myPrivateDHRatchetInitializer: dhRatchetInitializer.keyPair.privateKey };
-        this.#waitingMessageRequests.set(sessionId, waitingRequest);
-        return initialMessage;
+        if (await sendMessageRequest(request)) {
+            this.#waitingMessageRequests.set(sessionId, waitingRequest);
+            return pendingRequest;
+        }
+        return "Sending Request Failed";
     }
 
     private async processMessageRequest(initialMessage: MessageRequestHeader)
@@ -428,7 +433,7 @@ export class X3DHUser {
             return exportedChattingSession ? exportedChattingSession : "Sending Response Failed";
     }
 
-    async receiveMessageRequestResponse(responseHeader: MessageHeader): Promise<[{ profile: Profile, respondedAt: number }, UserEncryptedData] | "No Such Pending Request" | "Unverified Key" | "Message Receipt Failed"> {
+    async receiveMessageRequestResponse(responseHeader: MessageHeader): Promise<[{ profile: Profile, respondedAt: number }, UserEncryptedData]| "Session Id Mismatch" | "Unverified Next Ratchet Key" | "Receving Ratchet Number Mismatch" | "Failed To Decrypt" | "Message Invalid" | "Failed To Send Message" | "No Such Pending Request" | "Unverified Key"> {
         const { sessionId, nextDHRatchetKey } = responseHeader;
         const waitingDetails = this.#waitingMessageRequests.get(sessionId);
         if (!waitingDetails) {
@@ -454,10 +459,6 @@ export class X3DHUser {
             myDHRatchetInitializer);
         let response: { profile: Profile, respondedAt: number } = null;
         const exportedChattingSession = await chattingSession.receiveMessage(responseHeader, async (messageBody) => {
-            if (typeof messageBody === "string") {
-                console.log(messageBody);
-                return false;
-            }
             const { timestamp: respondedAt, content } = messageBody;
             const profile: Profile = deserialize(Buffer.from(content, "base64"));
             if (!profile || typeof profile.displayName !== "string" || typeof profile.username !== "string" || typeof profile.profilePicture !== "string") {
@@ -467,11 +468,12 @@ export class X3DHUser {
             response = { profile, respondedAt };
             return true;
         });
-        if (exportedChattingSession) {
-            this.#waitingMessageRequests.delete(sessionId);
-            return [response, exportedChattingSession];
+        if (typeof exportedChattingSession === "string") {
+            console.log(exportedChattingSession);
+            return exportedChattingSession;
         }
-        return "Message Receipt Failed";
+        this.#waitingMessageRequests.delete(sessionId);
+        return [response, exportedChattingSession];
     }
 
     async oneTimeKeysAccessed(oneTimeIds: string[]) {
@@ -719,12 +721,12 @@ export class ChattingSession {
         await this.advanceSecondHalfDHRatchet(nextDHPublicKey);
     }
 
-    private async ratchetToCurrentReceived(nextDHPublicKey: CryptoKey, 
+    private async ratchetToCurrentReceived<T>(nextDHPublicKey: CryptoKey, 
         sendingRatchetNumber: number, 
         sendingChainNumber: number, 
         previousChainNumber: number,
-        operation: (output: Buffer) => Promise<boolean>) {
-            await this.advanceReversibly(async () => {
+        operation: (output: Buffer) => Promise<T | undefined>): Promise<T | undefined> {
+            return await this.advanceReversibly(async () => {
                 let output: Buffer = null;
                 const skippedKeys = new Map<[number, number], Buffer>();
                 const ratchetDiff = sendingRatchetNumber - this.#dhReceivingRatchetNumber;
@@ -770,13 +772,13 @@ export class ChattingSession {
                         output = missed;
                     }
                 }
-                const success = await operation(output);
-                if (success) {
+                const error = await operation(output);
+                if (!error) {
                     for (const [key, value] of skippedKeys) {
                         this.#skippedKeys.set(key, value);
                     }
                 }
-                return success;
+                return error;
             })
     }
 
@@ -810,7 +812,7 @@ export class ChattingSession {
         return { nextChainKey, messageKeyBits }
     }
 
-    private async advanceReversibly(advance: () => Promise<boolean>) {
+    private async advanceReversibly<T>(advance: () => Promise<T | undefined>): Promise<T | undefined> {
         const currentRootKey = this.#currentRootKey;
         const currentDHRatchetKey = this.#currentDHRatchetKey;
         const currentDHPublishKey = this.#currentDHPublishKey;
@@ -821,8 +823,8 @@ export class ChattingSession {
         const sendingChainNumber = this.#sendingChainNumber;
         const receivingChainNumber = this.#receivingChainNumber;
         const previousSendingChainNumber = this.#previousSendingChainNumber;
-        const success = await advance();
-        if (!success) {
+        const error = await advance();
+        if (error) {
             this.#currentRootKey = currentRootKey;
             this.#currentDHRatchetKey = currentDHRatchetKey;
             this.#currentDHPublishKey = currentDHPublishKey;
@@ -834,6 +836,7 @@ export class ChattingSession {
             this.#receivingChainNumber = receivingChainNumber;
             this.#previousSendingChainNumber = previousSendingChainNumber;
         }
+        return error;
     }
 
     private verifyMessageIntegrity(header: MessageHeader, body: MessageBody) {
@@ -844,8 +847,7 @@ export class ChattingSession {
     }
 
     async sendMessage(message: { content: string, timestamp: number, replyingTo?: string }, send: (messageHeader: MessageHeader) => Promise<boolean>): Promise<UserEncryptedData> {
-        let success = false;
-        await this.advanceReversibly(async () => {
+        return await this.advanceReversibly(async () => {
             const { content, replyingTo, timestamp } = message;
             const messageKeyBits = await this.advanceSymmetricRatchet("Sending");
             const sender = this.#me;
@@ -876,16 +878,15 @@ export class ChattingSession {
                     signature
                 }
             };
-            success = await send(messageHeader);
-            if (success) {
+            if (await send(messageHeader)) {
                 this.lastActivityTimestamp = timestamp;
+                return true;
             }
-            return success;
-        });
-        return success ? this.exportSession() : null;
+            return false;
+        }) ? this.exportSession() : null;
     }
 
-    async receiveMessage(messageHeader: MessageHeader, receive: (message: MessageBody | "Session Id Mismatch" | "Unverified Next Ratchet Key" | "Receving Ratchet Number Mismatch" | "Failed To Decrypt" | "Message Invalid") => Promise<boolean>): Promise<UserEncryptedData> {
+    async receiveMessage(messageHeader: MessageHeader, receive: (message: MessageBody) => Promise<boolean>): Promise<UserEncryptedData | "Session Id Mismatch" | "Unverified Next Ratchet Key" | "Receving Ratchet Number Mismatch" | "Failed To Decrypt" | "Message Invalid" | "Failed To Send Message"> {
         const {
             addressedTo,
             sessionId,
@@ -895,23 +896,20 @@ export class ChattingSession {
             nextDHRatchetKey,
             messageBody: { ciphertext, signature } } = messageHeader;
         if (sessionId !== this.sessionId || addressedTo !== this.#me ) {
-            await receive("Session Id Mismatch");
-            return null;
+            return "Session Id Mismatch";
         }
         const nextDHPublicKey = await crypto.verifyKey(nextDHRatchetKey, this.#otherVerifyKey);
         if (!nextDHPublicKey) {
-            await receive("Unverified Next Ratchet Key");
-            return null;
+            return "Unverified Next Ratchet Key";
         }
         let success = false;
-        await this.ratchetToCurrentReceived(nextDHPublicKey, 
+        return await this.ratchetToCurrentReceived(nextDHPublicKey, 
             sendingRatchetNumber, 
             sendingChainNumber, 
             previousChainNumber, 
             async (messageKeyBits) => {
                 if (!messageKeyBits) {
-                    await receive("Receving Ratchet Number Mismatch");
-                    return false;
+                    return "Receving Ratchet Number Mismatch";
                 }
                 const plaintext = await crypto.deriveDecryptVerify(messageKeyBits, ciphertext, nullSalt(48), "Message Send|Receive", signature, this.#otherVerifyKey);
                 let error = !plaintext ? "Decryption failed." : null;
@@ -921,20 +919,21 @@ export class ChattingSession {
                 }
                 if (error) {
                     console.log(error);
-                    await receive("Failed To Decrypt");
+                    return "Failed To Decrypt";
                 }
                 else {
                     if (this.verifyMessageIntegrity(messageHeader, message)) {
                         success = await receive(message);
                     }
                     else {
-                        await receive("Message Invalid");
+                        return "Message Invalid";
                     }
                 }
                 if (success) {
                     this.lastActivityTimestamp = Date.now();
+                    return undefined;
                 }
-                return success;
+                return "Failed To Send Message";
         });
         return success ? this.exportSession() : null;
     }

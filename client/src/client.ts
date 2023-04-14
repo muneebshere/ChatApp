@@ -500,7 +500,7 @@ export class Client {
       this.#profilePicture = profilePicture;
       this.#x3dhUser = x3dhUser;
       for (const { sessionId, timestamp, otherUser, firstMessage } of this.#x3dhUser.pendingMessageRequests) {
-        this.addAwaitedRequest({ sessionId, otherUser, lastActivity: timestamp, message: { messageId: "0.0", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } } });
+        this.addAwaitedRequest({ sessionId, otherUser, lastActivity: timestamp, message: { messageId: "0-0", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } } });
       }
       this.notifyStatusChange(Status.SignedIn);
       this.loadChats();
@@ -524,13 +524,21 @@ export class Client {
     }
     const { keyBundle } = keyBundleResponse;
     const { displayName, profilePicture } = this;
-    const messageRequest = await this.#x3dhUser.generateMessageRequest(keyBundle, firstMessage, madeAt, { displayName, profilePicture });
-    if (typeof messageRequest === "string") {
-      logError(messageRequest);
-      return failure(ErrorStrings.ProcessFailed, messageRequest);
+    const pendingRequest = await this.#x3dhUser.generateMessageRequest(keyBundle, firstMessage, madeAt, { displayName, profilePicture }, async (messageRequest) => {
+      const result = await this.SendMessageRequest(messageRequest);
+      if (result.reason) {
+        logError(result);
+        return false;
+      }
+      return true;
+    });
+    if (typeof pendingRequest === "string") {
+      logError(pendingRequest);
+      return failure(ErrorStrings.ProcessFailed, pendingRequest);
     }
-    const result = await this.SendMessageRequest(messageRequest);
-    return result.reason ? result : { reason: null };
+    const { sessionId, timestamp } = pendingRequest;
+    this.addAwaitedRequest({ sessionId, otherUser, lastActivity: timestamp, message: { messageId: "0-0", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } } });
+    return { reason: null };
   }
 
   async userLogOut(): Promise<Failure> {
@@ -1193,10 +1201,6 @@ export class Chat {
 
   private async openEncryptedMessage(encryptedMessage: MessageHeader): Promise<boolean> {
     const exportedChattingSession = await this.#chattingSession.receiveMessage(encryptedMessage, async (messageBody) => {
-      if (typeof messageBody === "string") {
-        logError(messageBody);
-        return false;
-      };
       const { sender, recipient, messageId, replyingTo: replyId, timestamp, content } = messageBody;
       if (sender !== this.otherUser || recipient === this.me) {
         return false;
@@ -1211,12 +1215,13 @@ export class Chat {
       await this.encryptStoreMessage(newMessage);
       return true;
     });
-    if (exportedChattingSession) {
-      const { lastActivity, chatDetails } = this;
-      await this.clientInterface.UpdateChat({ lastActivity, chatDetails, exportedChattingSession });
-      return true;
-    }
-    return false;
+    if (typeof exportedChattingSession === "string") {
+      logError(exportedChattingSession);
+      return false;
+    };
+    const { lastActivity, chatDetails } = this;
+    await this.clientInterface.UpdateChat({ lastActivity, chatDetails, exportedChattingSession });
+    return true;
   }
 
   private async populateReplyingTo(id: string): Promise<{ id: string, replyToOwn: boolean, displayText: string }> {

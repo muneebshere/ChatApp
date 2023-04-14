@@ -19,10 +19,11 @@ export type ControlledTextFieldProps = {
   preventSpaces?: boolean;
   autoComplete?: string;
   role?: React.AriaRole;
-}
+  autoFocus?: boolean;
+} & React.HTMLProps<HTMLInputElement>
 
 export default function ControlledTextField(args: ControlledTextFieldProps) {
-  const { placeholder, setValue, type, valid, value, disabled, errorMessage, forceInvalid, helperText, label, onEnter, preventSpaces, validate, variant, autoComplete, role } = args;
+  const { placeholder, setValue, type, valid, value, disabled, errorMessage, forceInvalid, helperText, label, onEnter, preventSpaces, validate, variant, autoComplete, role, autoFocus } = args;
   const [cursor, setCursor] = useState(0);
   const [touched, setTouched] = useState<boolean>(null);
   const [enterDown, setEnterDown] = useState(false);
@@ -79,6 +80,7 @@ export default function ControlledTextField(args: ControlledTextFieldProps) {
       <Input
         ref={ref} 
         autoComplete={autoComplete}
+        autoFocus={autoFocus}
         role={role}
         variant={variant}
         type={type}

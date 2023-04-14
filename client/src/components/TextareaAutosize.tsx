@@ -1,4 +1,4 @@
-import React, { ForwardedRef, forwardRef, useCallback, useEffect, useRef, useState } from "react";
+import React, { ForwardedRef, forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import * as ReactDOM from "react-dom";
 import {
@@ -10,7 +10,7 @@ import {
 import styled from "@emotion/styled";
 
 interface TextareaAutosizeProps
-  extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "children" | "rows"> {
+  extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "children" | "rows" | "onSubmit"> {
   ref?: React.Ref<HTMLTextAreaElement>;
   /**
    * Maximum number of rows to display.
@@ -25,6 +25,10 @@ interface TextareaAutosizeProps
    * callback to call when updating height
    */
   onHeightUpdate?: (newHeight: number) => void;
+  /**
+   * callback to execute when Ctrl+Enter is pressed
+   */
+  onSubmit?: (value: string) => void;
 }
 
 type State = {
@@ -78,7 +82,7 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
   props: TextareaAutosizeProps,
   ref: ForwardedRef<Element>,
 ) {
-  const { onChange, onHeightUpdate, maxRows, minRows = 1, style, value, ...other } = props;
+  const { onChange, onHeightUpdate, maxRows, minRows = 1, style, value, onSubmit, ...other } = props;
 
   const { current: isControlled } = useRef(value != null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -256,11 +260,25 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
     }
   };
 
+  const handleSubmit = useMemo(() => {
+    return onSubmit
+      ? (event: React.KeyboardEvent<HTMLTextAreaElement>) => { 
+          if (event.ctrlKey && event.key === "Enter") {
+            onSubmit(event.currentTarget.value);
+            event.stopPropagation();
+            return false;
+          }
+        }
+      : undefined;
+
+  }, [onSubmit])
+
   return (
     <React.Fragment>
       <textarea
         value={value}
         onChange={handleChange}
+        onKeyDown={handleSubmit}
         ref={handleRef}
         // Apply the rows prop to get a "correct" first SSR paint
         rows={minRows as number}
@@ -359,7 +377,7 @@ const StyledInnerTextarea = styled(TextareaAutosize)`
   font-size: var(--joy-fontSize-md);
   line-height: var(--joy-lineHeight-md);
   overflow-x: clip;
-  overflow-y: scroll;
+  overflow-y: auto;
 
   scroll-behavior: auto !important;
   scrollbar-width: thin;
@@ -378,7 +396,9 @@ const StyledInnerTextarea = styled(TextareaAutosize)`
   }`;
 
 export const StyledScrollingTextarea = 
-(props: TextareaAutosizeProps) => 
-  (<TextareaBorder>
+(props: TextareaAutosizeProps & { outerProps?: React.HTMLProps<HTMLDivElement> }) => {
+  const { as, ...outerProps } = props.outerProps || {}; 
+  return (<TextareaBorder {...outerProps}>
     <StyledInnerTextarea {...props}/>
-  </TextareaBorder>)
+  </TextareaBorder>);
+  }
