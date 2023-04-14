@@ -126,7 +126,7 @@ export type MessageHeader = Readonly<{
     messageBody: SignedEncryptedData; 
 }>;
 
-export type MessageRequestHeader = Readonly<{
+export type ChatRequestHeader = Readonly<{
     sessionId: string;
     timestamp: number;
     addressedTo: string;
@@ -274,13 +274,13 @@ export enum SocketEvents {
     PublishKeyBundles = "publish-key-bundles",
     RequestKeyBundle = "request-key-bundle",
     
-    SendMessageRequest = "send-message-request",
+    SendChatRequest = "send-chat-request",
     SendMessage = "send-message",
     SendMessageEvent = "send-message-event",
-    DeleteMessageRequest = "delete-message-request",
+    DeleteChatRequest = "delete-chat-request",
 
     MessageReceived = "message-received",
-    MessageRequestReceived = "message-request-received",
+    ChatRequestReceived = "chat-request-received",
     MessageEventLogged = "message-event-logged",
 
     GetAllChats = "get-all-chats",

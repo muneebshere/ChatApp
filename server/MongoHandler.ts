@@ -4,7 +4,7 @@ import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
 import { Buffer } from "./node_modules/buffer/";
 import { Buffer as NodeBuffer } from "node:buffer";
-import { ChatData, KeyBundle, MessageEvent, MessageHeader, MessageRequestHeader, PasswordEncryptedData, PublishKeyBundlesRequest, SavedDetails, StoredMessage, UserAuthInfo, UserEncryptedData } from "../shared/commonTypes";
+import { ChatData, KeyBundle, MessageEvent, MessageHeader, ChatRequestHeader, PasswordEncryptedData, PublishKeyBundlesRequest, SavedDetails, StoredMessage, UserAuthInfo, UserEncryptedData } from "../shared/commonTypes";
 
 export type RunningSession = {
   sessionId: string;
@@ -49,7 +49,7 @@ const userEncryptedData = {
   }
 };
   
-const messageRequestHeaderSchema = new Schema({
+const chatRequestHeaderSchema = new Schema({
   sessionId: {
     type: Schema.Types.String,
     required: true,
@@ -389,7 +389,7 @@ export class MongoHandlerCentral {
     }
   }), "running_sessions");
 
-  private static readonly MessageRequestDeposit = mongoose.model("MessageRequestDeposit", messageRequestHeaderSchema.index({ addressedTo: "hashed" }).index({ addressedTo: 1, sessionId: 1 }, { unique: true }), "message_request_deposit");
+  private static readonly ChatRequestDeposit = mongoose.model("ChatRequestDeposit", chatRequestHeaderSchema.index({ addressedTo: "hashed" }).index({ addressedTo: 1, sessionId: 1 }, { unique: true }), "chat_request_deposit");
 
   private static readonly MessageDeposit = mongoose.model("MessageDeposit", messageHeaderSchema.index({ addressedTo: "hashed", sessionId: "hashed" }).index({ addressedTo: 1, sessionId: 1, messageId: 1 }, { unique: true }), "message_deposit");
 
@@ -510,12 +510,12 @@ export class MongoHandlerCentral {
     }
   }
 
-  static async depositMessageRequest(messageRequest: MessageRequestHeader) {
+  static async depositChatRequest(chatRequest: ChatRequestHeader) {
     try {
-      const userHandler = this.userHandlers.get(messageRequest.addressedTo);
-      if (await userHandler.depositMessageRequest(messageRequest)) return true;
-      const newMessageRequest = new this.MessageRequestDeposit(bufferReplaceForMongo(messageRequest));
-      return (newMessageRequest === await newMessageRequest.save());
+      const userHandler = this.userHandlers.get(chatRequest.addressedTo);
+      if (await userHandler.depositChatRequest(chatRequest)) return true;
+      const newChatRequest = new this.ChatRequestDeposit(bufferReplaceForMongo(chatRequest));
+      return (newChatRequest === await newChatRequest.save());
     }
     catch(err) {
       logError(err);
@@ -551,11 +551,11 @@ export class MongoHandlerCentral {
     }
   }
 
-  static async retrieveMessageRequests(addressedTo: string, then: (messages: any[]) => Promise<boolean>) {
+  static async retrieveChatRequests(addressedTo: string, then: (messages: any[]) => Promise<boolean>) {
     try {
-      const messageRequests = await this.MessageDeposit.find({ addressedTo }).lean().exec();
-      if (await then(cleanLean(messageRequests))) {
-        return (await this.MessageRequestDeposit.deleteMany({ addressedTo })).deletedCount === messageRequests.length;
+      const chatRequests = await this.MessageDeposit.find({ addressedTo }).lean().exec();
+      if (await then(cleanLean(chatRequests))) {
+        return (await this.ChatRequestDeposit.deleteMany({ addressedTo })).deletedCount === chatRequests.length;
       }
       return false;
     }
@@ -596,22 +596,22 @@ export class MongoHandlerCentral {
 
 export class MongoUserHandler {
   private readonly username: string;
-  private readonly MessageRequest: mongoose.Model<any>;
+  private readonly ChatRequest: mongoose.Model<any>;
   private readonly UnprocessedMessage: mongoose.Model<any>;
   private readonly Message: mongoose.Model<any>;
   private readonly Chat: mongoose.Model<any>;
-  private readonly notifyMessage: (message: MessageHeader | MessageRequestHeader | MessageEvent) => void;
+  private readonly notifyMessage: (message: MessageHeader | ChatRequestHeader | MessageEvent) => void;
 
-  private constructor(username: string, notifyMessage: (message: MessageHeader | MessageRequestHeader | MessageEvent) => void) {
+  private constructor(username: string, notifyMessage: (message: MessageHeader | ChatRequestHeader | MessageEvent) => void) {
     this.username = username;
-    this.MessageRequest = mongoose.model(`${username}MessageRequests`, messageRequestHeaderSchema.index({ timestamp: -1 }).index({ sessionId: 1 }, { unique: true }), `${username}_message_requests`);
+    this.ChatRequest = mongoose.model(`${username}ChatRequests`, chatRequestHeaderSchema.index({ timestamp: -1 }).index({ sessionId: 1 }, { unique: true }), `${username}_chat_requests`);
     this.UnprocessedMessage = mongoose.model(`${username}UnprocessedMessages`, messageHeaderSchema.index({ sessionId: "hashed", timestamp: -1 }).index({ sessionId: 1, messageId: 1 }, { unique: true }), `${username}_unprocessed_messages`);
     this.Message = mongoose.model(`${username}Messages`, messageSchema.index({ sessionId: "hashed", timestamp: -1 }).index({ sessionId: 1, messageId: 1 }, { unique: true }), `${username}_messages`);
     this.Chat = mongoose.model(`${username}Chats`, chatSchema.index({ lastActivity: -1 }), `${username}_chats`);
     this.notifyMessage = notifyMessage;
   }
 
-  static async createHandler(username: string, notifyMessage: (message: MessageHeader | MessageRequestHeader | MessageEvent) => void) {
+  static async createHandler(username: string, notifyMessage: (message: MessageHeader | ChatRequestHeader | MessageEvent) => void) {
     const userHandler = new MongoUserHandler(username, notifyMessage);
     MongoHandlerCentral.registerUserHandler(username, userHandler);
     await userHandler.retrieve();
@@ -619,10 +619,10 @@ export class MongoUserHandler {
   }
 
   private async retrieve() {
-    MongoHandlerCentral.retrieveMessageRequests(this.username, async (messageRequests) => {
+    MongoHandlerCentral.retrieveChatRequests(this.username, async (chatRequests) => {
       try {
-        const inserted = await this.MessageRequest.insertMany(messageRequests, { lean: true });
-        return (inserted.length === messageRequests.length); 
+        const inserted = await this.ChatRequest.insertMany(chatRequests, { lean: true });
+        return (inserted.length === chatRequests.length); 
       }
       catch(err) {
         logError(err);
@@ -658,12 +658,12 @@ export class MongoUserHandler {
     }
   }
 
-  async depositMessageRequest(messageRequest: MessageRequestHeader) {
+  async depositChatRequest(chatRequest: ChatRequestHeader) {
     try {
-      if (messageRequest.addressedTo !== this.username) return false;
-      const newMessageRequest = new this.MessageRequest(bufferReplaceForMongo(messageRequest));
-      if (newMessageRequest === await newMessageRequest.save()) {
-        this.notifyMessage?.(messageRequest);
+      if (chatRequest.addressedTo !== this.username) return false;
+      const newChatRequest = new this.ChatRequest(bufferReplaceForMongo(chatRequest));
+      if (newChatRequest === await newChatRequest.save()) {
+        this.notifyMessage?.(chatRequest);
         return true;
       }
       return false;
@@ -687,8 +687,8 @@ export class MongoUserHandler {
     return bufferReplaceFromLean(await this.Chat.find().lean().exec());
   }
 
-  async getAllRequests(): Promise<MessageRequestHeader[]> {
-    return bufferReplaceFromLean(await this.MessageRequest.find().lean().exec());
+  async getAllRequests(): Promise<ChatRequestHeader[]> {
+    return bufferReplaceFromLean(await this.ChatRequest.find().lean().exec());
   }
 
   async getUnprocessedMessages(sessionId: string): Promise<MessageHeader[]> {
@@ -714,9 +714,9 @@ export class MongoUserHandler {
     return await this.Message.findOne({ sessionId, messageId }).exec();
   }
 
-  async deleteMessageRequest(sessionId: string) {
+  async deleteChatRequest(sessionId: string) {
     try {
-      return (await this.MessageRequest.deleteOne({ sessionId })).deletedCount === 1
+      return (await this.ChatRequest.deleteOne({ sessionId })).deletedCount === 1
     }
     catch(err) {
       logError(err);
@@ -765,7 +765,7 @@ export class MongoUserHandler {
       const newChat = new this.Message(bufferReplaceForMongo(chat));
       if (newChat === await newChat.save()) {
         const { sessionId } = chat;
-        await this.MessageRequest.deleteOne({ sessionId });
+        await this.ChatRequest.deleteOne({ sessionId });
         return true;
       }
       return false;

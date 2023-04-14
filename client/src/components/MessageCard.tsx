@@ -53,11 +53,18 @@ const StyledReactMarkdownBody = StyledReactMarkdownVariableEmojiSize(22);
 
 const StyledReactMarkdownReply = StyledReactMarkdownVariableEmojiSize(18);
 
-export type ViewMessage = Readonly<DisplayMessage & { 
+type MessageCardContextData = Readonly<{
   chatWith: string; 
-  first: boolean;
   highlight: string;
-  setHighlight: (id: string) => void;  }>;
+  setHighlight: (id: string) => void;
+  registerMessageRef: (ref: HTMLDivElement) => void;
+}>;
+
+export type ViewMessage = Readonly<DisplayMessage & { 
+  first: boolean;
+}>;
+
+export const MessageCardContext = createContext<MessageCardContextData>(null);
 
 const formatTooltipDate = (timestamp: number) => {
   const date = DateTime.fromMillis(timestamp);
@@ -69,9 +76,8 @@ const sentIcon = <DoneSharp sx={{ color: "gray", fontSize: "1rem" }}/>;
 const deliveredIcon = <DoneAllSharp sx={{ color: "gray", fontSize: "1rem" }}/>;
 const seenIcon = <DoneAllSharp sx={{ color: "blue", fontSize: "1rem" }}/>;
 
-const MessageCard = forwardRef(function (message: ViewMessage, ref: ForwardedRef<HTMLDivElement>) {
-  const { highlight, setHighlight } = message;
-  const { chatWith, messageId, content, timestamp, replyingTo, sentByMe, first } = message;
+function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData) {
+  const { highlight, setHighlight, registerMessageRef, chatWith, messageId, content, timestamp, replyingTo, sentByMe, first } = message;
   const [darken, setDarken] = useState(false);
   const scrollRef = useRef<HTMLDivElementScroll>(null);
   const bodyRef = useRef<HTMLSpanElement>(null);
@@ -178,7 +184,7 @@ const MessageCard = forwardRef(function (message: ViewMessage, ref: ForwardedRef
   return (
     <Grid container sx={{ display: "flex", flexGrow: 1, justifyContent: side, height: "fit-content", maxWidth: "100%" }}>
       <Grid xs={10} sm={8} lg={7} sx={{ display: "flex", flexGrow: 0, justifyContent: side, height: "fit-content" }} ref={scrollRef}>
-        <StyledSheet sx={{ width: "100%", display: "flex", flexGrow: 1, justifyContent: side, alignContent: "flex-start", padding: 0, margin: 0 }} ref={ref} id={`m${messageId}`}>
+        <StyledSheet sx={{ width: "100%", display: "flex", flexGrow: 1, justifyContent: side, alignContent: "flex-start", padding: 0, margin: 0 }} ref={registerMessageRef} id={`m${messageId}`}>
           <SvgMessageCard background={messageColor} first={first} sentByMe={sentByMe} shadowColor="#adb5bd" darken={darken} darkenFinished={() => setDarken(false) }>
             <Stack direction="column"
               sx={{ maxWidth: "max-content", width: "fit-content", padding: 1.5, paddingBottom: 0.5, alignContent: "flex-start", textAlign: "start" }}>
@@ -225,10 +231,17 @@ const MessageCard = forwardRef(function (message: ViewMessage, ref: ForwardedRef
       </Grid>
     </Grid>
   )
-})
+}
 
-export const MessageCardMemo = memo(MessageCard, 
+const MessageCardMemo = memo(MessageCardWithHighlight, 
   (prev, next) => 
-    prev.messageId === next.messageId 
+    prev.chatWith === next.chatWith
+    && prev.messageId === next.messageId 
     && (!prev.sentByMe || !next.sentByMe || !(prev.delivery || next.delivery) || _.isEqual(prev.delivery, next.delivery))
     && (next.highlight === next.messageId) === (prev.highlight === prev.messageId));
+
+export default function MessageCard(message: ViewMessage) {
+  const context = useContext(MessageCardContext);
+  const params = { ...message, ...context };
+  return (<MessageCardMemo { ...params }/>)
+}

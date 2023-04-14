@@ -6,6 +6,7 @@ export type ControlledTextFieldProps = {
   label?: string;
   placeholder: string;
   type: string;
+  defaultValue?: string;
   value: string;
   setValue: (value: string) => void;
   valid: boolean;
@@ -23,7 +24,7 @@ export type ControlledTextFieldProps = {
 } & React.HTMLProps<HTMLInputElement>
 
 export default function ControlledTextField(args: ControlledTextFieldProps) {
-  const { placeholder, setValue, type, valid, value, disabled, errorMessage, forceInvalid, helperText, label, onEnter, preventSpaces, validate, variant, autoComplete, role, autoFocus } = args;
+  const { placeholder, setValue, type, valid, defaultValue, value, disabled, errorMessage, forceInvalid, helperText, label, onEnter, preventSpaces, validate, variant, autoComplete, role, autoFocus } = args;
   const [cursor, setCursor] = useState(0);
   const [touched, setTouched] = useState<boolean>(null);
   const [enterDown, setEnterDown] = useState(false);
@@ -85,6 +86,7 @@ export default function ControlledTextField(args: ControlledTextFieldProps) {
         variant={variant}
         type={type}
         placeholder={placeholder}
+        defaultValue={defaultValue}
         value={value}
         error={ !valid && (forceInvalid || touched) }
         disabled={disabled}

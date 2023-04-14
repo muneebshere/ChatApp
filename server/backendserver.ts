@@ -13,7 +13,7 @@ import { Buffer } from "./node_modules/buffer";
 import { SessionCrypto } from "../shared/sessionCrypto";
 import * as crypto from "../shared/cryptoOperator";
 import { serialize, deserialize } from "../shared/cryptoOperator";
-import { failure, Failure, ErrorStrings, Username, AuthSetupKey, AuthInfo, RegisterNewUserRequest, InitiateAuthenticationResponse, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, PasswordDeriveInfo, UserAuthInfo, randomFunctions, SavedDetails, AuthSetupKeyData, NewUserData, ConcludeAuthenticationRequest, AuthChangeData, MessageRequestHeader, KeyBundle, EstablishData, UserEncryptedData, MessageHeader, MessageEvent, StoredMessage } from "../shared/commonTypes";
+import { failure, Failure, ErrorStrings, Username, AuthSetupKey, AuthInfo, RegisterNewUserRequest, InitiateAuthenticationResponse, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, PasswordDeriveInfo, UserAuthInfo, randomFunctions, SavedDetails, AuthSetupKeyData, NewUserData, ConcludeAuthenticationRequest, AuthChangeData, ChatRequestHeader, KeyBundle, EstablishData, UserEncryptedData, MessageHeader, MessageEvent, StoredMessage } from "../shared/commonTypes";
 import { MongoHandlerCentral, MongoUserHandler, bufferReplaceForMongo } from "./MongoHandler";
 
 try {
@@ -57,10 +57,10 @@ class SocketHandler {
     [SocketEvents.StoreMessage, this.storeMessage],
     [SocketEvents.CreateChat, this.createChat],
     [SocketEvents.UpdateChat, this.updateChat],
-    [SocketEvents.SendMessageRequest, this.sendMessageRequest],
+    [SocketEvents.SendChatRequest, this.sendChatRequest],
     [SocketEvents.SendMessage, this.sendMessage],
     [SocketEvents.SendMessageEvent, this.sendMessageEvent],
-    [SocketEvents.DeleteMessageRequest, this.deleteMessageRequest],
+    [SocketEvents.DeleteChatRequest, this.deleteChatRequest],
     [SocketEvents.LogOut, this.logOut],
     [SocketEvents.RequestRoom, this.roomRequested]
   ]);
@@ -490,9 +490,9 @@ class SocketHandler {
     return { potentialRoom, establish: response };
   }
 
-  private async sendMessageRequest(messageRequest: MessageRequestHeader) {
-    if (!this.#username || this.#username === messageRequest.addressedTo) return failure(ErrorStrings.InvalidRequest);
-    if (!(await MongoHandlerCentral.depositMessageRequest(messageRequest))) return failure(ErrorStrings.ProcessFailed);
+  private async sendChatRequest(chatRequest: ChatRequestHeader) {
+    if (!this.#username || this.#username === chatRequest.addressedTo) return failure(ErrorStrings.InvalidRequest);
+    if (!(await MongoHandlerCentral.depositChatRequest(chatRequest))) return failure(ErrorStrings.ProcessFailed);
     return { reason: null };
   }
 
@@ -568,19 +568,19 @@ class SocketHandler {
     return { reason: null };
   }
 
-  private async deleteMessageRequest(param: { sessionId: string }) {
+  private async deleteChatRequest(param: { sessionId: string }) {
     if (!this.#username) return failure(ErrorStrings.InvalidRequest);
-    const success = await this.#mongoHandler.deleteMessageRequest(param.sessionId);
+    const success = await this.#mongoHandler.deleteChatRequest(param.sessionId);
     return success ? { reason: null } : failure(ErrorStrings.ProcessFailed); 
   }
 
-  private async notifyMessage(message: MessageHeader | MessageRequestHeader | MessageEvent) {
+  private async notifyMessage(message: MessageHeader | ChatRequestHeader | MessageEvent) {
     if (message.addressedTo !== this.#username) return;
     if ("messageBody" in message) {
       await this.request(SocketEvents.MessageReceived, message);
     }
     else if ("initialMessage" in message) {
-      await this.request(SocketEvents.MessageRequestReceived, message);
+      await this.request(SocketEvents.ChatRequestReceived, message);
     }
     else if ("event" in message) {
       await this.request(SocketEvents.MessageEventLogged, message);

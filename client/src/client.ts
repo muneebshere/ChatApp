@@ -5,10 +5,10 @@ import { io, Socket } from "socket.io-client";
 import { Buffer } from "./node_modules/buffer";
 import { stringify } from "safe-stable-stringify";
 import { SessionCrypto } from "../../shared/sessionCrypto";
-import { ChattingSession, ViewMessageRequest, ViewPendingRequest, X3DHUser } from "./e2e-encryption";
+import { ChattingSession, ViewChatRequest, ViewPendingRequest, X3DHUser } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
-import { ErrorStrings, Failure, Username, AuthSetupKey, UserEncryptedData, RegisterNewUserRequest, InitiateAuthenticationResponse, ConcludeAuthenticationRequest, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, randomFunctions, failure, SavedDetails, PasswordEncryptedData, AuthSetupKeyData, NewUserData, AuthChangeData, EstablishData, MessageHeader, MessageRequestHeader, StoredMessage, MessageEvent, ChatData, PlainMessage, MessageBody, DisplayMessage, Contact, Profile } from "../../shared/commonTypes";
+import { ErrorStrings, Failure, Username, AuthSetupKey, UserEncryptedData, RegisterNewUserRequest, InitiateAuthenticationResponse, ConcludeAuthenticationRequest, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, randomFunctions, failure, SavedDetails, PasswordEncryptedData, AuthSetupKeyData, NewUserData, AuthChangeData, EstablishData, MessageHeader, ChatRequestHeader, StoredMessage, MessageEvent, ChatData, PlainMessage, MessageBody, DisplayMessage, Contact, Profile } from "../../shared/commonTypes";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;
@@ -59,14 +59,14 @@ type ClientChatInterface = Readonly<{
 
 type ClientChatRequestInterface = Readonly<{
   rejectRequest: (otherUser: string, sessionId: string, oneTimeKeyId: string) => Promise<boolean>,
-  respondToRequest: (request: MessageRequestHeader, respondingAt: number) => Promise<boolean>
+  respondToRequest: (request: ChatRequestHeader, respondingAt: number) => Promise<boolean>
 }>
 
 export class Client {
   private readonly responseMap: Map<SocketEvents, any> = new Map([
     [SocketEvents.RequestRoom, this.roomRequested] as [SocketEvents, any],
     [SocketEvents.MessageReceived, this.messageReceived],
-    [SocketEvents.MessageRequestReceived, this.messageRequestReceived],
+    [SocketEvents.ChatRequestReceived, this.chatRequestReceived],
     [SocketEvents.MessageEventLogged, this.messageEventLogged]
   ]);
   private readonly url: string;
@@ -499,7 +499,7 @@ export class Client {
       this.#displayName = displayName;
       this.#profilePicture = profilePicture;
       this.#x3dhUser = x3dhUser;
-      for (const { sessionId, timestamp, otherUser, firstMessage } of this.#x3dhUser.pendingMessageRequests) {
+      for (const { sessionId, timestamp, otherUser, firstMessage } of this.#x3dhUser.pendingChatRequests) {
         this.addAwaitedRequest({ sessionId, otherUser, lastActivity: timestamp, message: { messageId: "0-0", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } } });
       }
       this.notifyStatusChange(Status.SignedIn);
@@ -514,7 +514,7 @@ export class Client {
     }
   }
 
-  async sendMessageRequest(otherUser: string, firstMessage: string, madeAt: number): Promise<Failure> {
+  async sendChatRequest(otherUser: string, firstMessage: string, madeAt: number): Promise<Failure> {
     if (!this.isConnected) return failure(ErrorStrings.NoConnectivity);
     if (!(await this.checkUsernameExists(otherUser))) return failure(ErrorStrings.InvalidRequest);
     const keyBundleResponse = await this.RequestKeyBundle({ username: otherUser });
@@ -524,8 +524,8 @@ export class Client {
     }
     const { keyBundle } = keyBundleResponse;
     const { displayName, profilePicture } = this;
-    const pendingRequest = await this.#x3dhUser.generateMessageRequest(keyBundle, firstMessage, madeAt, { displayName, profilePicture }, async (messageRequest) => {
-      const result = await this.SendMessageRequest(messageRequest);
+    const pendingRequest = await this.#x3dhUser.generateChatRequest(keyBundle, firstMessage, madeAt, { displayName, profilePicture }, async (chatRequest) => {
+      const result = await this.SendChatRequest(chatRequest);
       if (result.reason) {
         logError(result);
         return false;
@@ -662,8 +662,8 @@ export class Client {
     await Promise.all(chats.map((chat) => this.requestRoom(chat)));
   }
 
-  private async loadRequest(request: MessageRequestHeader) {
-    const result = await this.#x3dhUser.viewMessageRequest(request);
+  private async loadRequest(request: ChatRequestHeader) {
+    const result = await this.#x3dhUser.viewChatRequest(request);
     if (typeof result === "string") {
       logError(result);
       return false;
@@ -674,7 +674,7 @@ export class Client {
       return false;
     }
     const chatRequest = new ChatRequest(request, {
-      respondToRequest: (request: MessageRequestHeader, respondingAt: number) => this.respondToRequest(request, respondingAt),
+      respondToRequest: (request: ChatRequestHeader, respondingAt: number) => this.respondToRequest(request, respondingAt),
       rejectRequest: (sessionId: string, oneTimeKeyId: string) => this.rejectRequest(sessionId, oneTimeKeyId)
     }, result);
     this.addChatRequest(chatRequest);
@@ -691,11 +691,11 @@ export class Client {
     return successes.every((s) => s);
   }
 
-  private async respondToRequest(request: MessageRequestHeader, respondingAt: number) {
+  private async respondToRequest(request: ChatRequestHeader, respondingAt: number) {
     const { sessionId } = request;
     const { displayName, profilePicture } = this;
-    const viewMessageRequest = await this.#x3dhUser.viewMessageRequest(request);
-    const exportedChattingSession = await this.#x3dhUser.acceptMessageRequest(request, respondingAt, { displayName, profilePicture }, async (response) => {
+    const viewChatRequest = await this.#x3dhUser.viewChatRequest(request);
+    const exportedChattingSession = await this.#x3dhUser.acceptChatRequest(request, respondingAt, { displayName, profilePicture }, async (response) => {
       const sent = await this.SendMessage(response);
       if (sent.reason) {
         logError(sent);
@@ -703,11 +703,11 @@ export class Client {
       }
       return true;
     });
-    if (typeof exportedChattingSession === "string" || typeof viewMessageRequest === "string") {
+    if (typeof exportedChattingSession === "string" || typeof viewChatRequest === "string") {
       logError(exportedChattingSession);
       return false;
     }
-    const { profile, firstMessage, timestamp } = viewMessageRequest;
+    const { profile, firstMessage, timestamp } = viewChatRequest;
     const lastActivity = respondingAt;
     const chatDetails = await crypto.encryptData(profile, this.#encryptionBaseVector, "ContactDetails");
     const chatData = { chatDetails, exportedChattingSession, lastActivity, sessionId };
@@ -718,7 +718,7 @@ export class Client {
   }
 
   private async rejectRequest(sessionId: string, oneTimeKeyId: string) {
-    const result = await this.DeleteMessageRequest({ sessionId });
+    const result = await this.DeleteChatRequest({ sessionId });
     if (result.reason) {
       logError(result);
       return false;
@@ -734,7 +734,7 @@ export class Client {
     if (!awaitedRequest) {
       return false;
     }
-    const result = await this.#x3dhUser.receiveMessageRequestResponse(message);
+    const result = await this.#x3dhUser.receiveChatRequestResponse(message);
     if (typeof result === "string") {
       logError(result);
       return false;
@@ -783,15 +783,15 @@ export class Client {
     return this.request(SocketEvents.RequestKeyBundle, data, timeout);
   }
 
-  private SendMessageRequest(data: MessageRequestHeader, timeout = 0): Promise<Failure> {
-    return this.request(SocketEvents.SendMessageRequest, data, timeout);
+  private SendChatRequest(data: ChatRequestHeader, timeout = 0): Promise<Failure> {
+    return this.request(SocketEvents.SendChatRequest, data, timeout);
   }
 
   private GetAllChats(timeout = 0): Promise<ChatData[] | Failure> {
     return this.request(SocketEvents.GetAllChats, {}, timeout);
   }
 
-  private GetAllRequests(timeout = 0): Promise<MessageRequestHeader[] | Failure> {
+  private GetAllRequests(timeout = 0): Promise<ChatRequestHeader[] | Failure> {
     return this.request(SocketEvents.GetAllRequests, {}, timeout);
   }
 
@@ -803,8 +803,8 @@ export class Client {
     return this.request(SocketEvents.CreateChat, data, timeout);
   }
 
-  private DeleteMessageRequest(data: { sessionId: string }, timeout = 0): Promise<Failure> {
-    return this.request(SocketEvents.DeleteMessageRequest, data, timeout);
+  private DeleteChatRequest(data: { sessionId: string }, timeout = 0): Promise<Failure> {
+    return this.request(SocketEvents.DeleteChatRequest, data, timeout);
   }
   
   private RequestRoom(data: Username & EstablishData, timeout = 0): Promise<EstablishData | Failure> { 
@@ -888,7 +888,7 @@ export class Client {
       .otherwise(async () => false);
   }
 
-  private async messageRequestReceived(message: MessageRequestHeader) {
+  private async chatRequestReceived(message: ChatRequestHeader) {
     return await this.loadRequest(message);
   }
 
@@ -1259,25 +1259,25 @@ export class ChatRequest {
   readonly message: DisplayMessage;
   readonly lastActivity: number;
   readonly sessionId: string;
-  private readonly messageRequestHeader: MessageRequestHeader;
+  private readonly chatRequestHeader: ChatRequestHeader;
   private readonly clientInterface: ClientChatRequestInterface;
 
-  constructor(messageRequestHeader: MessageRequestHeader, clientInterface: ClientChatRequestInterface, viewRequest: ViewMessageRequest) {
+  constructor(chatRequestHeader: ChatRequestHeader, clientInterface: ClientChatRequestInterface, viewRequest: ViewChatRequest) {
     const { firstMessage, timestamp, profile: { username: otherUser, ...contactDetails } } = viewRequest;
-    this.sessionId = messageRequestHeader.sessionId;
+    this.sessionId = chatRequestHeader.sessionId;
     this.otherUser = otherUser;
     this.contactDetails = contactDetails;
     this.message = { messageId: "0.0", content: firstMessage, timestamp, sentByMe: false };
     this.lastActivity = timestamp;
-    this.messageRequestHeader = messageRequestHeader;
+    this.chatRequestHeader = chatRequestHeader;
     this.clientInterface = clientInterface;
   }
 
   async rejectRequest () {
-    return await this.clientInterface.rejectRequest(this.otherUser, this.sessionId, this.messageRequestHeader.yourOneTimeKeyIdentifier);
+    return await this.clientInterface.rejectRequest(this.otherUser, this.sessionId, this.chatRequestHeader.yourOneTimeKeyIdentifier);
   }
   async respondToRequest (response: string, respondingAt: number) {
-    return await this.clientInterface.respondToRequest(this.messageRequestHeader, respondingAt);
+    return await this.clientInterface.respondToRequest(this.chatRequestHeader, respondingAt);
   }
 }
 
