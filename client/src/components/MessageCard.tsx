@@ -2,11 +2,11 @@ import _ from "lodash";
 import isEqual from "react-fast-compare";
 import React, { createContext, memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useUpdateEffect } from "usehooks-ts";
-import { Grid, Stack, Typography } from "@mui/joy";
+import { Grid, Stack } from "@mui/joy";
 import { DoneSharp, DoneAllSharp, HourglassTop } from "@mui/icons-material";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip";
 import { Popover, PopoverTrigger, PopoverContent } from "./Popover";
-import { StyledSheet } from "./CommonElementStyles";
+import { DisableSelectTypography, StyledSheet } from "./CommonElementStyles";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import twemoji from "../custom_modules/remark-twemoji";
@@ -80,12 +80,12 @@ function StatusButton(deliveryInfo: DeliveryInfo) {
                 <DoneAllSharp sx={{ color: "blue", fontSize: "1rem" }}/>
               </Stack>
               <Stack direction="column" spacing={1} sx={{ maxWidth: "fit-content", paddingLeft: 1.5, paddingRight: 3, alignItems: "start" }}>
-                <Typography level="body2">Delivered</Typography>
-                <Typography level="body2">Seen</Typography>
+                <DisableSelectTypography level="body2">Delivered</DisableSelectTypography>
+                <DisableSelectTypography level="body2">Seen</DisableSelectTypography>
               </Stack>
               <Stack direction="column" spacing={1} sx={{ maxWidth: "fit-content" }}>
-                <Typography level="body2">{deliveredText}</Typography>
-                <Typography level="body2">{seenText}</Typography>
+                <DisableSelectTypography level="body2">{deliveredText}</DisableSelectTypography>
+                <DisableSelectTypography level="body2">{seenText}</DisableSelectTypography>
               </Stack>
             </Stack>
           </div>
@@ -162,13 +162,13 @@ function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData)
             <Stack direction="column"
               sx={{ maxWidth: "max-content", width: "fit-content", padding: 1.5, paddingBottom: 0.5, alignContent: "flex-start", textAlign: "start" }}>
                 {repliedMessage && repliedMessage}
-              <Typography ref={bodyRef} component="span" sx={{ width: "fit-content", maxWidth: "max-content" }}>
+              <DisableSelectTypography ref={bodyRef} component="span" sx={{ width: "fit-content", maxWidth: "max-content" }}>
                 <StyledReactMarkdownBody 
                   className="react-markdown" 
                   children={content} 
                   remarkPlugins={[remarkGfm, remarkMath, twemoji]}
                   rehypePlugins={[rehypeKatex, rehypeRaw]}/>
-              </Typography>
+              </DisableSelectTypography>
               <Stack ref={statusRef} 
                     direction="row" 
                     spacing={1} 
@@ -179,9 +179,9 @@ function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData)
                           right: "12px" }}>
                 <Tooltip placement="bottom-start" offsetFunc={offsetFunc}>
                   <TooltipTrigger>
-                    <Typography level="body3">
+                    <DisableSelectTypography level="body3">
                       {DateTime.fromMillis(timestamp).toFormat("h:mm a")}
-                    </Typography>
+                    </DisableSelectTypography>
                   </TooltipTrigger>
                   <TooltipContent>
                     <div ref={floatingRef} style={{ width: "fit-content",
@@ -190,9 +190,9 @@ function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData)
                                   boxShadow: "0px 0.5px 4px #e4e4e4",
                                   position: "absolute",
                                   zIndex: 2 }}>
-                      <Typography level="body3" noWrap sx={{ color: "black" }}>
+                      <DisableSelectTypography level="body3" noWrap sx={{ color: "black" }}>
                         {formatTooltipDate(timestamp)}
-                      </Typography>
+                      </DisableSelectTypography>
                     </div>
                   </TooltipContent>
                 </Tooltip>

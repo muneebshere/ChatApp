@@ -1,12 +1,13 @@
 import _ from "lodash";
 import isEqual from "react-fast-compare";
 import React, { memo, useRef } from "react";
-import { Card, List, ListItem, ListSubheader, Typography } from "@mui/joy";
+import { Card, List, ListItem, ListSubheader } from "@mui/joy";
 import { DateTime } from "luxon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip";
 import MessageCard, { ViewMessage } from "./MessageCard";
 import { DisplayMessage } from "../../../shared/commonTypes";
 import { ElementRects } from "@floating-ui/react";
+import { DisableSelectTypography } from "./CommonElementStyles";
 
 type MessageListProps = {
   messages: DisplayMessage[];
@@ -45,9 +46,9 @@ export function DayCard({ date }: { date: string }) {
         <Card
           variant="outlined" 
           sx={{ padding: 1, backgroundColor: "rgba(235, 234, 232, 0.7)", backdropFilter: "blur(30px)", textTransform: "capitalize" }}>
-          <Typography level="body3" >
+          <DisableSelectTypography level="body3" >
             {formatDate(date)}
-          </Typography>
+          </DisableSelectTypography>
         </Card>
       </TooltipTrigger>
       <TooltipContent>
@@ -57,9 +58,9 @@ export function DayCard({ date }: { date: string }) {
                       boxShadow: "0px 0.5px 4px #e4e4e4",
                       position: "absolute",
                       zIndex: 2 }}>
-          <Typography level="body3" noWrap sx={{ cursor: "default", color: "black" }}>
+          <DisableSelectTypography level="body3" noWrap sx={{ cursor: "default", color: "black" }}>
             {DateTime.fromISO(date).toFormat("d LLLL y")}
-          </Typography>
+          </DisableSelectTypography>
         </div>
       </TooltipContent>
     </Tooltip>)

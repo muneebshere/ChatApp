@@ -1,10 +1,10 @@
 import _ from "lodash";
 import React from "react";
-import { Sheet, Typography } from "@mui/joy";
+import { Sheet } from "@mui/joy";
 import { Theme, useMediaQuery } from "@mui/material";
 import { Dialog, DialogContent } from "./Dialog";
 import { CloseSharp } from "@mui/icons-material";
-import { CloseButton } from "./CommonElementStyles";
+import { CloseButton, DisableSelectTypography } from "./CommonElementStyles";
 
 export default function WarnSavePassword({ open, setWarned }: WarnSavePasswordProps) {  
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
@@ -30,7 +30,7 @@ export default function WarnSavePassword({ open, setWarned }: WarnSavePasswordPr
           <CloseButton onClick={ () => setWarned(true) }>
             <CloseSharp sx={{ fontSize: "1.5rem" }}/>
           </CloseButton>
-          <Typography
+          <DisableSelectTypography
             component="h2"
             id="modal-title"
             level="h4"
@@ -38,10 +38,10 @@ export default function WarnSavePassword({ open, setWarned }: WarnSavePasswordPr
             fontWeight="lg"
             mb={1}>
               Save password?
-          </Typography>
-          <Typography id="modal-desc" textColor="text.tertiary">
+          </DisableSelectTypography>
+          <DisableSelectTypography id="modal-desc" textColor="text.tertiary">
             The browser will save your password so you won't have to re-enter it on future visits. However, this compromises the security of your account. Anyone with access to your browser may be able to extract the password from its cookies. You may disable password saving later from your settings.
-          </Typography>
+          </DisableSelectTypography>
         </Sheet>      
       </DialogContent>
     </Dialog>);

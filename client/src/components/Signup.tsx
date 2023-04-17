@@ -1,9 +1,9 @@
 import _ from "lodash";
 import { match } from "ts-pattern";
 import React, { createContext, Dispatch, useContext } from "react";
-import { FormControl, FormLabel, Stack, Button, CircularProgress, Typography, Alert } from "@mui/joy";
+import { FormControl, FormLabel, Stack, Button, CircularProgress, Alert } from "@mui/joy";
 import { SubmitResponse } from "../App";
-import { StyledJoySwitch } from "./CommonElementStyles";
+import { DisableSelectTypography, StyledJoySwitch } from "./CommonElementStyles";
 import WarnSavePassword from "./WarnSavePassword";
 import ControlledTextField from "./ControlledTextField";
 import { Failure } from "../../../shared/commonTypes";
@@ -202,9 +202,9 @@ export default function SignUpForm() {
           onClick={submitLocal} 
           disabled={!usernameValid || !passwordValid || !repeatPasswordValid || submitted }>
           <Stack direction="row" spacing={2}>
-            <Typography textColor={ !usernameValid || !passwordValid || !repeatPasswordValid || submitted ? "black" : "white" }>
+            <DisableSelectTypography textColor={ !usernameValid || !passwordValid || !repeatPasswordValid || submitted ? "black" : "white" }>
               { submitted ? "Creating account..." :"Sign Up" }
-            </Typography>
+            </DisableSelectTypography>
             {submitted &&
               <CircularProgress size="sm" variant="soft"/>
             }
@@ -212,7 +212,7 @@ export default function SignUpForm() {
         </Button>
         {failed &&
         <Alert variant="soft" color="danger" size="sm">
-          <Typography color="danger" fontWeight="sm">Sign up failed! Please try again.</Typography>
+          <DisableSelectTypography color="danger" fontWeight="sm">Sign up failed! Please try again.</DisableSelectTypography>
         </Alert>}
       </Stack>
       <WarnSavePassword open={savePassword && !warned} setWarned={setWarned}/>

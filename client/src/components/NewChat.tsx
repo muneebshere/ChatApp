@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { Grid, IconButton, Button, Sheet, Stack, Typography } from "@mui/joy";
+import { Grid, IconButton, Button, Sheet, Stack } from "@mui/joy";
 import { CloseSharp, SendRounded } from "@mui/icons-material";
 import { Popover, PopoverTrigger, PopoverContent } from "./Popover";
 import { Dialog, DialogContent } from "./Dialog";
-import { CloseButton } from "./CommonElementStyles";
+import { CloseButton, DisableSelectTypography } from "./CommonElementStyles";
 import ControlledTextField from "./ControlledTextField";
 import { StyledScrollingTextarea } from "./TextareaAutosize";
 import { Placement } from "@floating-ui/react";
@@ -59,9 +59,9 @@ export function NewChatPopup({ validate, escOnEnter, initialChatWith, returnUser
       <PopoverContent>
         <div style={{ borderRadius: 8, padding: 10, border: "1.5px solid #d8d8df", backgroundColor: "rgba(246, 246, 246, 0.8)", boxShadow: "0px 1px 3px 1.5px #eeeeee", backdropFilter: "blur(4px)", width: belowXL ? "80vw" : "20vw" }}>
           <Stack direction="column" spacing={1}>
-            <Typography level="h6" fontWeight="lg">
+            <DisableSelectTypography level="h6" fontWeight="lg">
               New chat
-            </Typography>
+            </DisableSelectTypography>
             <div style={{ display: "flex", alignContent: "center", justifyContent: "stretch" }}>
               <ControlledTextField
                 autoFocus
@@ -138,7 +138,7 @@ export function NewMessageDialog({ warn, chatWith, belowXL, setWarn, setChatWith
               <CloseSharp sx={{ fontSize: "1.5rem" }}/>
             </CloseButton>
             <Stack direction="row" spacing={0.7} sx={{ flexWrap: "wrap", alignContent: "center" }}>
-              <Typography
+              <DisableSelectTypography
                 component="h2"
                 level="h6"
                 textColor="inherit"
@@ -146,7 +146,7 @@ export function NewMessageDialog({ warn, chatWith, belowXL, setWarn, setChatWith
                 mb={1} 
                 sx={{ display: "flex", textAlign: "center", flexWrap: "wrap", alignContent: "center", marginBottom: 0 }}>
                   Send chat request to
-              </Typography>
+              </DisableSelectTypography>
               <NewChatPopup
                 key="0"
                 escOnEnter
@@ -163,7 +163,7 @@ export function NewMessageDialog({ warn, chatWith, belowXL, setWarn, setChatWith
                 <Sheet sx={{ marginBlock: "8px", paddingBlock: "2px", paddingInline: "6px", border: "solid 0.8px black", backgroundColor: "#d8d8df", borderRadius: "12px", textAlign: "center", ":hover" : {
                   filter: "brightness(0.9)"
                 } }}>
-                  <Typography
+                  <DisableSelectTypography
                     component="h2"
                     level="h6"
                     textColor="inherit"
@@ -171,7 +171,7 @@ export function NewMessageDialog({ warn, chatWith, belowXL, setWarn, setChatWith
                     sx={{ display: "flex", textAlign: "center", flexWrap: "wrap", alignContent: "center", marginBottom: 0, cursor: "default" }}
                     mb={1}>
                       {chatWith}
-                  </Typography>
+                  </DisableSelectTypography>
                 </Sheet>
               </NewChatPopup>
             </Stack>
@@ -218,7 +218,7 @@ export function NewMessageDialog({ warn, chatWith, belowXL, setWarn, setChatWith
               borderRadius: "md",
               p: 3,
               boxShadow: "lg"}}>
-            <Typography
+            <DisableSelectTypography
               textAlign="center"
               component="h2"
               id="modal-title"
@@ -227,10 +227,10 @@ export function NewMessageDialog({ warn, chatWith, belowXL, setWarn, setChatWith
               fontWeight="lg"
               mb={1}>
               Cancel message request?
-            </Typography>
-            <Typography id="modal-desc" textColor="text.tertiary" textAlign="center">
+            </DisableSelectTypography>
+            <DisableSelectTypography id="modal-desc" textColor="text.tertiary" textAlign="center">
               You'll lose the message you're typing.
-            </Typography>
+            </DisableSelectTypography>
             <Grid container direction="row" sx={{ paddingTop: "15px" }}>
               <Grid xs={6} sx={{ display: "flex", justifyContent: "center", paddingInline: "20px" }}>
                 <Button variant="solid" color="success" sx={{ flexGrow: 1 }} onClick={ () => setWarn(false) }>

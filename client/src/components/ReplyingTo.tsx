@@ -1,7 +1,7 @@
 import _ from "lodash";
 import isEqual from "react-fast-compare";
 import React, { ForwardedRef, forwardRef, memo, useMemo } from "react";
-import { IconButton, Link, Sheet, Stack, Typography } from "@mui/joy";
+import { IconButton, Link, Sheet, Stack } from "@mui/joy";
 import { ClearSharp } from "@mui/icons-material";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -10,7 +10,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css"
 import { MessageCardContextData } from "./MessageCard";
-import { StyledReactMarkdownVariable } from "./CommonElementStyles";
+import { DisableSelectTypography, StyledReactMarkdownVariable } from "./CommonElementStyles";
 import { ReplyingToInfo } from "../../../shared/commonTypes";
 
 const StyledReactMarkdownReply = StyledReactMarkdownVariable(18);
@@ -28,17 +28,17 @@ const ReplyingTo = forwardRef(function(replyingTo: ReplyingToProps, ref: Forward
   const repliedBorder = `thin solid ${repliedBorderColor}`;
   const main = useMemo(() => (
     <Stack direction="column" justifyContent="flex-start" sx={{ display: "flex", textAlign: "left", padding: 1 }}>
-      <Typography component="span" level="body3" fontWeight="bold" textColor={repliedOutlineColor}>
+      <DisableSelectTypography component="span" level="body3" fontWeight="bold" textColor={repliedOutlineColor}>
         {replyToOwn ? "You" : chatWith }
-      </Typography>
-      <Typography component="span" level="body3">
+      </DisableSelectTypography>
+      <DisableSelectTypography component="span" level="body3">
         <StyledReactMarkdownReply 
           className="react-markdown" 
           components={{ p: "span" }}
           children={displayText}
           remarkPlugins={[remarkGfm, remarkMath, twemoji]}
           rehypePlugins={[rehypeKatex, rehypeRaw]}/>
-      </Typography>
+      </DisableSelectTypography>
     </Stack>), [repliedOutlineColor, replyToOwn, chatWith, displayText]);
 
   const stack = useMemo(() => (

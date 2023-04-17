@@ -1,8 +1,8 @@
 import React, { useState, useRef } from "react";
-import { IconButton, Input, List, ListItem, ListItemButton, Stack, Typography } from "@mui/joy";
+import { IconButton, Input, List, ListItem, ListItemButton, Stack } from "@mui/joy";
 import { PersonAddAltOutlined, Search, ClearSharp } from "@mui/icons-material";
 import { NewChatPopup, NewMessageDialog } from "./NewChat";
-import { StyledScrollbar } from "./CommonElementStyles";
+import { DisableSelectTypography, StyledScrollbar } from "./CommonElementStyles";
 import { Client } from "../client";
 
 type SidebarProps = {
@@ -39,9 +39,9 @@ export default function Sidebar({ currentChatWith, chatsList, openChat, client, 
         />
       <div style={{ display: "flex" }}>
         <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-start", alignContent: "center", paddingLeft: 20 }}>
-          <Typography level="h4" fontWeight="md">
+          <DisableSelectTypography level="h4" fontWeight="md">
             Chats
-          </Typography>
+          </DisableSelectTypography>
         </div>
         <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-end", alignContent: "center", paddingRight: 40 }}>
         <NewChatPopup
@@ -81,7 +81,7 @@ export default function Sidebar({ currentChatWith, chatsList, openChat, client, 
             <ListItemButton 
               onClick={() => openChat(chatWith)} 
               selected={currentChatWith === chatWith} 
-              sx={{ borderRadius: "10px" }}
+              sx={{ borderRadius: "10px", userSelect: "none" }}
               variant={currentChatWith === chatWith ? "soft" : "plain"}
               color="success">
               {chatWith}

@@ -5,11 +5,11 @@ import { useUpdateEffect } from "usehooks-ts";
 import { useInView } from "react-intersection-observer";
 import styled from "@emotion/styled";
 import { Theme, useMediaQuery } from "@mui/material";
-import { IconButton, Stack, Typography } from "@mui/joy";
+import { IconButton, Stack } from "@mui/joy";
 import { SendRounded, ArrowBackSharp, KeyboardDoubleArrowDownOutlined } from "@mui/icons-material";
 import { MessageListMemo } from "./MessageList";
 import { useSize } from "./Hooks/useSize";
-import { StyledSheet, StyledScrollbar } from "./CommonElementStyles";
+import { StyledSheet, StyledScrollbar, DisableSelectTypography } from "./CommonElementStyles";
 import { StyledScrollingTextarea } from "./TextareaAutosize";
 import { chats, truncateText } from "../prvChats";
 import { ReplyingToProps, ReplyingToMemo } from "./ReplyingTo";
@@ -392,9 +392,9 @@ const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLa
             <IconButton variant="outlined" color="neutral" onClick={() => { window.location.hash = "" }}>
               <ArrowBackSharp sx={{ fontSize: "2rem" }}/>
             </IconButton>}
-          <Typography level="h5" sx={{ textAlign: "left", flex: 0, flexBasis: "content", display: "flex", flexWrap: "wrap", alignContent: "center" }}>
+          <DisableSelectTypography level="h5" sx={{ textAlign: "left", flex: 0, flexBasis: "content", display: "flex", flexWrap: "wrap", alignContent: "center" }}>
             {chatWith}
-          </Typography>
+          </DisableSelectTypography>
         </Stack>       
         <StyledScrollbar ref={scrollRef} sx={{ paddingBottom: 0 }}>
           <MessageCardContext.Provider value={contextData}>

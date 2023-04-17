@@ -1,8 +1,10 @@
 import _ from "lodash";
 import React from "react";
-import { Sheet, Switch } from "@mui/joy";
+import { Sheet, Switch, Typography } from "@mui/joy";
 import { ReactMarkdownOptions, ReactMarkdown } from "react-markdown/lib/react-markdown";
 import { styled as joyStyled } from "@mui/joy/styles";
+import { OverridableComponent } from "@mui/types";
+import { TypographyTypeMap } from "@mui/joy/Typography/TypographyProps";
 import styled from "@emotion/styled";
 
 export const StyledSheet = joyStyled(Sheet)(({ theme }) => ({
@@ -70,6 +72,9 @@ export const CloseButton = styled.button`
     background-color: rgb(216, 216, 223);#ebebef;
     border-color: #b9b9c6;
   }`;
+
+export const DisableSelectTypography: OverridableComponent<TypographyTypeMap<{}, "span">> = styled(Typography)`
+  user-select: none;`
 
 export const ReactMarkdownMemo = React.memo(ReactMarkdown, (prev, next) => prev.children === next.children);
 

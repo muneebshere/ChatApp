@@ -1,9 +1,9 @@
 import React, { useState, useRef } from "react";
 import { useEffectOnce } from "usehooks-ts";
-import { Alert, Grid, LinearProgress, Stack, Typography } from "@mui/joy";
+import { Alert, Grid, LinearProgress, Stack } from "@mui/joy";
 import { useMediaQuery, Theme } from "@mui/material";
 import { ReportProblem } from "@mui/icons-material";
-import { StyledSheet } from "./CommonElementStyles";
+import { DisableSelectTypography, StyledSheet } from "./CommonElementStyles";
 import Sidebar from "./Sidebar";
 import { ChatViewMemo, ScrollState } from "./ChatView";
 import { Client } from "../client";
@@ -36,9 +36,9 @@ export default function Main({ connected, displayName, client }: { connected: bo
     <DisconnectedAlert connected={connected}/>
     <Grid xs={12} sx={{ flex: 0, flexBasis: "content" }}>
       <StyledSheet id="titleBar">
-        <Typography level="h4" sx={{ textAlign: "center" }}>
+        <DisableSelectTypography level="h4" sx={{ textAlign: "center" }}>
           {displayName}
-        </Typography>
+        </DisableSelectTypography>
       </StyledSheet>
     </Grid>
     <Grid 
@@ -81,9 +81,9 @@ function DisconnectedAlert({ connected }: { connected: boolean }) {
               sx={{ justifyContent: "center", borderBottomRightRadius: 0, borderBottomLeftRadius: 0 }} 
               color="danger" 
               startDecorator={<ReportProblem/>}>
-              <Typography sx={{ textAlign: "center" }}>
+              <DisableSelectTypography sx={{ textAlign: "center" }}>
                 Disconnected. Reconnecting...
-              </Typography>
+              </DisableSelectTypography>
             </Alert>
             <LinearProgress variant="soft" color="danger" 
               sx={{ borderTopRightRadius: 0, borderTopLeftRadius: 0 }} />

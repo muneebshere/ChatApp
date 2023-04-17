@@ -1,9 +1,9 @@
 import _ from "lodash";
 import { match } from "ts-pattern";
 import React, { useRef, useEffect, useContext, createContext, Dispatch } from "react";
-import { FormControl, FormLabel, Stack, Button, CircularProgress, Typography, Alert } from "@mui/joy";
+import { FormControl, FormLabel, Stack, Button, CircularProgress, Alert } from "@mui/joy";
 import { SubmitResponse } from "../App";
-import { StyledJoySwitch } from "./CommonElementStyles";
+import { DisableSelectTypography, StyledJoySwitch } from "./CommonElementStyles";
 import ControlledTextField from "./ControlledTextField";
 import WarnSavePassword from "./WarnSavePassword";
 import { ErrorStrings, Failure } from "../../../shared/commonTypes";
@@ -215,17 +215,17 @@ export default function LogInForm() {
             <Button variant="solid"
               onClick={ () => setUsernameEntered(false) }
               disabled={ submitted || tryAgainIn > 0 }>
-              <Typography fontWeight="sm" textColor={ submitted || tryAgainIn > 0 ? "black" : "white" }>
+              <DisableSelectTypography fontWeight="sm" textColor={ submitted || tryAgainIn > 0 ? "black" : "white" }>
                 Back
-              </Typography>
+              </DisableSelectTypography>
             </Button>
             <Button variant="solid"
               onClick={submitLocal}
               disabled={ !password || !passwordValid || submitted || tryAgainIn > 0 }>
               <Stack direction="row" spacing={2}>
-                <Typography fontWeight="sm" textColor={ !password || submitted || tryAgainIn > 0 ? "black" : "white" }>
+                <DisableSelectTypography fontWeight="sm" textColor={ !password || submitted || tryAgainIn > 0 ? "black" : "white" }>
                   { submitted ? "Logging in..." :"Login" }
-                </Typography>
+                </DisableSelectTypography>
                 {submitted &&
                   <CircularProgress size="sm" variant="soft"/>
                 }
@@ -237,7 +237,7 @@ export default function LogInForm() {
       }
       {failed &&
       <Alert variant="soft" color="danger" size="sm">
-        <Typography color="danger" fontWeight="sm">Login error! Please try again.</Typography>
+        <DisableSelectTypography color="danger" fontWeight="sm">Login error! Please try again.</DisableSelectTypography>
       </Alert>}
     </Stack>
   )
