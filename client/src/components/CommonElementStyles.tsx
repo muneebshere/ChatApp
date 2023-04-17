@@ -1,6 +1,7 @@
 import _ from "lodash";
 import React from "react";
 import { Sheet, Switch } from "@mui/joy";
+import { ReactMarkdownOptions, ReactMarkdown } from "react-markdown/lib/react-markdown";
 import { styled as joyStyled } from "@mui/joy/styles";
 import styled from "@emotion/styled";
 
@@ -24,7 +25,7 @@ export const StyledScrollbar = styled(StyledSheet)`
   overflow-x: clip;
   overflow-y: scroll;
   scroll-behavior: smooth;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
   scrollbar-width: thin;
   scrollbar-color: #afafaf #d1d1d1;
 
@@ -68,6 +69,32 @@ export const CloseButton = styled.button`
     color: #131318;
     background-color: rgb(216, 216, 223);#ebebef;
     border-color: #b9b9c6;
+  }`;
+
+export const ReactMarkdownMemo = React.memo(ReactMarkdown, (prev, next) => prev.children === next.children);
+
+export const StyledReactMarkdownVariable = (emojiSize: number) => styled(ReactMarkdownMemo as unknown as React.ComponentClass<ReactMarkdownOptions, {}>)`
+  img.emoji {
+    height: ${emojiSize}px;
+    width: ${emojiSize}px;
+    background-position:center;
+    background-repeat:no-repeat;
+    background-size:contain;
+    display:inline-block;
+    vertical-align:middle;
+    margin: 0px 1.5px;
+  }
+
+  span.onlyEmoji+img.emoji {
+    height: 66px;
+    width: 66px;
+    margin: 0px 1.5px 5px;
+  }
+
+  & > p:last-child {
+    max-width: 100%;
+    padding-bottom: 0px;
+    margin-bottom: 0px;
   }`;
 
 export function Spacer({ units }: { units: number }) {

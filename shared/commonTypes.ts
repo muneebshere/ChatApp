@@ -97,21 +97,25 @@ export type MessageBody = Readonly<{
     content: string;
 }>;
 
+export type ReplyingToInfo = Readonly<{ id: string, replyToOwn: boolean, displayText: string }>;
+
 export type PlainMessage = Readonly<{
     sentByMe: boolean;
     messageId: string;
-    replyingTo?: { id: string, replyToOwn: boolean, displayText: string };
+    replyingTo?: ReplyingToInfo;
     timestamp: number;
     content: string;
 }>;
 
-export type DisplayMessage = Omit<PlainMessage, "sentByMe"> & ({ readonly sentByMe: false } | {
+export type DeliveryInfo = ({ readonly sentByMe: false } | {
     readonly sentByMe: true;
     delivery?: {
         readonly delivered?: number | false;
         readonly seen?: number | false;
     }
 })
+
+export type DisplayMessage = Omit<PlainMessage, "sentByMe"> & DeliveryInfo
 
 export type MessageHeader = Readonly<{
     addressedTo: string;

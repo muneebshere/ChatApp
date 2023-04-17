@@ -29,6 +29,14 @@ interface TextareaAutosizeProps
    * callback to execute when Ctrl+Enter is pressed
    */
   onSubmit?: (value: string) => void;
+  /**
+   * props for outer border
+   */
+  outerProps?: Omit<React.HTMLProps<HTMLDivElement>, "as">; 
+  
+  startDecorator?: JSX.Element;
+
+  startDecoratorStyle?: React.CSSProperties;
 }
 
 type State = {
@@ -350,10 +358,10 @@ TextareaAutosize.propTypes /* remove-proptypes */ = {
 export default TextareaAutosize;
 
 const TextareaBorder = styled.div`
-  flex: 1;
-  display: flex;
-  justify-content: stretch;
-  align-content: center;
+  width: 100%;
+  display: flex; 
+  flex-direction: column;
+  height: max-content;
   padding: 7px;
   border-radius: 8px;
   outline: 1px solid #d8d8df;
@@ -395,10 +403,16 @@ const StyledInnerTextarea = styled(TextareaAutosize)`
     border-radius: 4px;
   }`;
 
-export const StyledScrollingTextarea = 
-(props: TextareaAutosizeProps & { outerProps?: React.HTMLProps<HTMLDivElement> }) => {
-  const { as, ...outerProps } = props.outerProps || {}; 
-  return (<TextareaBorder {...outerProps}>
-    <StyledInnerTextarea {...props}/>
+export const StyledScrollingTextarea = forwardRef(function(props: TextareaAutosizeProps, ref: ForwardedRef<HTMLTextAreaElement>) {
+  const { startDecorator, startDecoratorStyle = {}, outerProps = {}, ...innerProps } = props || {}; 
+  return (
+  <TextareaBorder {...outerProps}>
+    {startDecorator &&
+    <div style={startDecoratorStyle}>
+      {startDecorator}
+    </div>}
+    <div style={{ flex: 1, display: "flex", justifyContent: "stretch" }}>
+      <StyledInnerTextarea ref={ref} {...innerProps}/>
+    </div>
   </TextareaBorder>);
-  }
+  })

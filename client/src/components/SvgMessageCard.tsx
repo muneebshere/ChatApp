@@ -85,7 +85,10 @@ export default function SvgMessageCard(props: SvgMessageProps) {
 
   return (
     <PointBefore style={outerStyle} ref={darkenNode}>
-      <div style={innerStyle}>
+      <div style={innerStyle} onClick={(event) => {
+          event.stopPropagation();
+          return false;
+         }}>
         {children}
       </div>
     </PointBefore>

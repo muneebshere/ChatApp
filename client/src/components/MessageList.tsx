@@ -1,15 +1,15 @@
 import _ from "lodash";
-import React, { useState, useContext, memo, useRef, useMemo, useEffect, useCallback, useLayoutEffect } from "react";
-import { Card, List, ListItem, ListSubheader, Stack, Typography } from "@mui/joy";
+import isEqual from "react-fast-compare";
+import React, { memo, useRef } from "react";
+import { Card, List, ListItem, ListSubheader, Typography } from "@mui/joy";
 import { DateTime } from "luxon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip";
-import MessageCard, { ViewMessage, MessageCardContext } from "./MessageCard";
+import MessageCard, { ViewMessage } from "./MessageCard";
 import { DisplayMessage } from "../../../shared/commonTypes";
+import { ElementRects } from "@floating-ui/react";
 
 type MessageListProps = {
-  chatWith: string;
   messages: DisplayMessage[];
-  registerMessageRef: (ref: HTMLDivElement) => void;
 }
 
 function formatDate(date: string): string {
@@ -31,41 +31,48 @@ function labelFirsts(messages: DisplayMessage[]): Omit<ViewMessage, "highlight" 
   return result;
 }
 
+export function DayCard({ date }: { date: string }) {
+  const floatingRef = useRef<HTMLDivElement>(null);
+  const offsetFunc = (rects: ElementRects) => {
+    const crossAxis = (-floatingRef.current?.getBoundingClientRect()?.width || 0) - 10;
+    const mainAxis = (-rects.reference.height / 2) - ((floatingRef.current?.getBoundingClientRect()?.height || 0) / 2);
+    return { crossAxis, mainAxis }
+  }
+
+  return (
+    <Tooltip placement="bottom-start" offsetFunc={offsetFunc}>
+      <TooltipTrigger>
+        <Card
+          variant="outlined" 
+          sx={{ padding: 1, backgroundColor: "rgba(235, 234, 232, 0.7)", backdropFilter: "blur(30px)", textTransform: "capitalize" }}>
+          <Typography level="body3" >
+            {formatDate(date)}
+          </Typography>
+        </Card>
+      </TooltipTrigger>
+      <TooltipContent>
+        <div ref={floatingRef} style={{ width: "fit-content",
+                      backgroundColor: "#bebdbc", 
+                      borderColor: "rgba(237, 237, 237, 0.7)", 
+                      boxShadow: "0px 0.5px 4px #e4e4e4",
+                      position: "absolute",
+                      zIndex: 2 }}>
+          <Typography level="body3" noWrap sx={{ cursor: "default", color: "black" }}>
+            {DateTime.fromISO(date).toFormat("d LLLL y")}
+          </Typography>
+        </div>
+      </TooltipContent>
+    </Tooltip>)
+}
+
 const MessageSubList = function({ date, messages }: { date: string, messages: DisplayMessage[] }) {
 
   const convertedMessages = labelFirsts(messages);
 
-  const dayCard = (date: string) => (  
-    <Card 
-    variant="outlined" 
-    sx={{ padding: 1, backgroundColor: "rgba(235, 234, 232, 0.7)", backdropFilter: "blur(30px)", textTransform: "capitalize" }}>
-    <Typography level="body3" >
-      {formatDate(date)}
-    </Typography>
-  </Card>);
-
   return (
     <ListItem nested key={date} sx={{ display: "grid" }}>
       <ListSubheader sticky sx={{ display: "flex", justifyContent: "center", backgroundColor: "transparent", width: "fit-content", justifySelf: "center" }}>
-        { formatDate(date).search(/^\d{1,2}\/\d{1,2}\/\d{4}$/) === -1
-          ?(<Tooltip placement="left" mainAxisOffset={95} crossAxisOffset={-10}>
-              <TooltipTrigger>
-                {dayCard(date)}
-              </TooltipTrigger>
-              <TooltipContent>
-                <div style={{ width: "fit-content",
-                              backgroundColor: "#f8f7f5", 
-                              borderColor: "rgba(237, 237, 237, 0.7)", 
-                              boxShadow: "0px 0.5px 4px #e4e4e4",
-                              position: "absolute",
-                              zIndex: 2 }}>
-                  <Typography level="body3" noWrap>
-                    {DateTime.fromISO(date).toFormat("d LLLL y")}
-                  </Typography>
-                </div>
-              </TooltipContent>
-            </Tooltip>)
-          : dayCard(date) }
+        <DayCard date={date}/>
       </ListSubheader>
       <List component="ol" sx={{ "--List-gap": 5 }}>
         {convertedMessages.map((message) => (
@@ -79,10 +86,9 @@ const MessageSubList = function({ date, messages }: { date: string, messages: Di
 }
 
 const MessageSubListMemo = memo(MessageSubList, 
-  (prev, next) => prev.date === next.date && _.isEqual(prev.messages, next.messages));
+  (prev, next) => prev.date === next.date && isEqual(prev.messages, next.messages));
 
-const MessageList = function({ chatWith, messages, registerMessageRef }: MessageListProps) {
-  const [highlight, setHighlight] = useState("");
+const MessageList = function({ messages }: MessageListProps) {
 
   const groupedMessages = _.chain(messages)
     .orderBy((m) => m.timestamp, "asc")
@@ -91,14 +97,12 @@ const MessageList = function({ chatWith, messages, registerMessageRef }: Message
     .value();
 
   return (
-    <MessageCardContext.Provider value={{ chatWith, highlight, setHighlight, registerMessageRef }}>
-      <List>
-        {groupedMessages.map(({ date, messages }) => (
-          <MessageSubListMemo key={date} date={date} messages={messages}/>
-        ))}
-      </List>
-    </MessageCardContext.Provider>)
+    <List>
+      {groupedMessages.map(({ date, messages }) => (
+        <MessageSubListMemo key={date} date={date} messages={messages}/>
+      ))}
+    </List>)
 }
 
 export const MessageListMemo = memo(MessageList, 
-  (prev, next) => prev.chatWith === next.chatWith &&  _.isEqual(prev.messages, next.messages));
+  (prev, next) => isEqual(prev.messages, next.messages));

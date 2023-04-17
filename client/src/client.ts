@@ -8,7 +8,7 @@ import { SessionCrypto } from "../../shared/sessionCrypto";
 import { ChattingSession, ViewChatRequest, ViewPendingRequest, X3DHUser } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
-import { ErrorStrings, Failure, Username, AuthSetupKey, UserEncryptedData, RegisterNewUserRequest, InitiateAuthenticationResponse, ConcludeAuthenticationRequest, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, randomFunctions, failure, SavedDetails, PasswordEncryptedData, AuthSetupKeyData, NewUserData, AuthChangeData, EstablishData, MessageHeader, ChatRequestHeader, StoredMessage, MessageEvent, ChatData, PlainMessage, MessageBody, DisplayMessage, Contact, Profile } from "../../shared/commonTypes";
+import { ErrorStrings, Failure, Username, AuthSetupKey, UserEncryptedData, RegisterNewUserRequest, InitiateAuthenticationResponse, ConcludeAuthenticationRequest, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, randomFunctions, failure, SavedDetails, PasswordEncryptedData, AuthSetupKeyData, NewUserData, AuthChangeData, EstablishData, MessageHeader, ChatRequestHeader, StoredMessage, MessageEvent, ChatData, PlainMessage, MessageBody, DisplayMessage, Contact, Profile, ReplyingToInfo } from "../../shared/commonTypes";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;
@@ -503,8 +503,7 @@ export class Client {
         this.addAwaitedRequest({ sessionId, otherUser, lastActivity: timestamp, message: { messageId: "0-0", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } } });
       }
       this.notifyStatusChange(Status.SignedIn);
-      this.loadChats();
-      this.loadRequests();
+      this.loadChats().then(() => this.loadRequests());
       return { reason: null };
     }
     catch(err) {
@@ -1224,7 +1223,7 @@ export class Chat {
     return true;
   }
 
-  private async populateReplyingTo(id: string): Promise<{ id: string, replyToOwn: boolean, displayText: string }> {
+  private async populateReplyingTo(id: string): Promise<ReplyingToInfo> {
     if (!id) return null;
     let repliedTo = this.messagesList.find((m) => m.messageId === id);
     if (!repliedTo) {

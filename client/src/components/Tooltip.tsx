@@ -3,9 +3,6 @@ import {
   useFloating,
   autoUpdate,
   offset,
-  flip,
-  autoPlacement,
-  shift,
   useHover,
   useFocus,
   useDismiss,
@@ -14,15 +11,14 @@ import {
   useMergeRefs,
   FloatingPortal
 } from "@floating-ui/react";
-import type { Placement } from "@floating-ui/react";
+import type { ElementRects, Placement } from "@floating-ui/react";
 
 interface TooltipOptions {
   initialOpen?: boolean;
   placement?: Placement;
-  mainAxisOffset?: number;
-  crossAxisOffset?: number;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  offsetFunc?: (rects: ElementRects) => number | { mainAxis?: number, crossAxis?: number, alignmentAxis?: number | null };
 }
 
 export function useTooltip({
@@ -30,20 +26,20 @@ export function useTooltip({
   placement = "top",
   open: controlledOpen,
   onOpenChange: setControlledOpen,
-  mainAxisOffset,
-  crossAxisOffset
+  offsetFunc
 }: TooltipOptions = {}) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(initialOpen);
 
   const open = controlledOpen ?? uncontrolledOpen;
   const setOpen = setControlledOpen ?? setUncontrolledOpen;
+  const middleware = offsetFunc ? [offset(({ rects }) => offsetFunc(rects))] : [];
 
   const data = useFloating({
     placement,
     open,
     onOpenChange: setOpen,
     whileElementsMounted: autoUpdate,
-    middleware: [offset({ mainAxis: mainAxisOffset || 0, crossAxis: crossAxisOffset || 0 })]
+    middleware
   });
 
   const context = data.context;
