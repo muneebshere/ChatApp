@@ -45,7 +45,7 @@ export function DayCard({ date }: { date: string }) {
       <TooltipTrigger>
         <Card
           variant="outlined" 
-          sx={{ padding: 1, backgroundColor: "rgba(235, 234, 232, 0.7)", backdropFilter: "blur(30px)", textTransform: "capitalize" }}>
+          sx={{ padding: 1, width: "fit-content", backgroundColor: "rgba(235, 234, 232, 0.7)", backdropFilter: "blur(30px)", textTransform: "capitalize" }}>
           <DisableSelectTypography level="body3" >
             {formatDate(date)}
           </DisableSelectTypography>

@@ -9,7 +9,8 @@ import Main from "./components/Main";
 import { LogInContext, defaultLogInDataReducer, defaultLogInData, logInAction } from "./components/Login";
 import { SignUpContext, defaultSignUpDataReducer, defaultSignUpData, signUpAction } from "./components/Signup";
 import { Spacer } from "./components/CommonElementStyles";
-import { Status, Client } from "./client";
+import { ClientEvent, Client } from "./client";
+import { match } from "ts-pattern";
 
 export type SubmitResponse = {
   displayName?: string;
@@ -36,61 +37,55 @@ function App() {
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const [logInData, logInDispatch] = useReducer(defaultLogInDataReducer, { ...defaultLogInData, usernameExists, userLoginPermitted, submit: logIn });
   const [signUpData, signUpDispatch] = useReducer(defaultSignUpDataReducer, { ...defaultSignUpData, usernameExists, submit: signUp });
-  const [status, setStatus] = useState<Status>(null);
   const [connected, setConnected] = useState(false);
+  const [retrying, setRetrying] = useState(true);
   const [signedIn, setSignedIn] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [currentTab, setCurrentTab] = useState(0);
-  const notifyStatus = useCallback(setStatus, []);
+  
+  const notifyStatus = (status: ClientEvent) => {
+    match(status)
+      .with(ClientEvent.Disconnected, 
+            ClientEvent.FailedToConnect, () => setConnected(false))
+      .with(ClientEvent.Connecting, 
+            ClientEvent.Reconnecting, () => {
+              setConnected(false);
+              setRetrying(true);
+            })
+      .with(ClientEvent.Connected, () => client.userLogIn().then(({ reason }) => {
+          reason || setSignedIn(true);
+          setConnected(true);
+        }))
+      .with(ClientEvent.SigningIn, 
+            ClientEvent.FailedSignIn, 
+            ClientEvent.ReAuthenticating, 
+            ClientEvent.FailedReAuthentication, 
+            ClientEvent.CreatingNewUser, 
+            ClientEvent.FailedCreateNewUser, 
+            ClientEvent.CreatedNewUser, 
+            ClientEvent.SigningOut, () => {})
+      .with(ClientEvent.SignedIn, () => {
+        setSignedIn(true);
+        setDisplayName(client.displayName);
+      })
+      .with(ClientEvent.SignedOut, () => {
+        setSignedIn(false);
+        setDisplayName("");
+      })
+      .with(ClientEvent.ServerUnavailable, () => {
+        setConnected(false);
+        setRetrying(false);
+      })
+      .otherwise(() => {});
+  }
+
   useEffectOnce(() => { 
     client.subscribeStatusChange(notifyStatus);
     window.addEventListener("beforeunload", client.terminateCurrentSession.bind(client), { capture: true, once: true })
   });
-  
-  useEffect(() => {
-    switch (status) {
-      case Status.Disconnected: 
-        setConnected(false);
-        break;
-      case Status.Connecting: 
-        setConnected(false);
-        break;
-      case Status.Reconnecting: 
-        setConnected(false);
-        break;
-      case Status.FailedToConnect: 
-        setConnected(false);
-        break;
-      case Status.Connected: 
-        client.userLogIn().then(({ reason }) => {
-          if (!reason) {
-            setSignedIn(true);
-          }
-          setConnected(true);
-        });
-        break;
-      case Status.SigningIn: break;
-      case Status.FailedSignIn: break;
-      case Status.ReAuthenticating: break;
-      case Status.FailedReAuthentication: break;
-      case Status.CreatingNewUser: break;
-      case Status.FailedCreateNewUser: break;
-      case Status.CreatedNewUser: break;
-      case Status.SignedIn: 
-        setSignedIn(true);
-        setDisplayName(client.displayName);
-        break;
-      case Status.SigningOut: break;
-      case Status.SignedOut:
-        setSignedIn(false);
-        setDisplayName("");
-        break;
-      default: break;
-    }
-  }, [status, connected]);
 
   useEffect(() => {
-    if (!connected) {
+    if (!connected && !signedIn) {
       logInDispatch(logInAction("submitted", false));
       signUpDispatch(signUpAction("submitted", false));
     }
@@ -130,7 +125,7 @@ function App() {
       </LogInContext.Provider>
     }
     {signedIn &&
-    <Main client={client} connected={connected} displayName={displayName}/>
+    <Main client={client} connected={connected} retrying={retrying} displayName={displayName}/>
     }
   </Container>);
 }

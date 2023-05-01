@@ -13,12 +13,13 @@ import { ErrorStrings, Failure, Username, AuthSetupKey, UserEncryptedData, Regis
 const { getRandomVector, getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;
 
-export enum Status {
+export enum ClientEvent {
   Disconnected, 
   Connecting,
   Reconnecting,
   FailedToConnect,
   Connected,
+  ServerUnavailable,
   SigningIn,
   FailedSignIn,
   ReAuthenticating,
@@ -71,10 +72,11 @@ export class Client {
   ]);
   private readonly url: string;
   private readonly axInstance: Axios;
-  private notifyStatusChange: (status: Status) => void;
+  private notifyClientEvent: (clientEvent: ClientEvent) => void;
   private notifyChange: () => void;
   private connecting = false;
   private retryingConnect = false;
+  private serverUnavailable = false;
   private reportDone: (arg0: any) => void = undefined;
   #socket: Socket;
   #displayName: string;
@@ -251,8 +253,8 @@ export class Client {
     this.#fileHash = this.calculateFileHash();
   }
 
-  subscribeStatusChange(notifyCallback?: (status: Status) => void) {
-    if (notifyCallback) this.notifyStatusChange = notifyCallback;
+  subscribeStatusChange(notifyCallback?: (status: ClientEvent) => void) {
+    if (notifyCallback) this.notifyClientEvent = notifyCallback;
   }
 
   subscribeChange(notifyCallback?: () => void) {
@@ -268,7 +270,7 @@ export class Client {
   async establishSession() {
     if (!this.isConnected) {
       console.log(`Attempting to establish secure session.`);
-      this.notifyStatusChange?.(Status.Connecting);
+      this.notifyClientEvent?.(ClientEvent.Connecting);
       this.connecting = true;
       const { privateKey, publicKey } = await crypto.generateKeyPair("ECDH");
       const { privateKey: signingKey, publicKey: verifyingKey } = await crypto.generateKeyPair("ECDSA");
@@ -296,7 +298,7 @@ export class Client {
           this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBits, signingKey, serverVerifyingKey);
           console.log(`Connected with session reference: ${sessionReference}`);
           if (this.#username) {
-            this.notifyStatusChange?.(Status.SignedOut);
+            this.notifyClientEvent?.(ClientEvent.SignedOut);
             this.#displayName = null;
             this.#username = null;
             this.#x3dhUser = null;
@@ -310,6 +312,7 @@ export class Client {
           resolve(false);
         }
       }
+      let timeout: number = null;
       const success: boolean = await new Promise((resolve) => {
         this.#socket.once(SocketEvents.CompleteHandshake, (ref, publicKey, verifyingKey, respond) => {
           try {
@@ -317,6 +320,12 @@ export class Client {
               const reconnected = this.#sessionReference && ref === "1";
               respond(reconnected);
               resolve(reconnected);
+              if (reconnected) {
+                this.serverUnavailable = false;
+              }
+              else {
+                window.history.go();
+              }
               return;
             }
             completeHandshake(publicKey, verifyingKey, resolve, respond); 
@@ -327,13 +336,27 @@ export class Client {
             resolve(false);
           }
         });
-        window.setTimeout(() => resolve(false), 20000);
+        timeout = window.setTimeout(() => {
+          resolve(false);
+        }, 15000);
+        this.#socket.io.on("error", (error) => {
+          logError(error);
+          if ((error as any).type === "TransportError") {
+            this.serverUnavailable = true;
+            this.notifyClientEvent?.(ClientEvent.ServerUnavailable);
+            console.log("Server unavailable.");
+            resolve(false);
+          }
+        });
         this.#socket.connect();
       });
       nevermind = true;
       this.connecting = false;
+      window.clearTimeout(timeout);
       console.log(success && this.isConnected ? "Secure session established." : "Failed to establish secure session.");
-      this.notifyStatusChange?.(this.isConnected ? Status.Connected : Status.FailedToConnect);
+      if (this.serverUnavailable) {
+      }
+      this.notifyClientEvent?.(this.isConnected ? ClientEvent.Connected : ClientEvent.FailedToConnect);
       if (!success || !this.isConnected) {
         this.#socket?.offAny?.();
         this.#socket?.disconnect?.();
@@ -350,21 +373,21 @@ export class Client {
   }
 
   private async retryConnect(reason: String) {
+    if (this.serverUnavailable || !window.navigator.onLine) return;
     if (this.retryingConnect) return;
     this.#socket?.offAny?.();
     this.#socket?.disconnect?.();
     this.#socket = null;
-    this.notifyStatusChange?.(Status.Disconnected);
-    this.notifyStatusChange?.(Status.SignedOut);
+    this.notifyClientEvent?.(ClientEvent.Disconnected);
     if (reason === "io client disconnect") return;
     this.retryingConnect = true;
-    while(!this.isConnected) {
+    while(!this.isConnected && !this.serverUnavailable || window.navigator.onLine) {
       const wait = new Promise((resolve, _) => { 
         this.reportDone = resolve;
         window.setTimeout(() => resolve(null), 10000); });
       if (!this.connecting) {
         console.log("Retrying connect");
-        this.notifyStatusChange?.(Status.Reconnecting);
+        this.notifyClientEvent?.(ClientEvent.Reconnecting);
         this.establishSession();
       }
       await wait;
@@ -384,7 +407,7 @@ export class Client {
 
   async registerNewUser(username: string, password: string, displayName: string, profilePicture: string, savePassword: boolean): Promise<Failure> {
     if (!this.isConnected) return failure(ErrorStrings.NoConnectivity);
-    this.notifyStatusChange?.(Status.CreatingNewUser);
+    this.notifyClientEvent?.(ClientEvent.CreatingNewUser);
     try {
       displayName ??= username;
       const encryptionBaseVector = getRandomVector(64);
@@ -393,7 +416,7 @@ export class Client {
       this.#encryptionBaseVector = await crypto.importRaw(encryptionBaseVector);
       const x3dhUser = await X3DHUser.new(username, this.#encryptionBaseVector);
       if (!x3dhUser) {
-        this.notifyStatusChange?.(Status.FailedCreateNewUser);
+        this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
         return failure(ErrorStrings.ProcessFailed);
       }
       const keyBundles = await x3dhUser.publishKeyBundles();
@@ -401,19 +424,19 @@ export class Client {
       const userDetails = await crypto.encryptData({ profilePicture, displayName }, this.#encryptionBaseVector, "User Details");
       const newUserData: NewUserData = { username, userDetails, serverProof, encryptionBase, x3dhInfo, keyBundles };
       if (!x3dhInfo) {
-        this.notifyStatusChange?.(Status.FailedCreateNewUser);
+        this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
         return failure(ErrorStrings.ProcessFailed);
       }
       const response = await this.RequestAuthSetupKey({ username });
       if ("reason" in response) {
-        this.notifyStatusChange?.(Status.FailedCreateNewUser);
+        this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
         return response;
       }
       const keyData = await this.processAuthSetupKey(username, response);
       const newUserRequest = await this.createNewUserAuth(username, password, keyData, newUserData);
       let { reason } = await this.RegisterNewUser(newUserRequest);
       if (reason) {
-        this.notifyStatusChange?.(Status.FailedCreateNewUser);
+        this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
         return { reason };
       }
       this.#username = username;
@@ -421,13 +444,13 @@ export class Client {
       this.#profilePicture = profilePicture;
       this.#x3dhUser = x3dhUser;
       await this.savePassword(savePassword, username, password);
-      this.notifyStatusChange?.(Status.CreatedNewUser);
-      this.notifyStatusChange(Status.SignedIn);
+      this.notifyClientEvent?.(ClientEvent.CreatedNewUser);
+      this.notifyClientEvent(ClientEvent.SignedIn);
       return { reason: null };
     }
     catch(err) {
       logError(err);
-      this.notifyStatusChange?.(Status.FailedCreateNewUser);
+      this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
       return failure(ErrorStrings.ProcessFailed);
     }
   }
@@ -436,62 +459,62 @@ export class Client {
   async userLogIn(username: string, password: string, savePassword: boolean): Promise<Failure>;
   async userLogIn(username?: string, password?: string, savePassword?: boolean): Promise<Failure> {
     if (!this.isConnected) return failure(ErrorStrings.NoConnectivity);
-    this.notifyStatusChange?.(Status.SigningIn);
+    this.notifyClientEvent?.(ClientEvent.SigningIn);
     try {
       if (!username) {
         const savedDetails = JSON.parse(window.localStorage.getItem("SavedDetails"));
         if (!savedDetails) {
           await this.clearCookie();
-          this.notifyStatusChange?.(Status.FailedSignIn);
+          this.notifyClientEvent?.(ClientEvent.FailedSignIn);
           return failure(ErrorStrings.InvalidRequest);
         }
         const { saveToken, cookieSavedDetails  } = savedDetails;
         window.localStorage.removeItem("SavedDetails");
         if (!saveToken) {
           await this.clearCookie();
-          this.notifyStatusChange?.(Status.FailedSignIn);
+          this.notifyClientEvent?.(ClientEvent.FailedSignIn);
           return failure(ErrorStrings.InvalidRequest);
         }
         const details = await this.GetSavedDetails({ saveToken });
         await this.clearCookie();
         if ("reason" in details) {
-          this.notifyStatusChange?.(Status.FailedSignIn);
+          this.notifyClientEvent?.(ClientEvent.FailedSignIn);
           return details;
         }
         [username, password] = await this.extractSavedDetails(cookieSavedDetails, details);
         if (!username) {
-          this.notifyStatusChange?.(Status.FailedSignIn);
+          this.notifyClientEvent?.(ClientEvent.FailedSignIn);
           return failure(ErrorStrings.ProcessFailed);
         }
         savePassword = true;
       }
       const response = await this.InitiateAuthentication({ username });
       if ("reason" in response) {
-        this.notifyStatusChange?.(Status.FailedSignIn);
+        this.notifyClientEvent?.(ClientEvent.FailedSignIn);
         return response;
       }
       const keyData = await this.processAuthSetupKey(username, response.newAuthSetup);
       const result = await this.createNewAuth(username, password, keyData, response);
       if (!result) {
-        this.notifyStatusChange?.(Status.FailedSignIn);
+        this.notifyClientEvent?.(ClientEvent.FailedSignIn);
         return failure(ErrorStrings.ProcessFailed);
       }
       const [concludeRequest, encryptionBaseVector] = result;
       this.#encryptionBaseVector = await crypto.importRaw(encryptionBaseVector);
       const concludeResponse = await this.ConcludeAuthentication(concludeRequest);
       if ("reason" in concludeResponse) {
-        this.notifyStatusChange?.(Status.FailedSignIn);
+        this.notifyClientEvent?.(ClientEvent.FailedSignIn);
         return concludeResponse;
       }
       if (deserialize(await this.decrypt(username, password, response.authInfo.serverProof, "Server Proof")).username !== username) {
-        this.notifyStatusChange?.(Status.FailedSignIn);
+        this.notifyClientEvent?.(ClientEvent.FailedSignIn);
         return failure(ErrorStrings.ProcessFailed);
       }
       const { userDetails, x3dhInfo } = concludeResponse;
       await this.savePassword(savePassword, username, password);
       const x3dhUser = await X3DHUser.importUser(x3dhInfo, this.#encryptionBaseVector);
       if (!x3dhUser) {
-        this.notifyStatusChange?.(Status.FailedSignIn);
+        this.notifyClientEvent?.(ClientEvent.FailedSignIn);
         return failure(ErrorStrings.ProcessFailed);
       }
       const { displayName, profilePicture } = await crypto.decryptData(userDetails, this.#encryptionBaseVector, "User Details");
@@ -502,13 +525,13 @@ export class Client {
       for (const { sessionId, timestamp, otherUser, firstMessage } of this.#x3dhUser.pendingChatRequests) {
         this.addAwaitedRequest({ sessionId, otherUser, lastActivity: timestamp, message: { messageId: "0-0", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } } });
       }
-      this.notifyStatusChange(Status.SignedIn);
+      this.notifyClientEvent(ClientEvent.SignedIn);
       this.loadChats().then(() => this.loadRequests());
       return { reason: null };
     }
     catch(err) {
       logError(err);
-      this.notifyStatusChange?.(Status.FailedSignIn);
+      this.notifyClientEvent?.(ClientEvent.FailedSignIn);
       return failure(ErrorStrings.ProcessFailed);
     }
   }
@@ -542,14 +565,14 @@ export class Client {
 
   async userLogOut(): Promise<Failure> {
     if (!this.#username && !this.isConnected) return;
-    this.notifyStatusChange?.(Status.SigningOut);
+    this.notifyClientEvent?.(ClientEvent.SigningOut);
     const username = this.#username;
     this.#username = null;
     this.#displayName = null;
     this.#x3dhUser = null;
     this.#encryptionBaseVector = null;
     await this.request(SocketEvents.LogOut, { username });
-    this.notifyStatusChange?.(Status.SignedOut);
+    this.notifyClientEvent?.(ClientEvent.SignedOut);
     await this.retryConnect("");
   }
 
@@ -1275,7 +1298,7 @@ export class ChatRequest {
   async rejectRequest () {
     return await this.clientInterface.rejectRequest(this.otherUser, this.sessionId, this.chatRequestHeader.yourOneTimeKeyIdentifier);
   }
-  async respondToRequest (response: string, respondingAt: number) {
+  async respondToRequest (respondingAt: number) {
     return await this.clientInterface.respondToRequest(this.chatRequestHeader, respondingAt);
   }
 }

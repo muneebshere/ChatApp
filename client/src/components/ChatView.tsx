@@ -1,12 +1,13 @@
 import _ from "lodash";
-import React, { useState, memo, useRef, useLayoutEffect, useEffect, useMemo } from "react";
+import React, { useState, memo, useRef, useLayoutEffect, useEffect, useMemo, useCallback } from "react";
 import { flushSync } from "react-dom";
 import { useUpdateEffect } from "usehooks-ts";
-import { useInView } from "react-intersection-observer";
+import usePreviousValue from "beautiful-react-hooks/usePreviousValue";
 import styled from "@emotion/styled";
 import { Theme, useMediaQuery } from "@mui/material";
 import { IconButton, Stack } from "@mui/joy";
 import { SendRounded, ArrowBackSharp, KeyboardDoubleArrowDownOutlined } from "@mui/icons-material";
+import { barHeight, isKeyboardOpen, orientation } from "./Main";
 import { MessageListMemo } from "./MessageList";
 import { useSize } from "./Hooks/useSize";
 import { StyledSheet, StyledScrollbar, DisableSelectTypography } from "./CommonElementStyles";
@@ -36,23 +37,22 @@ const ScrollDownButton = styled.div`
 
 export type ScrollState = { id: string, index: number, offset: number, isRatio?: true };
 
+export type OrientationState = {
+  lastOrientation: () => OrientationType;
+  setNewOrientation: () => void;
+}
+
 type ChatViewProps = {
   chatWith: string,
   message: string,
   setMessage: (m: string) => void,
   lastScrolledTo: ScrollState,
-  setLastScrolledTo: (lastScrolledTo: ScrollState) => void
+  setLastScrolledTo: (lastScrolledTo: ScrollState) => void,
+  orientationState: OrientationState;
 }
-
-type ScrollRestoreReturnType = [() => void, (element: HTMLDivElement) => void, () => OrientationType];
 
 const chatMap = new Map(chats.map(({chatWith, messages}) => ([chatWith, messages])));
 
-const minKeyboard = 300;
-const barHeight = () => document.querySelector("#viewportHeight").clientHeight - window.innerHeight;
-const keyboardHeight = () => document.querySelector("#viewportHeight").clientHeight - window.visualViewport.height;
-const isKeyboardOpen = () => keyboardHeight() > minKeyboard;
-const orientation = () => window.screen.orientation.type;
 const getIsScrolledDown = (scrollbar: HTMLDivElement, tolerance = 1) => scrollbar.scrollTop >= scrollbar.scrollHeight - scrollbar.clientHeight - tolerance;
 
 function useUpdateHeight(scrollbar: () => HTMLDivElement): [number, (newHeight: number) => void] {
@@ -110,13 +110,12 @@ function useReplyingTo(chatWith: string, setHighlight: (highlight: string) => vo
   return [replyingToHeight, replyTo?.id, setReplyTo, setTextareaRef, replyToElement];
 }
 
-function useScrollRestore(scrollbar: () => HTMLDivElement, lastScrolledTo: ScrollState, setLastScrolledTo: (scroll: ScrollState) => void): ScrollRestoreReturnType {
+function useScrollRestore(scrollbar: () => HTMLDivElement, lastScrolledTo: ScrollState, setLastScrolledTo: (scroll: ScrollState) => void, orientationState: OrientationState): [() => void, (element: HTMLDivElement) => void] {
   
   const inViewRef = useRef(new Map<string, number>());
   const messagesRef = useRef(new Map<string, [HTMLDivElement, boolean]>());
   const currentScroll = useRef<ScrollState>(lastScrolledTo);
   const observerRef = useRef<IntersectionObserver>(null);
-  const orientationRef = useRef(orientation());
   const selectingRef = useRef(false);
 
   function registerMessageRef(element: HTMLDivElement) {
@@ -153,7 +152,7 @@ function useScrollRestore(scrollbar: () => HTMLDivElement, lastScrolledTo: Scrol
     if (selectingRef.current) {
       return;
     }
-    if (orientation() !== orientationRef.current) {
+    if (orientation() !== orientationState.lastOrientation()) {
       return;
     }
     selectingRef.current = true;
@@ -234,7 +233,7 @@ function useScrollRestore(scrollbar: () => HTMLDivElement, lastScrolledTo: Scrol
     const lastScrolledTo = currentScroll.current;
     const top = lastScrolledTo && calculateScrollPosition(lastScrolledTo) || scrollbar().scrollHeight;
     scrollbar().scrollTo({ top, behavior: "instant" });
-    orientationRef.current = orientation();
+    orientationState.setNewOrientation();
   }
 
   useLayoutEffect(() => {
@@ -260,35 +259,20 @@ function useScrollRestore(scrollbar: () => HTMLDivElement, lastScrolledTo: Scrol
 
     return () => {
       window.screen.orientation.removeEventListener("change", onOrientationChange);
-      setLastScrolledTo(currentScroll.current);
+      const lastScrolledTo = !getIsScrolledDown(scrollbar()) ? currentScroll.current : null;
+      setLastScrolledTo(lastScrolledTo);
     }
   }, []);
 
-  return [selectCurrentElement, registerMessageRef, () => orientationRef.current];
+  return [selectCurrentElement, registerMessageRef];
 }
 
-function useResize(scrollbar: () => HTMLDivElement,
+function useScrollOnResize(scrollbar: () => HTMLDivElement,
                   lastOrientation: () => OrientationType) {
   const previousHeightRef = useRef(0);
   const lastKeyboardOpenRef = useRef(false);
   const previousUnderbarRef = useRef(barHeight());
-  const [underbar, setUnderbar] = useState(previousUnderbarRef.current);
-  const [first, setFirst] = useState(true);
-  const { ref: titleRef } = useInView({ 
-    threshold: 0.9, 
-    initialInView: true, 
-    onChange: (inView, { isIntersecting, intersectionRatio }) => {
-      const currentBar = barHeight();
-      if (currentBar > 1e-2 && !lastKeyboardOpenRef.current && !first) {
-        setUnderbar(inView && isIntersecting && intersectionRatio >= 0.5 ? currentBar : 0);
-      }
-      else { 
-        setFirst(false);
-      }
-    } 
-  });
-
-  useEffect(() => { titleRef(document.querySelector("#titleBar")); }, []);
+  const [underbar, setUnderbar] = useState(false);
   
   function onResize() {
     if (orientation() !== lastOrientation()) {
@@ -301,21 +285,24 @@ function useResize(scrollbar: () => HTMLDivElement,
       const keyboardOpen = isKeyboardOpen();
       let scrollBy = 0;
       if (keyboardOpen && !lastKeyboardOpen) {
-        setUnderbar(0);
+        previousUnderbarRef.current = 0;
+        setUnderbar(true);
         if (!getIsScrolledDown(scrollbar())) {
           scrollBy += barDiff ? currentBar : -currentBar;
         }
       }
       else if (!keyboardOpen && currentBar > 1e-2) {
-        setUnderbar(currentBar);
-        setTimeout(() => scrollbar().scrollBy({ top: currentBar, behavior: "instant" }), 5);
+        previousUnderbarRef.current = currentBar;
+        setUnderbar(false);
+        setTimeout(() => scrollbar()?.scrollBy({ top: currentBar, behavior: "instant" }), 5);
         if (lastKeyboardOpen) {
           window.scrollTo(0, 0);
           (document.querySelector("#titleBar") as HTMLElement)?.click()
         }
       }
       else {
-        setUnderbar(0);
+        setUnderbar(false);
+        previousUnderbarRef.current = 0;
         if (!keyboardOpen && barDiff && !getIsScrolledDown(scrollbar())) {
           scrollBy += barDiff;
         }
@@ -342,24 +329,52 @@ function useResize(scrollbar: () => HTMLDivElement,
     }
   }, []);
 
-  useUpdateEffect(() => {
-    previousUnderbarRef.current = underbar;
-  }, [underbar]);
-
   return underbar;
 }
 
-const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLastScrolledTo }: ChatViewProps) {
+function useAdjustbar(scrollbar: () => HTMLDivElement, underbar: boolean, msgBarHeight: number) { 
+  const [adjustBar, setAdjustBar] = useState<number>(null);
+  const prevMsgBar = usePreviousValue(msgBarHeight);
+
+  const adjust = useCallback(() => {
+    const currentBar = barHeight();
+    if (underbar) {
+      if (msgBarHeight > prevMsgBar && adjustBar === null && getIsScrolledDown(scrollbar())) {
+        setAdjustBar(currentBar);
+        setTimeout(() => scrollbar().scrollBy({ top: currentBar, behavior: "instant" }), 5);
+      }
+      else if (msgBarHeight < prevMsgBar && adjustBar) {
+        setAdjustBar(0);
+        if (getIsScrolledDown(scrollbar(), 2)) {
+          setTimeout(() => scrollbar().scrollTo({ top: scrollbar().scrollHeight, behavior: "instant" }), 5);
+        }
+      }
+    }
+    else {
+      setAdjustBar(null);
+      if (getIsScrolledDown(scrollbar(), 57)) {
+        scrollbar().scrollTo({ top: scrollbar().scrollHeight, behavior: "instant" })
+      }
+    }
+  }, [adjustBar, msgBarHeight, underbar, prevMsgBar]);
+
+  useUpdateEffect(adjust, [msgBarHeight, underbar]);
+
+  return adjustBar;
+}
+
+const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLastScrolledTo, orientationState }: ChatViewProps) {
   const messages = chatMap.get(chatWith);
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollbar = () => scrollRef.current;
   const [highlight, setHighlight] = useState("");
   const [isScrolledDown, setIsScrolledDown] = useState(false);
+  const underbar = useScrollOnResize(scrollbar, orientationState.lastOrientation);
   const [msgBarHeight, onHeightUpdate] = useUpdateHeight(scrollbar);
+  const adjustBar = useAdjustbar(scrollbar, underbar, msgBarHeight);
   const [replyingToHeight, replyToId, setReplyTo, setTextareaRef, replyToElement] = useReplyingTo(chatWith, setHighlight, belowXL);
-  const [updateCurrentElement, registerMessageRef, lastOrientation] = useScrollRestore(scrollbar, lastScrolledTo, setLastScrolledTo);
-  const underbar = useResize(scrollbar, lastOrientation);
+  const [updateCurrentElement, registerMessageRef] = useScrollRestore(scrollbar, lastScrolledTo, setLastScrolledTo, orientationState);
   const [width, ] = useSize(scrollRef);
   const toggleScroll = (scrollOn: boolean) => { 
     scrollbar().style.overflowY = scrollOn ? "scroll" : "hidden";
@@ -407,7 +422,7 @@ const ChatView = function({ chatWith, message, setMessage, lastScrolledTo, setLa
             <KeyboardDoubleArrowDownOutlined sx={{ color: "#6e6e6e", fontSize: "2rem", placeSelf: "center" }}/>
           </ScrollDownButton>}
         </StyledScrollbar>
-        <div style={{ height: msgBarHeight + underbar + replyingToHeight, width: "100%", backgroundColor: "white", marginBottom: 8 }}/>
+        <div style={{ height: msgBarHeight + replyingToHeight + (adjustBar || 0), width: "100%", backgroundColor: "white", marginBottom: 8 }}/>
         <Stack
           direction="row" 
           spacing={1} 

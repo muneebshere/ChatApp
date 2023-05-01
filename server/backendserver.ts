@@ -126,7 +126,7 @@ class SocketHandler {
         }})
       this.#socketId = null;
       this.#socket?.removeAllListeners();
-      this.#socket?.disconnect(true);
+      this.#socket?.disconnect();
       this.#socket = null;
     }
   }

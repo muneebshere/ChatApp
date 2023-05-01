@@ -8,7 +8,7 @@ export default function useSwipeDrag(ref: MutableRefObject<HTMLDivElement>, maxD
     if (ref.current) {
       ref.current.style.transform = `translateX(${dragX || 0}px)`;
       dragXRef.current = dragX;
-      toggleScroll && toggleScroll(dragX === null ? true : false);
+      toggleScroll?.(dragX === null ? true : false);
     }
   }
   const dragSelectedRef = useRef(false);
