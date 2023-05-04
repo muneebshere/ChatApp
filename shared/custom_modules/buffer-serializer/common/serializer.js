@@ -206,6 +206,10 @@ class BufferSerializer {
             // Does not need the serializer
             return toBufferInternalBoolean(thing, buffWriter);
         }
+        
+        if (this.helpers.some(({ checkFn }) => checkFn?.(thing))) {
+            return toBufferInternalObject(this, thing, buffWriter);
+        }
 
         throw new Error("Invalid type: " + type)
     }

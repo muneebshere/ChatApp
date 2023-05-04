@@ -1,32 +1,8 @@
 import { SignedEncryptedData, randomFunctions } from "./commonTypes";
 import * as crypto from "./cryptoOperator";
+import { serialize, deserialize } from "./cryptoOperator";
 import { Buffer } from "./node_modules/buffer";
 import BufferSerializer from "./custom_modules/buffer-serializer";
-const serializer = new BufferSerializer();
-const serialize: (data: any) => Buffer = serializer.toBuffer.bind(serializer);
-function deserialize(buff: Buffer, offset = 0): any {
-  let result;
-  if (!buff) {
-    throw "Nothing to deserialize.";
-  }
-  try {
-    result = serializer.fromBuffer(buff, offset);
-    if (result && result instanceof Uint8Array) {
-      result = null;
-    }
-  }
-  catch(err) {
-    console.log(`${err.message}${err.stack}`);
-    result = null;
-  }
-  if (result) {
-    return result;
-  }
-  if (offset < 50) {
-    return deserialize(buff, offset + 1);
-  }
-  return {};
-}
 
 const { getRandomVector } = randomFunctions();
 

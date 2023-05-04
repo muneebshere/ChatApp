@@ -46,6 +46,7 @@ class SocketHandler {
     [SocketEvents.SetSavedDetails, this.setSavedDetails],
     [SocketEvents.GetSavedDetails, this.getSavedDetails],
     [SocketEvents.PublishKeyBundles, this.publishKeyBundles],
+    [SocketEvents.UpdateX3DHUser, this.updateX3DHUser],
     [SocketEvents.RequestKeyBundle, this.requestKeyBundle],
     [SocketEvents.GetAllChats, this.getAllChats],
     [SocketEvents.GetAllRequests, this.getAllRequests],
@@ -369,9 +370,24 @@ class SocketHandler {
       if (savedUser === user) {
         this.#username = username;
         this.#mongoHandler = await MongoUserHandler.createHandler(username, this.notifyMessage.bind(this));
+        onlineUsers.set(username, this.#socketId);
         return { userDetails, x3dhInfo };
       }
       return failure(ErrorStrings.ProcessFailed);
+    }
+    catch(err) {
+      logError(err);
+      return failure(ErrorStrings.ProcessFailed, err);
+    }
+  }
+
+  private async updateX3DHUser({ username, x3dhInfo }: { x3dhInfo: UserEncryptedData } & Username): Promise<Failure> {
+    if (!this.#username || this.#username !== username) return failure(ErrorStrings.InvalidRequest);
+    const user = await MongoHandlerCentral.getUser(username);
+    user.x3dhInfo = bufferReplaceForMongo(x3dhInfo);
+    try {
+      const savedUser = await user.save();
+      return savedUser !== user ? failure(ErrorStrings.ProcessFailed) : { reason: null };
     }
     catch(err) {
       logError(err);
@@ -613,51 +629,46 @@ class SocketHandler {
   }
 }
 
+type EmitHandler = (data: string, respond: (recv: boolean) => void) => void;
+
 class Room {
-  readonly #user1: string;
-  readonly #user2: string;
-  readonly #socket1: Socket;
-  readonly #socket2: Socket;
-  private readonly emit1: (data: string, respond: (recv: boolean) => void) => void;
-  private readonly emit2: (data: string, respond: (recv: boolean) => void) => void;
 
-  private constructor(user1: string, socket1: Socket, user2: string, socket2: Socket, timeoutMs: number) {
-    this.#user1 = user1;
-    this.#user2 = user2;
-    this.#socket1 = socket1;
-    this.#socket2 = socket2;
-    if (timeoutMs > 0) {
-      this.emit1 = (data, respond) => this.#socket1.emit(this.#user2, data, respond);
-      this.emit2 = (data, respond) => this.#socket2.emit(this.#user1, data, respond);
+  dispose: () => void = null;
+
+  private constructor(user1: string, socket1: Socket, user2: string, socket2: Socket, messageTimeoutMs: number) {
+    const socket1Event = `${user1} -> ${user2}`;
+    const socket2Event = `${user2} -> ${user1}`
+    const emit1: EmitHandler = 
+      messageTimeoutMs > 0
+        ? (data, respond) => {
+          const timeout = setTimeout(() => respond(false), messageTimeoutMs);
+          socket2.emit(socket1Event, data, (response: boolean) => {
+            clearTimeout(timeout);
+            respond(response);
+          });
+        }
+        : (data, respond) => socket2.emit(`${user1} -> ${user2}`, data, respond);
+    const emit2: EmitHandler = 
+      messageTimeoutMs > 0
+        ? (data, respond) => {
+          const timeout = setTimeout(() => respond(false), messageTimeoutMs);
+          socket1.emit(socket2Event, data, (response: boolean) => {
+            clearTimeout(timeout);
+            respond(response);
+          });
+        }
+        : (data, respond) => socket2.emit(`${user1} -> ${user2}`, data, respond);
+    socket1.on(socket1Event, emit1);
+    socket2.on(socket2Event, emit2);
+    this.dispose = () => {
+      socket1?.emit(socket2Event, "disconnected");
+      socket2?.emit(socket1Event, "disconnected");
+      socket1?.off(socket1Event, emit1);
+      socket2?.off(socket2Event, emit2);
     }
-    else {
-      this.emit1 = (data, respond) => {
-        const timeout = setTimeout(() => respond(false), timeoutMs);
-        this.#socket1.emit(this.#user2, data, (response: boolean) => {
-          clearTimeout(timeout);
-          respond(response);
-        });
-      };
-      this.emit2 = (data, respond) => {
-        const timeout = setTimeout(() => respond(false), timeoutMs);
-        this.#socket2.emit(this.#user1, data, (response: boolean) => {
-          clearTimeout(timeout);
-          respond(response);
-        });
-      };
-    }
-    this.#socket1.on(this.#user2, this.emit1);
-    this.#socket2.on(this.#user1, this.emit2);
   }
 
-  dispose() {
-    this.#socket1?.emit(this.#user2, "disconnected");
-    this.#socket2?.emit(this.#user1, "disconnected");
-    this.#socket1?.off(this.#user2, this.emit1);
-    this.#socket2?.off(this.#user1, this.emit2);
-  }
-
-  static async createRoom(user1: string, socket1: Socket, user2: string, socket2: Socket, timeoutMs = 0): Promise<Room> {
+  static async createRoom(user1: string, socket1: Socket, user2: string, socket2: Socket, messageTimeoutMs = 20000): Promise<Room> {
     const established1 = new Promise<boolean>((resolve) => {
       const response = (withUser: string) => { 
         if (withUser === user2) {
@@ -684,7 +695,7 @@ class Room {
     });
     return Promise.all([established1, established2]).then(([est1, est2]) => {
       if (est1 && est2) {
-        const room = new Room(user1, socket1, user2, socket2, timeoutMs);
+        const room = new Room(user1, socket1, user2, socket2, messageTimeoutMs);
         socket1.emit(user2, "confirmed");
         socket2.emit(user1, "confirmed");
         return room;

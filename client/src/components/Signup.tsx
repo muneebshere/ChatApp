@@ -1,6 +1,6 @@
 import _ from "lodash";
 import { match } from "ts-pattern";
-import React, { createContext, Dispatch, useContext } from "react";
+import React, { createContext, Dispatch, useCallback, useContext, useEffect, useState } from "react";
 import { FormControl, FormLabel, Stack, Button, CircularProgress, Alert } from "@mui/joy";
 import { SubmitResponse } from "../App";
 import { DisableSelectTypography, StyledJoySwitch } from "./CommonElementStyles";
@@ -11,12 +11,8 @@ import { Failure } from "../../../shared/commonTypes";
 type SignUpData = {
   readonly displayName: string;
   readonly username: string;
-  readonly usernameValid: boolean;
-  readonly usernameError: string;
   readonly password: string;
-  readonly passwordValid: boolean;
   readonly repeatPassword: string;
-  readonly repeatPasswordValid: boolean;
   readonly showPassword: boolean;
   readonly savePassword: boolean;
   readonly failed: boolean;
@@ -45,12 +41,8 @@ export function signUpAction<K extends keyof SignUpData>(id: K, value: SignUpDat
 export const defaultSignUpData: Omit<SignUpData, "usernameExists" | "submit"> = {
   displayName: "",
   username: "",
-  usernameValid: false,
-  usernameError: "",
   password: "",
-  passwordValid: false,
   repeatPassword: "",
-  repeatPasswordValid: false,
   showPassword: false,
   savePassword: false,
   submitted: false,
@@ -63,12 +55,8 @@ export const defaultSignUpDataReducer: SignUpDataReducer = (data, action) => {
   return match(id)
     .with("displayName", () => ({ ...data, displayName: value as string }))
     .with("username", () => ({ ...data, username: value as string }))
-    .with("usernameValid", () => ({ ...data, usernameValid: value as boolean }))
-    .with("usernameError", () => ({ ...data, usernameError: value as string }))
     .with("password", () => ({ ...data, password: value as string }))
-    .with("passwordValid", () => ({ ...data, passwordValid: value as boolean }))
     .with("repeatPassword", () => ({ ...data, repeatPassword: value as string }))
-    .with("repeatPasswordValid", () => ({ ...data, repeatPasswordValid: value as boolean }))
     .with("showPassword", () => ({ ...data, showPassword: value as boolean }))
     .with("savePassword", () => ({ ...data, savePassword: value as boolean }))
     .with("submitted", () => ({ ...data, submitted: value as boolean }))
@@ -80,49 +68,36 @@ export const defaultSignUpDataReducer: SignUpDataReducer = (data, action) => {
 export const SignUpContext = createContext<SignUpContextType>(null);
 
 export default function SignUpForm() {
-  const { signUpData: { displayName, username, usernameValid, usernameError, password, passwordValid, repeatPassword, repeatPasswordValid, showPassword, savePassword, failed, submitted, warned, usernameExists, submit }, signUpDispatch } = useContext(SignUpContext);
+  const { signUpData: { displayName, username, password, repeatPassword, showPassword, savePassword, failed, submitted, warned, usernameExists, submit }, signUpDispatch } = useContext(SignUpContext);
+  const [usernameError, setUsernameError] = useState("");
   const setDisplayName = (displayName: string) => signUpDispatch(signUpAction("displayName", displayName));
   const setUsername = (username: string) => signUpDispatch(signUpAction("username", username));
-  const setUsernameValid = (usernameValid: boolean) => signUpDispatch(signUpAction("usernameValid", usernameValid));
-  const setUsernameError = (usernameError: string) => signUpDispatch(signUpAction("usernameError", usernameError));
   const setPassword = (password: string) => signUpDispatch(signUpAction("password", password));
-  const setPasswordValid = (passwordValid: boolean) => signUpDispatch(signUpAction("passwordValid", passwordValid));
   const setRepeatPassword = (repeatPassword: string) => signUpDispatch(signUpAction("repeatPassword", repeatPassword));
-  const setRepeatPasswordValid = (repeatPasswordValid: boolean) => signUpDispatch(signUpAction("repeatPasswordValid", repeatPasswordValid));
   const setShowPassword = (showPassword: boolean) => signUpDispatch(signUpAction("showPassword", showPassword));
   const setSavePassword = (savePassword: boolean) => signUpDispatch(signUpAction("savePassword", savePassword));
   const setFailed = (failed: boolean) => signUpDispatch(signUpAction("failed", failed));
   const setSubmitted = (submitted: boolean) => signUpDispatch(signUpAction("submitted", submitted));
   const setWarned = (warned: boolean) => signUpDispatch(signUpAction("warned", warned));
+  const canSubmit = !submitted && !usernameError && validatePassword(password) && (showPassword || password === repeatPassword);
 
-  function validateUserName(username: string): void {
+  validateUsername(username).then((error) => setUsernameError(error));
+
+  async function validateUsername(username: string): Promise<string> {
     if (username.match(/^[a-z][a-z0-9_]{2,14}$/) === null) {
-      setUsernameValid(false);
-      setUsernameError("Username may contain only lowercase letters, digits and underscores, must start with a letter, and must be between 3 and 15 characters.");
+      return "Username may contain only lowercase letters, digits and underscores, must start with a letter, and must be between 3 and 15 characters.";
     }
     else {
-      setUsernameValid(true);
-      setUsernameError("");
-      usernameExists(username).then((exists) => {
-        if (exists) {
-          setUsernameValid(false);
-          setUsernameError("Username already exists.");
-        }
-      }).catch(() => {});
+      return (await usernameExists(username)) ? "Username already exists." : "";
     }
   }
 
-  function validatePassword(password: string): void {
-    setPasswordValid(password.match(/^(?=.*?[A-Z])(?=.*?[a-z])(?=.*?[0-9])(?=.*?[#?!@$%^&*-]).{8,}$/) !== null);
-    setRepeatPasswordValid(password === repeatPassword);
-  }
-
-  function validateRepeatPassword(repeatPassword: string): void {
-    setRepeatPasswordValid(repeatPassword === password);
+  function validatePassword(password: string): boolean {
+    return password.match(/^(?=.*?[A-Z])(?=.*?[a-z])(?=.*?[0-9])(?=.*?[#?!@$%^&*-]).{8,}$/) !== null;
   }
 
   async function submitLocal() {
-    if (submitted || !usernameValid || !passwordValid || !repeatPasswordValid) return;
+    if (!canSubmit) return;
     setFailed(false);
     setSubmitted(true);
     const { reason } = await submit({ displayName, username, password, savePassword });
@@ -152,8 +127,7 @@ export default function SignUpForm() {
           value={username}
           preventSpaces
           setValue={setUsername}
-          validate={validateUserName}
-          valid={usernameValid}
+          valid={!usernameError}
           disabled={submitted}
           errorMessage={usernameError}
           onEnter={submitLocal}/>
@@ -165,25 +139,26 @@ export default function SignUpForm() {
           value={password}
           preventSpaces
           setValue={setPassword}
-          validate={validatePassword}
-          valid={passwordValid}
+          valid={validatePassword(password)}
           disabled={submitted}
-          errorMessage="Please choose a password at least 8 characters long, with at least one uppercase letter, one lowercase letter, one digit and one special character (#?!@$%^&*-])."
+          errorMessage={`Please choose a password at least 8 characters long, with at least one uppercase letter, one lowercase letter, one digit and one special character (#?!@$%^&*-]).${showPassword ? "\nKeep this password safe. If lost, you will irretrievably lose access to all chats.": ""}`}
+          helperText={showPassword ? "Keep this password safe. If lost, you will irretrievably lose access to all chats." : undefined}
           onEnter={submitLocal}/>
-        <ControlledTextField 
-          autoComplete="new-password"
-          variant="outlined"
-          placeholder="Please re-enter password" 
-          type={ showPassword ? "text" : "password" }
-          value={repeatPassword}
-          preventSpaces
-          setValue={setRepeatPassword}
-          validate={validateRepeatPassword}
-          valid={repeatPasswordValid}
-          disabled={!password || submitted}
-          errorMessage="Passwords don't match."
-          helperText="Keep this password safe. If lost, you will irretrievably lose access to all chats."
-          onEnter={submitLocal}/>
+        {!showPassword &&
+          <ControlledTextField 
+            autoComplete="new-password"
+            variant="outlined"
+            placeholder="Please re-enter password" 
+            type={ "password" }
+            value={repeatPassword}
+            preventSpaces
+            setValue={setRepeatPassword}
+            valid={password === repeatPassword}
+            disabled={!password || submitted}
+            errorMessage="Passwords don't match."
+            helperText="Keep this password safe. If lost, you will irretrievably lose access to all chats."
+            onEnter={submitLocal}/>
+        }
         <FormControl orientation="horizontal">
           <FormLabel>Show Password</FormLabel>
           <StyledJoySwitch checked={showPassword} 
@@ -200,9 +175,9 @@ export default function SignUpForm() {
         </FormControl>
         <Button variant="solid"
           onClick={submitLocal} 
-          disabled={!usernameValid || !passwordValid || !repeatPasswordValid || submitted }>
+          disabled={!canSubmit}>
           <Stack direction="row" spacing={2}>
-            <DisableSelectTypography textColor={ !usernameValid || !passwordValid || !repeatPasswordValid || submitted ? "black" : "white" }>
+            <DisableSelectTypography textColor={ !canSubmit ? "black" : "white" }>
               { submitted ? "Creating account..." :"Sign Up" }
             </DisableSelectTypography>
             {submitted &&

@@ -70,11 +70,11 @@ const chatRequestHeaderSchema = new Schema({
   myPublicDHIdentityKey: exposedSignedKey,
   myPublicEphemeralKey: exposedSignedKey,
   yourOneTimeKeyIdentifier: {
-    type: Schema.Types.Number,
+    type: Schema.Types.String,
     required: false
   },
   yourSignedPreKeyVersion: {
-    type: Schema.Types.String,
+    type: Schema.Types.Number,
     required: true
   },
   initialMessage: signedEncryptedData
@@ -125,7 +125,7 @@ const messageSchema = new Schema({
   messageId: {
     type: Schema.Types.String,
     required: true,
-    match: /^\d+?\.\d+$/
+    match: /^\d+?\-\d+$/
   },
   timestamp: {
     type: Schema.Types.Number,
@@ -500,7 +500,7 @@ export class MongoHandlerCentral {
   static async depositMessage(message: MessageHeader) {
     try {
       const userHandler = this.userHandlers.get(message.addressedTo);
-      if (await userHandler.depositMessage(message)) return true;
+      if (await userHandler?.depositMessage(message)) return true;
       const newMessage = new this.MessageDeposit(bufferReplaceForMongo(message));
       return (newMessage === await newMessage.save());
     }
@@ -762,10 +762,11 @@ export class MongoUserHandler {
 
   async createChat(chat: { sessionId: string, lastActivity: number, chatDetails: UserEncryptedData, chattingSession: UserEncryptedData }) {
     try {
-      const newChat = new this.Message(bufferReplaceForMongo(chat));
+      const newChat = new this.Chat(bufferReplaceForMongo(chat));
       if (newChat === await newChat.save()) {
         const { sessionId } = chat;
         await this.ChatRequest.deleteOne({ sessionId });
+        await this.UnprocessedMessage.deleteOne({ sessionId, messageId: "1-1" });
         return true;
       }
       return false;

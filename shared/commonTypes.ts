@@ -276,6 +276,7 @@ export enum SocketEvents {
     GetSavedDetails = "get-saved-details",
 
     PublishKeyBundles = "publish-key-bundles",
+    UpdateX3DHUser = "update-x3dhuser",
     RequestKeyBundle = "request-key-bundle",
     
     SendChatRequest = "send-chat-request",

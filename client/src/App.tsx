@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useReducer, useCallback } from "react";
 import { createRoot } from "react-dom/client";
-import { useEffectOnce } from "usehooks-ts";
+import { useEffectOnce, useEventListener } from "usehooks-ts";
 import { Container, CircularProgress } from "@mui/joy";
 import { CssVarsProvider } from "@mui/joy/styles";
 import { Theme, useMediaQuery } from "@mui/material";
@@ -42,6 +42,7 @@ function App() {
   const [signedIn, setSignedIn] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [currentTab, setCurrentTab] = useState(0);
+  const [visualHeight, setVisualHeight] = useState(window.visualViewport.height);
   
   const notifyStatus = (status: ClientEvent) => {
     match(status)
@@ -79,10 +80,14 @@ function App() {
       .otherwise(() => {});
   }
 
-  useEffectOnce(() => { 
+  useEffect(() => { 
+    const terminate = () => client.terminateCurrentSession();
     client.subscribeStatusChange(notifyStatus);
-    window.addEventListener("beforeunload", client.terminateCurrentSession.bind(client), { capture: true, once: true })
-  });
+    window.addEventListener("beforeunload", terminate, { capture: true, once: true });
+    return () => {
+      window.removeEventListener("beforeunload", terminate);
+    }
+  }, []);
 
   useEffect(() => {
     if (!connected && !signedIn) {
@@ -109,7 +114,7 @@ function App() {
   }
   
   return (
-  <Container maxWidth={false} disableGutters={true} sx={{ height: "100vh", width: belowXL ? "90vw" : "100vw", overflow: "clip",   display: "flex", flexDirection: "column" }}>
+  <Container maxWidth={false} disableGutters={true} sx={{ height: `${visualHeight}px`, width: belowXL ? "90vw" : "100vw", overflow: "clip",   display: "flex", flexDirection: "column" }}>
     {(!connected && !signedIn) &&
     <React.Fragment>
       <Spacer units={2}/>

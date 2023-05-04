@@ -6,36 +6,43 @@ import { DisableSelectTypography, StyledScrollbar } from "./CommonElementStyles"
 import { Client } from "../client";
 
 type SidebarProps = {
-  chatsList: string[],
   currentChatWith: string,
   openChat: (chatWith: string) => void,
   client: Client,
   belowXL: boolean
 }
 
-export default function Sidebar({ currentChatWith, chatsList, openChat, client, belowXL }: SidebarProps) {
+export default function Sidebar({ currentChatWith, openChat, client, belowXL }: SidebarProps) {
   const [search, setSearch] = useState("");
-  const [newChat, setNewChat] = useState("");
+  const [newChatWith, setNewChatWith] = useState("");
   const [isPopupOpen, setIsPopupOpen] = useState(false);
   const [warn, setWarn] = useState(false);
   const newMessageRef = useRef("");
-
+  const currentDetails = "";
+  
   async function validateNewChat(username: string) {
     if (!username) return "";
-    if (chatsList.some((chatWith) => chatWith.toLowerCase() === username.toLowerCase())) return "There is already an existing chat with this user.";
+    if (client.chatsList.some((chatWith) => chatWith.toLowerCase() === username.toLowerCase())) return "There is already an existing chat with this user.";
     return (await client.checkUsernameExists(username)) ? (username !== client.username ? "" : "Cannot chat with yourself.") : "No such user.";
   }
 
   return (
     <Stack direction="column" style={{ height: "100%" }}>
       <NewMessageDialog
-        chatWith={newChat} 
+        newChatWith={newChatWith} 
         warn={warn} 
         setWarn={setWarn} 
         belowXL={belowXL} 
-        setChatWith={(chatWith) => setNewChat(chatWith)}
+        setNewChatWith={(newChatWith) => setNewChatWith(newChatWith)}
         setNewMessage={(message) => { newMessageRef.current = message; }}
         validate={validateNewChat}
+        sendRequest={() => {
+          client.sendChatRequest(newChatWith, newMessageRef.current, Date.now()).then(({ reason }) => {
+            if (!reason) {
+              setNewChatWith("");
+            }
+          });
+        }}
         />
       <div style={{ display: "flex" }}>
         <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-start", alignContent: "center", paddingLeft: 20 }}>
@@ -52,7 +59,7 @@ export default function Sidebar({ currentChatWith, chatsList, openChat, client, 
           validate={validateNewChat} 
           returnUser={(chatWith) => {
               setIsPopupOpen(false);
-              setNewChat(chatWith);
+              setNewChatWith(chatWith);
             }}>
             <IconButton variant="plain" color="success" sx={ isPopupOpen ? { backgroundColor: "var(--joy-palette-success-plainHoverBg)" } : {} }>
               <PersonAddAltOutlined color="success" sx={{ fontSize: "1.5rem" }}/>
@@ -76,18 +83,31 @@ export default function Sidebar({ currentChatWith, chatsList, openChat, client, 
       </div>
       <StyledScrollbar>
         <List variant="plain" color="neutral">
-          {chatsList.filter((chatWith) => !search || chatWith.toLowerCase().includes(search.toLowerCase())).map((chatWith) =>
+          {client.chatsList.filter((chatWith) => !search || chatWith.toLowerCase().includes(search.toLowerCase())).map((chatWith) =>
           <ListItem key={chatWith}>
-            <ListItemButton 
-              onClick={() => openChat(chatWith)} 
-              selected={currentChatWith === chatWith} 
-              sx={{ borderRadius: "10px", userSelect: "none" }}
-              variant={currentChatWith === chatWith ? "soft" : "plain"}
-              color="success">
-              {chatWith}
-            </ListItemButton>
+            <ChatCard {...client.getChatDetailsByUser(chatWith)} isCurrent={currentChatWith === chatWith} setCurrent={() => openChat(chatWith) }/>
           </ListItem>)}
         </List>            
       </StyledScrollbar>
     </Stack>)
+}
+
+type ChatCardProps = Readonly<{
+  displayName?: string, 
+  contactName?: string, 
+  profilePicture?: string, 
+  lastActivity: number,
+  isCurrent: boolean,
+  setCurrent: () => void
+}>;
+
+function ChatCard({ displayName, contactName, profilePicture, lastActivity, isCurrent, setCurrent }: ChatCardProps) {
+  return (<ListItemButton 
+    onClick={() => setCurrent()} 
+    selected={isCurrent} 
+    sx={{ borderRadius: "10px", userSelect: "none" }}
+    variant={isCurrent ? "soft" : "plain"}
+    color="success">
+    {contactName || displayName}
+  </ListItemButton>)
 }

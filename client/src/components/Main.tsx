@@ -7,21 +7,17 @@ import { ReplayCircleFilledSharp, ReportProblem } from "@mui/icons-material";
 import { DisableSelectTypography, StyledSheet } from "./CommonElementStyles";
 import Sidebar from "./Sidebar";
 import { ChatViewMemo, OrientationState, ScrollState } from "./ChatView";
-import { ChatRequest, Client } from "../client";
+import { AwaitedRequest, ChatRequest, Client } from "../client";
 import { chats } from "../prvChats";
 import { ChatRequestView } from "./ChatRequestView";
 import { flushSync } from "react-dom";
+import { AwaitedRequestView } from "./AwaitedRequestView";
 
 const minKeyboard = 300;
 export const barHeight = () => document.querySelector("#viewportHeight").clientHeight - window.innerHeight;
 export const keyboardHeight = () => document.querySelector("#viewportHeight").clientHeight - window.visualViewport.height;
 export const isKeyboardOpen = () => keyboardHeight() > minKeyboard;
 export const orientation = () => window.screen.orientation.type;
-
-const sampleRequest = new ChatRequest({ sessionId: "xyz", addressedTo: "", timestamp: 0, initialMessage: null, myPublicDHIdentityKey: null, myPublicEphemeralKey: null, myVerifyingIdentityKey: null, yourSignedPreKeyVersion: 1, yourOneTimeKeyIdentifier: "" }, { async rejectRequest() { return false; }, async respondToRequest() { return false; }}, { firstMessage: "Hey! I'd like to chat with you.", profile: { displayName: "Someone", username: "someone", profilePicture: "" }, timestamp: Date.now() });
-
-const chatWithList = new Map<string, "Chat" | ChatRequest>(chats.map((c) => [c.chatWith, "Chat"]));
-chatWithList.set("Someone", sampleRequest);
 
 function useOrientationState(): OrientationState {
   const orientationRef = useRef(orientation());
@@ -98,21 +94,27 @@ type MainProps = {
 };
 
 export default function Main({ connected, retrying, displayName, client }: MainProps) {
-  const [currentChatWith, setCurrentChatWith] = useState("");
+  const [currentChatWith, setCurrentChatWith] = useState(null);
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const typedMessages = useRef(new Map<string, string>());
   const lastScrollPositions = useRef(new Map<string, ScrollState>());
   const orientationState = useOrientationState();
   const underbar = useUnderbar(orientationState.lastOrientation);
+  const [, triggerRerender] = useState(2);
   
-  useEffectOnce(() => {
-    const currentChatWith = window.history.state?.currentChatWith || "";
-    window.history.replaceState({ currentChatWith }, "", `#${currentChatWith}`);
+  useEffect(() => {
+    let currentChatWith = window.history.state?.currentChatWith || window.location.hash.slice(1);
+    if (!client.chatsList.find((c) => currentChatWith === c)) {
+      currentChatWith = null;
+      window.location.hash = ""
+    }
+    window.history.replaceState({ currentChatWith }, "", currentChatWith ? `#${currentChatWith}` : "");
     setCurrentChatWith(currentChatWith);
-    const popStateListener = (event: PopStateEvent) => setCurrentChatWith(event.state?.currentChatWith || "");
+    const popStateListener = (event: PopStateEvent) => setCurrentChatWith(event.state?.currentChatWith);
     window.addEventListener("popstate", popStateListener);
+    client.subscribeChange(() => triggerRerender((rerender) => 10 / rerender));
     return () => window.removeEventListener("popstate", popStateListener);
-  });
+  }, []);
 
   function openChat(chat: string) {
     window.history.pushState({ currentChatWith: chat }, "", `#${chat}`);
@@ -120,27 +122,31 @@ export default function Main({ connected, retrying, displayName, client }: MainP
   }
 
   function getView(currentChatWith: string) {
-    const chat = chatWithList.get(currentChatWith);
-    return chat === "Chat"
-      ? (
-        <ChatViewMemo 
-          key={currentChatWith ?? ""}
-          orientationState={orientationState}
-          chatWith={currentChatWith ?? ""}
-          message={typedMessages.current.get(currentChatWith) || ""}
-          setMessage={(message: string) => {
-            if (currentChatWith) {
-              typedMessages.current.set(currentChatWith, message)
-            }}}
-          lastScrolledTo={ lastScrollPositions.current.get(currentChatWith) }
-          setLastScrolledTo={(lastScrolledTo) => {
-            if (currentChatWith) {
-              lastScrollPositions.current.set(currentChatWith, lastScrolledTo);
-            }
-          }}/>)
-      : chat 
-        ? (<ChatRequestView chatRequest={chat}/>)
-        : null;
+    const chat = client.getChatByUser(currentChatWith);
+    if (chat?.type === "Chat") {
+      return (<ChatViewMemo 
+        key={currentChatWith ?? ""}
+        orientationState={orientationState}
+        chat={chat}
+        message={typedMessages.current.get(currentChatWith) || ""}
+        setMessage={(message: string) => {
+          if (currentChatWith) {
+            typedMessages.current.set(currentChatWith, message)
+          }}}
+        lastScrolledTo={ lastScrollPositions.current.get(currentChatWith) }
+        setLastScrolledTo={(lastScrolledTo) => {
+          if (currentChatWith) {
+            lastScrollPositions.current.set(currentChatWith, lastScrolledTo);
+          }
+        }}/>);
+    }
+    else if (chat?.type === "ChatRequest") {
+      return (<ChatRequestView key={currentChatWith ?? ""} chatRequest={chat}/>);
+    }
+    else if (chat?.type === "AwaitedRequest") {
+      return (<AwaitedRequestView key={currentChatWith ?? ""} awaitedRequest={chat}/>);
+    }
+    return null;
   }
 
   return (
@@ -159,7 +165,7 @@ export default function Main({ connected, retrying, displayName, client }: MainP
       sx={{ flex: 1, flexBasis: 0, minHeight: 0 }}>
       {(!belowXL || !currentChatWith) &&
       <Grid xs={12} xl={3} sx={{ minHeight: 0, maxHeight: "100%", display: "flex", flexDirection: "column" }}>
-        <Sidebar currentChatWith={currentChatWith} chatsList={Array.from(chatWithList.keys())} openChat={openChat} client={client} belowXL={belowXL}/>
+        <Sidebar currentChatWith={currentChatWith} openChat={openChat} client={client} belowXL={belowXL}/>
       </Grid>}
       {(!belowXL || currentChatWith) &&
       <Grid xs={12} xl={9} sx={{ minHeight: 0, maxHeight: "100%" }}>

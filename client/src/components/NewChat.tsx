@@ -22,13 +22,13 @@ type NewChatPopupProps = {
 };
 
 export function NewChatPopup({ validate, escOnEnter, initialChatWith, returnUser, placement, belowXL, isPopupOpen, setIsPopupOpen, children }: NewChatPopupProps) {
-  const [chatWithUser, setChatWithUser] = useState("");
+  const [newChatWith, setNewChatWith] = useState("");
   const [usernameInvalid, setUsernameInvalid] = useState("");
   
   useEffect(() => {
     let ignore = false;
     const setUserValid = async () => {
-      const message = await validate(chatWithUser);
+      const message = await validate(newChatWith);
       if (!ignore) {
         setUsernameInvalid(message);
       }
@@ -37,11 +37,11 @@ export function NewChatPopup({ validate, escOnEnter, initialChatWith, returnUser
     return () => {
       ignore = true;
     }
-  }, [chatWithUser]);
+  }, [newChatWith]);
 
   useEffect(() => {
     if (isPopupOpen && initialChatWith) {
-      setChatWithUser(initialChatWith);
+      setNewChatWith(initialChatWith);
     }
   }, [isPopupOpen])
 
@@ -50,7 +50,7 @@ export function NewChatPopup({ validate, escOnEnter, initialChatWith, returnUser
       placement={placement}
       changeOpenTo={isPopupOpen}
       notifyChange={(open) => {
-        setChatWithUser("");
+        setNewChatWith("");
         setIsPopupOpen(open);
       }}>
       <PopoverTrigger>
@@ -70,22 +70,22 @@ export function NewChatPopup({ validate, escOnEnter, initialChatWith, returnUser
                 variant="outlined"
                 placeholder="Begin chat with" 
                 type="text"
-                defaultValue={chatWithUser || undefined}
-                value={chatWithUser}
-                setValue={setChatWithUser}
+                defaultValue={newChatWith || undefined}
+                value={newChatWith}
+                setValue={setNewChatWith}
                 forceInvalid
                 preventSpaces
                 valid={!usernameInvalid}
                 errorMessage={usernameInvalid}
                 onEnter={ () => {
-                    if (chatWithUser) {
+                    if (newChatWith) {
                       if (!usernameInvalid) {
-                        returnUser(chatWithUser);
-                        setChatWithUser("");
+                        returnUser(newChatWith);
+                        setNewChatWith("");
                       }
                     }
                     else if (escOnEnter) {
-                      setChatWithUser("");
+                      setNewChatWith("");
                       setIsPopupOpen(false);
                     }
                   }}/>
@@ -99,21 +99,22 @@ export function NewChatPopup({ validate, escOnEnter, initialChatWith, returnUser
 type NewMessageDialogProps = {
   warn: boolean,
   belowXL: boolean,
-  chatWith: string,
+  newChatWith: string,
   setWarn: (warn: boolean) => void,
-  setChatWith: (newChat: string) => void,
+  setNewChatWith: (newChat: string) => void,
   setNewMessage: (newMessage: string) => void,
-  validate: (username: string) => Promise<string>
+  validate: (username: string) => Promise<string>,
+  sendRequest: () => void
 };
 
-export function NewMessageDialog({ warn, chatWith, belowXL, setWarn, setChatWith, setNewMessage, validate }: NewMessageDialogProps) {
+export function NewMessageDialog({ warn, newChatWith, belowXL, setWarn, setNewChatWith, setNewMessage, validate, sendRequest }: NewMessageDialogProps) {
   const [isPopupOpen, setIsPopupOpen] = useState(false);
   return (
     <>
       <Dialog 
         outsidePress
         overlayBackdrop="opacity(100%) blur(4px)"
-        controlledOpen={!!chatWith} 
+        controlledOpen={!!newChatWith} 
         setControlledOpen={(open) => { 
           if (!open) {
             if (isPopupOpen) {
@@ -150,7 +151,7 @@ export function NewMessageDialog({ warn, chatWith, belowXL, setWarn, setChatWith
               <NewChatPopup
                 key="0"
                 escOnEnter
-                initialChatWith={chatWith}
+                initialChatWith={newChatWith}
                 isPopupOpen={isPopupOpen}
                 setIsPopupOpen={setIsPopupOpen}
                 belowXL={belowXL} 
@@ -158,7 +159,7 @@ export function NewMessageDialog({ warn, chatWith, belowXL, setWarn, setChatWith
                 validate={validate} 
                 returnUser={(chatWith) => {
                   setIsPopupOpen(false);
-                  setChatWith(chatWith);
+                  setNewChatWith(chatWith);
                 }}>
                 <Sheet sx={{ marginBlock: "8px", paddingBlock: "2px", paddingInline: "6px", border: "solid 0.8px black", backgroundColor: "#d8d8df", borderRadius: "12px", textAlign: "center", ":hover" : {
                   filter: "brightness(0.9)"
@@ -170,7 +171,7 @@ export function NewMessageDialog({ warn, chatWith, belowXL, setWarn, setChatWith
                     fontWeight="md"
                     sx={{ display: "flex", textAlign: "center", flexWrap: "wrap", alignContent: "center", marginBottom: 0, cursor: "default" }}
                     mb={1}>
-                      {chatWith}
+                      {newChatWith}
                   </DisableSelectTypography>
                 </Sheet>
               </NewChatPopup>
@@ -192,13 +193,14 @@ export function NewMessageDialog({ warn, chatWith, belowXL, setWarn, setChatWith
                 placeholder="Type a message"
                 outerProps={{ style: { marginTop: "12px" } }}
                 onChange={ (e) => setNewMessage(e.target.value) }
-                onSubmit={(value) => alert(`Sending message request: ${value}`)}
+                onSubmit={() => sendRequest()}
                 minRows={3}
                 maxRows={5} 
                 style={{ flex: 1 }}/>
                 <IconButton 
                   variant="outlined"
                   color="success" 
+                  onClick={() => sendRequest()}
                   sx={{ flexGrow: 0, flexBasis: "content", height: "fit-content", alignSelf: "center", borderRadius: 20, backgroundColor: "var(--joy-palette-success-plainHoverBg)" }}>
                   <SendRounded sx={{ fontSize: "2rem"}}/>
                 </IconButton>
@@ -240,7 +242,7 @@ export function NewMessageDialog({ warn, chatWith, belowXL, setWarn, setChatWith
               <Grid xs={6} sx={{ display: "flex", justifyContent: "center", paddingInline: "20px" }}>
                 <Button variant="solid" color="danger" sx={{ flexGrow: 1 }} onClick={ () => {
                   setWarn(false);
-                  setChatWith("");
+                  setNewChatWith("");
                   setNewMessage("");
                 } }>
                   Cancel

@@ -1,6 +1,6 @@
 import _ from "lodash";
 import { match } from "ts-pattern";
-import React, { useRef, useEffect, useContext, createContext, Dispatch } from "react";
+import React, { useRef, useEffect, useContext, createContext, Dispatch, useState } from "react";
 import { FormControl, FormLabel, Stack, Button, CircularProgress, Alert } from "@mui/joy";
 import { SubmitResponse } from "../App";
 import { DisableSelectTypography, StyledJoySwitch } from "./CommonElementStyles";
@@ -10,10 +10,8 @@ import { ErrorStrings, Failure } from "../../../shared/commonTypes";
 
 type LogInData = {
   readonly username: string;
-  readonly usernameValid: boolean;
   readonly usernameEntered: boolean;
   readonly password: string;
-  readonly passwordValid: boolean;
   readonly lastIncorrectPasswords: [string, string][];
   readonly showPassword: boolean;
   readonly savePassword: boolean;
@@ -46,10 +44,8 @@ export function logInAction<K extends keyof LogInData>(id: K, value: LogInData[K
 
 export const defaultLogInData: Omit<LogInData, "usernameExists" | "submit" | "userLoginPermitted"> = {
   username: "",
-  usernameValid: false,
   usernameEntered: false,
   password: "",
-  passwordValid: true,
   lastIncorrectPasswords: [],
   showPassword: false,
   savePassword: false,
@@ -67,9 +63,7 @@ export const defaultLogInDataReducer: LogInDataReducer = (data, action) => {
     .with("username", () => ({ ...data, username: value as string }))
     .with("password", () => ({ ...data, password: value as string }))
     .with("savePassword", () => ({ ...data, savePassword: value as boolean }))
-    .with("usernameValid", () => ({ ...data, usernameValid: value as boolean }))
     .with("usernameEntered", () => ({ ...data, usernameEntered: value as boolean }))
-    .with("passwordValid", () => ({ ...data, passwordValid: value as boolean }))
     .with("lastIncorrectPasswords", () => ({ ...data, lastIncorrectPasswords: value as [string, string][] }))
     .with("showPassword", () => ({ ...data, showPassword: value as boolean }))
     .with("tryAgainIn", () => ({ ...data, tryAgainIn: value as number }))
@@ -84,12 +78,11 @@ export const defaultLogInDataReducer: LogInDataReducer = (data, action) => {
 export const LogInContext = createContext<LogInContextType>(null);
 
 export default function LogInForm() {
-  const { logInData: { username, usernameValid, usernameEntered, password, passwordValid, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, tryAgain, failed, submitted, warned, usernameExists, userLoginPermitted, submit },  logInDispatch } = useContext(LogInContext);
+  const { logInData: { username, usernameEntered, password, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, tryAgain, failed, submitted, warned, usernameExists, userLoginPermitted, submit },  logInDispatch } = useContext(LogInContext);
+  const [usernameValid, setUsernameValid] = useState(false);
   const setUsername = (username: string) => logInDispatch(logInAction("username", username));
-  const setUsernameValid = (usernameValid: boolean) => logInDispatch(logInAction("usernameValid", usernameValid));
   const setUsernameEntered = (usernameEntered: boolean) => logInDispatch(logInAction("usernameEntered", usernameEntered));
   const setPassword = (password: string) => logInDispatch(logInAction("password", password));
-  const setPasswordValid = (passwordValid: boolean) => logInDispatch(logInAction("passwordValid", passwordValid));
   const setLastIncorrectPasswords = (lastIncorrectPasswords: [string, string][]) => logInDispatch(logInAction("lastIncorrectPasswords", lastIncorrectPasswords));
   const setShowPassword = (showPassword: boolean) => logInDispatch(logInAction("showPassword", showPassword));
   const setSavePassword = (savePassword: boolean) => logInDispatch(logInAction("savePassword", savePassword));
@@ -101,6 +94,9 @@ export default function LogInForm() {
   const setTryCount = (tryCount: number) => logInDispatch(logInAction("tryCount", tryCount));
   const tryAgainRef = useRef(0);
   tryAgainRef.current ??= tryAgain;
+  const canSubmit = !submitted && password && validatePassword(password) || tryAgainIn <= 0
+
+  usernameExists(username).then((exists) => setUsernameValid(exists)).catch(() => {});
 
   useEffect(() => {
     if (tryAgainIn > 0) {
@@ -123,23 +119,20 @@ export default function LogInForm() {
     }));
   }
 
-  function validateUserName(username: string): void {
-    usernameExists(username).then((exists) => setUsernameValid(exists)).catch(() => {});
+  function validatePassword(password: string) {
+    return !lastIncorrectPasswords.some((([u, p]) => u === username && p === password));
   }
 
   async function submitLocal() {
-    if (submitted || !password || !passwordValid || tryAgainIn > 0) return;
+    if (!canSubmit) return;
     setFailed(false);
     setSubmitted(true);
     const { reason, details } = (await submit({ username, password, savePassword })) ?? {};
-    if (!reason) setPasswordValid(true);
-    else {
+    if (reason) {
       if (reason === ErrorStrings.IncorrectPassword) {
         setLastIncorrectPasswords([...lastIncorrectPasswords, [username, password]]);
-        setPasswordValid(false);
       }
       else if (reason === ErrorStrings.TooManyWrongTries) {
-        setPasswordValid(false);
         const { tries, allowsAt } = details ?? {};
         if (allowsAt && allowsAt > Date.now()) {
           setTryCount(tries);
@@ -165,7 +158,6 @@ export default function LogInForm() {
             value={username}
             preventSpaces
             setValue={setUsername}
-            validate={validateUserName}
             valid={usernameValid}
             forceInvalid={!!username}
             errorMessage="No such user."
@@ -191,10 +183,9 @@ export default function LogInForm() {
             value={password}
             preventSpaces
             setValue={setPassword}
-            validate={ (pass) => setPasswordValid(!lastIncorrectPasswords.some((([u, p]) => u === username && p === pass))) }
-            valid={passwordValid && !!password && tryAgain <= 0}
+            valid={!!password && tryAgain <= 0 && validatePassword(password)}
             disabled={submitted || tryAgainIn > 0}
-            forceInvalid={!passwordValid || tryAgainIn > 0}
+            forceInvalid={!validatePassword(password) || tryAgainIn > 0}
             errorMessage={ tryAgainIn <= 0 ? (!password ? "Please provide password" : "Incorrect password.") : `Incorrect password entered ${tryCount} times. Try again in ${ (tryAgainIn / 1000).toFixed(0) }s.`}
             onEnter={submitLocal}/>
           <FormControl orientation="horizontal">
@@ -221,7 +212,7 @@ export default function LogInForm() {
             </Button>
             <Button variant="solid"
               onClick={submitLocal}
-              disabled={ !password || !passwordValid || submitted || tryAgainIn > 0 }>
+              disabled={!canSubmit}>
               <Stack direction="row" spacing={2}>
                 <DisableSelectTypography fontWeight="sm" textColor={ !password || submitted || tryAgainIn > 0 ? "black" : "white" }>
                   { submitted ? "Logging in..." :"Login" }

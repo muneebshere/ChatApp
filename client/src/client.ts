@@ -36,7 +36,8 @@ export type AwaitedRequest = Readonly<{
   sessionId: string,
   otherUser: string,
   lastActivity: number,
-  message: DisplayMessage
+  message: DisplayMessage,
+  type: "AwaitedRequest"
 }>;
 
 type ChatEvent = {
@@ -87,15 +88,9 @@ export class Client {
   #sessionCrypto: SessionCrypto;
   #encryptionBaseVector: CryptoKey;
   #fileHash: Promise<string>;
-  private readonly chatsByUsername = new Map<string, Chat>();
-  private readonly chatRequestsByUsername = new Map<string, ChatRequest>();
-  private readonly awaitedRequestsByUsername = new Map<string, AwaitedRequest>();
-  private readonly chatsBySessionId = new Map<string, Chat>();
-  private readonly chatRequestsBySessionId = new Map<string, ChatRequest>();
-  private readonly awaitedRequestsBySessionId = new Map<string, AwaitedRequest>();
   private readonly chatList: string[] = [];
-  private readonly chatSessionIdsList = new Map<string, "Chat" | "ChatRequest" | "AwaitedRequest">();
-  private readonly chatUsernamesList = new Map<string, "Chat" | "ChatRequest" | "AwaitedRequest">();
+  private readonly chatSessionIdsList = new Map<string, Chat | ChatRequest | AwaitedRequest>();
+  private readonly chatUsernamesList = new Map<string, Chat | ChatRequest | AwaitedRequest>();
 
   private readonly chatInterface: (sessionId: string) => ClientChatInterface = (sessionId) => ({
     SendMessage: (data: MessageHeader, timeout = 0) => {
@@ -130,101 +125,46 @@ export class Client {
     }
   })
  
-  private addChat(chat: Chat) {
-    this.chatsByUsername.set(chat.otherUser, chat);
-    this.chatsBySessionId.set(chat.sessionId, chat);
-    this.chatSessionIdsList.set(chat.sessionId, "Chat");
-    this.chatUsernamesList.set(chat.otherUser, "Chat");
+  private addChat(chat: Chat | ChatRequest | AwaitedRequest) {
+    this.chatSessionIdsList.set(chat.sessionId, chat);
+    this.chatUsernamesList.set(chat.otherUser, chat);
     this.chatList.push(chat.otherUser);
-    if (this.notifyChange) {
+    if (this.notifyChange && chat.type === "Chat") {
       chat.subscribe("client", this.notifyChange);
     }
     this.notifyChange?.();
   }
  
-  private addChatRequest(chat: ChatRequest) {
-    this.chatRequestsByUsername.set(chat.otherUser, chat);
-    this.chatRequestsBySessionId.set(chat.sessionId, chat);
-    this.chatSessionIdsList.set(chat.sessionId, "ChatRequest");
-    this.chatUsernamesList.set(chat.otherUser, "ChatRequest");
-    this.chatList.push(chat.otherUser);
-    this.notifyChange?.();
-  }
- 
-  private addAwaitedRequest(chat: AwaitedRequest) {
-    this.awaitedRequestsByUsername.set(chat.otherUser, chat);
-    this.awaitedRequestsBySessionId.set(chat.sessionId, chat);
-    this.chatSessionIdsList.set(chat.sessionId, "AwaitedRequest");
-    this.chatUsernamesList.set(chat.otherUser, "AwaitedRequest");
-    this.chatList.push(chat.otherUser);
-    this.notifyChange?.();
-  }
- 
   private removeChat(key: string, keyType: "username" | "sessionId") {
-    const chat = keyType === "username" ? this.chatsByUsername.get(key) : this.chatsBySessionId.get(key);
-    this.chatsByUsername.delete(chat.otherUser);
-    this.chatsBySessionId.delete(chat.sessionId);
+    const chat = keyType === "username" ? this.chatUsernamesList.get(key) : this.chatSessionIdsList.get(key);
     this.chatSessionIdsList.delete(chat.sessionId);
     this.chatUsernamesList.delete(chat.otherUser);
     _.remove(this.chatList, ([user, _]) => user === chat.otherUser);
-    chat.dispose();
-    this.notifyChange?.();
-  }
- 
-  private removeChatRequest(key: string, keyType: "username" | "sessionId") {
-    const chat = keyType === "username" ? this.chatRequestsByUsername.get(key) : this.chatRequestsBySessionId.get(key);
-    this.chatRequestsByUsername.delete(chat.otherUser);
-    this.chatRequestsBySessionId.delete(chat.sessionId);
-    this.chatSessionIdsList.delete(chat.sessionId);
-    this.chatUsernamesList.delete(chat.otherUser);
-    _.remove(this.chatList, ([user, _]) => user === chat.otherUser);
-    this.notifyChange?.();
-  }
- 
-  private removeAwaitedRequest(key: string, keyType: "username" | "sessionId") {
-    const chat = keyType === "username" ? this.awaitedRequestsByUsername.get(key) : this.awaitedRequestsBySessionId.get(key);
-    this.awaitedRequestsByUsername.delete(chat.otherUser);
-    this.awaitedRequestsBySessionId.delete(chat.sessionId);
-    this.chatSessionIdsList.delete(chat.sessionId);
-    this.chatUsernamesList.delete(chat.otherUser);
-    _.remove(this.chatList, ([user, _]) => user === chat.otherUser);
+    if (chat.type === "Chat") {
+      chat.dispose();
+    }
     this.notifyChange?.();
   }
 
   public getChatByUser(otherUser: string): Chat | ChatRequest | AwaitedRequest {
-    const type = this.chatUsernamesList.get(otherUser);
-    if (type === "Chat") {
-      return this.chatsByUsername.get(otherUser);
-    }
-    else if (type === "ChatRequest") {
-      return this.chatRequestsByUsername.get(otherUser);
-    }
-    else if (type === "AwaitedRequest"){
-      return this.awaitedRequestsByUsername.get(otherUser);
-    }
-    else {
-      return null;
-    }
+    return this.chatUsernamesList.get(otherUser);
   }
 
-  public getChatDetailsByUser(otherUser: string): { type: "Chat" | "ChatRequest" | "AwaitedRequest", displayName?: string, contactName?: string, profilePicture?: string, lastActivity: number } {
-    const type = this.chatUsernamesList.get(otherUser);
-    if (typeof type !== "string") {
-      return null;
-    }
-    const chat = this.getChatByUser(otherUser);
+  public getChatDetailsByUser(otherUser: string): { displayName?: string, contactName?: string, profilePicture?: string, lastActivity: number } {
+    const chat = this.chatUsernamesList.get(otherUser);
+    if (!chat) return null;
     const { lastActivity } = chat;
     if ("contactDetails" in chat) {
       const { contactDetails: { displayName, profilePicture, contactName } } = chat;
-      return { type, displayName, contactName, profilePicture, lastActivity };
+      return { displayName, contactName, profilePicture, lastActivity };
     }
     else {
-      return { type, displayName: otherUser, lastActivity };
+      return { displayName: otherUser, lastActivity };
     }
   }
 
   public get chatsList() {
-    return Array.from(this.chatList);
+    return _.orderBy(this.chatList, [(chat) => this.getChatByUser(chat).lastActivity], ["desc"]);
   }
 
   public get username(): string {
@@ -523,10 +463,19 @@ export class Client {
       this.#profilePicture = profilePicture;
       this.#x3dhUser = x3dhUser;
       for (const { sessionId, timestamp, otherUser, firstMessage } of this.#x3dhUser.pendingChatRequests) {
-        this.addAwaitedRequest({ sessionId, otherUser, lastActivity: timestamp, message: { messageId: "0-0", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } } });
+        const awaited: AwaitedRequest = { sessionId, otherUser, lastActivity: timestamp, message: { messageId: "0-0", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } }, type: "AwaitedRequest" };
+        this.addChat(awaited);
+        const result = await this.GetUnprocessedMessages(sessionId);
+        if ("reason" in result) {
+          logError(result.reason);
+          return;
+        }
+        const firstResponse = _.orderBy(result, ["timestamp"], ["asc"])[0];
+        await this.receiveRequestResponse(firstResponse);
       }
+      await this.loadChats();
+      await this.loadRequests();
       this.notifyClientEvent(ClientEvent.SignedIn);
-      this.loadChats().then(() => this.loadRequests());
       return { reason: null };
     }
     catch(err) {
@@ -546,7 +495,7 @@ export class Client {
     }
     const { keyBundle } = keyBundleResponse;
     const { displayName, profilePicture } = this;
-    const pendingRequest = await this.#x3dhUser.generateChatRequest(keyBundle, firstMessage, madeAt, { displayName, profilePicture }, async (chatRequest) => {
+    const result = await this.#x3dhUser.generateChatRequest(keyBundle, firstMessage, madeAt, { displayName, profilePicture }, async (chatRequest) => {
       const result = await this.SendChatRequest(chatRequest);
       if (result.reason) {
         logError(result);
@@ -554,12 +503,17 @@ export class Client {
       }
       return true;
     });
-    if (typeof pendingRequest === "string") {
-      logError(pendingRequest);
-      return failure(ErrorStrings.ProcessFailed, pendingRequest);
+    if (typeof result === "string") {
+      logError(result);
+      return failure(ErrorStrings.ProcessFailed, result);
     }
-    const { sessionId, timestamp } = pendingRequest;
-    this.addAwaitedRequest({ sessionId, otherUser, lastActivity: timestamp, message: { messageId: "0-0", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } } });
+    const [{ sessionId, timestamp }, x3dhInfo] = result;
+    const { reason } = await this.UpdateX3DHUser({ x3dhInfo, username: this.username });
+    if (reason) {
+      logError(reason);
+      return failure(ErrorStrings.ProcessFailed);
+    }
+    this.addChat({ sessionId, otherUser, lastActivity: timestamp, message: { messageId: "0-0", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } }, type: "AwaitedRequest" });
     return { reason: null };
   }
 
@@ -690,7 +644,7 @@ export class Client {
       logError(result);
       return false;
     }
-    if (this.chatRequestsByUsername.has(result.profile.username)) {
+    if (this.chatUsernamesList.get(result.profile.username)?.type === "ChatRequest") {
       logError("Duplicate request.");
       this.rejectRequest(request.sessionId, request.yourOneTimeKeyIdentifier);
       return false;
@@ -699,7 +653,7 @@ export class Client {
       respondToRequest: (request: ChatRequestHeader, respondingAt: number) => this.respondToRequest(request, respondingAt),
       rejectRequest: (sessionId: string, oneTimeKeyId: string) => this.rejectRequest(sessionId, oneTimeKeyId)
     }, result);
-    this.addChatRequest(chatRequest);
+    this.addChat(chatRequest);
     return true;
   }
 
@@ -734,7 +688,8 @@ export class Client {
     const chatDetails = await crypto.encryptData(profile, this.#encryptionBaseVector, "ContactDetails");
     const chatData = { chatDetails, exportedChattingSession, lastActivity, sessionId };
     await this.CreateChat(chatData);
-    const newChat = await Chat.instantiate(this.#username, this.#encryptionBaseVector, this.chatInterface(sessionId), chatData, { content: firstMessage, timestamp });
+    const newChat = await Chat.instantiate(this.#username, this.#encryptionBaseVector, this.chatInterface(sessionId), chatData, { content: firstMessage, sentByMe: false, timestamp });
+    this.removeChat(sessionId, "sessionId");
     this.addChat(newChat);
     return true;
   }
@@ -746,29 +701,38 @@ export class Client {
       return false;
     }
     this.#x3dhUser.disposeOneTimeKey(oneTimeKeyId);
-    this.removeChatRequest(sessionId, "sessionId");
+    this.removeChat(sessionId, "sessionId");
     return true;
   }
 
   private async receiveRequestResponse(message: MessageHeader) {
     const { sessionId } = message;
-    const awaitedRequest = this.awaitedRequestsBySessionId.get(sessionId);
-    if (!awaitedRequest) {
+    const awaitedRequest = this.chatSessionIdsList.get(sessionId);
+    if (!awaitedRequest || awaitedRequest.type !== "AwaitedRequest") {
       return false;
     }
-    const result = await this.#x3dhUser.receiveChatRequestResponse(message);
-    if (typeof result === "string") {
-      logError(result);
+    const response = await this.#x3dhUser.receiveChatRequestResponse(message);
+    if (typeof response === "string") {
+      logError(response);
       return false;
     }
-    const [{ profile, respondedAt }, exportedChattingSession] = result;
     const { message: { content, timestamp } } = awaitedRequest;
+    const [{ profile, respondedAt }, exportedChattingSession] = response;
     const chatDetails = await crypto.encryptData(profile, this.#encryptionBaseVector, "ContactDetails");
     const chatData = { chatDetails, exportedChattingSession, lastActivity: respondedAt, sessionId };
-    await this.CreateChat(chatData);
-    const newChat = await Chat.instantiate(this.#username, this.#encryptionBaseVector, this.chatInterface(sessionId), chatData, { content, timestamp, delivery: respondedAt });
+    const { reason } = await this.CreateChat(chatData);
+    if (reason) {
+      logError(reason);
+      return false;
+    }
+    const x3dhInfo = await this.#x3dhUser.deleteWaitingRequest(sessionId);
+    const { reason: r2 } = await this.UpdateX3DHUser({ x3dhInfo, username: this.username });
+    if (r2) {
+      logError(r2);
+    }
+    const newChat = await Chat.instantiate(this.#username, this.#encryptionBaseVector, this.chatInterface(sessionId), chatData, { content, timestamp, sentByMe: true, delivery: respondedAt });
+    this.removeChat(sessionId, "sessionId");
     this.addChat(newChat);
-    this.removeAwaitedRequest(sessionId, "sessionId");
     await this.requestRoom(newChat);
     return true;
   }
@@ -801,6 +765,10 @@ export class Client {
     return this.request(SocketEvents.PublishKeyBundles, data, timeout);
   }
   
+  private UpdateX3DHUser(data: { x3dhInfo: UserEncryptedData } & Username, timeout = 0): Promise<Failure> { 
+    return this.request(SocketEvents.UpdateX3DHUser, data, timeout);
+  }
+  
   private RequestKeyBundle(data: Username, timeout = 0): Promise<RequestKeyBundleResponse | Failure> { 
     return this.request(SocketEvents.RequestKeyBundle, data, timeout);
   }
@@ -811,6 +779,10 @@ export class Client {
 
   private GetAllChats(timeout = 0): Promise<ChatData[] | Failure> {
     return this.request(SocketEvents.GetAllChats, {}, timeout);
+  }
+
+  private GetUnprocessedMessages(sessionId: string, timeout = 0): Promise<MessageHeader[] | Failure> {
+    return this.request(SocketEvents.GetUnprocessedMessages, { sessionId }, timeout);
   }
 
   private GetAllRequests(timeout = 0): Promise<ChatRequestHeader[] | Failure> {
@@ -870,8 +842,8 @@ export class Client {
 
   private async roomRequested({ username, sessionReference, publicKey, verifyingKey }: Username & EstablishData) {
     if (username === this.#username) return failure(ErrorStrings.InvalidRequest);
-    const chat = this.chatsByUsername.get(username);
-    if (!chat) return failure(ErrorStrings.InvalidRequest);
+    const chat = this.chatUsernamesList.get(username);
+    if (!chat || chat.type !== "Chat") return failure(ErrorStrings.InvalidRequest);
     const { privateKey, publicKey: myPublicKey } = await crypto.generateKeyPair("ECDH");
     const { privateKey: signingKey, publicKey: myVerifyingKey } = await crypto.generateKeyPair("ECDSA");
     const otherPublicKey = await crypto.importKey(publicKey, "ECDH", "public", true);
@@ -904,8 +876,8 @@ export class Client {
 
   private async messageReceived(message: MessageHeader) {
     const { sessionId } = message;
-    return await match(this.chatSessionIdsList.get(sessionId))
-      .with("Chat", () => this.chatsBySessionId.get(sessionId)?.messageReceived(message))
+    return await match(this.chatSessionIdsList.get(sessionId)?.type)
+      .with("Chat", () => (this.chatSessionIdsList.get(sessionId) as Chat)?.messageReceived(message))
       .with("AwaitedRequest", () => this.receiveRequestResponse(message))
       .otherwise(async () => false);
   }
@@ -916,8 +888,8 @@ export class Client {
 
   private async messageEventLogged(messageEvent: MessageEvent) {
     const { sessionId, messageId, event, timestamp } = messageEvent;
-    const chat = this.chatsBySessionId.get(sessionId);
-    if (!chat) {
+    const chat = this.chatSessionIdsList.get(sessionId);
+    if (!chat || chat.type !== "Chat") {
       logError("No chat found corresponding to event.")
       return false;
     }
@@ -936,6 +908,7 @@ export class Chat {
   private readonly messagesList: DisplayMessage[] = [];
   private readonly clientInterface: ClientChatInterface;
   private chatDetails: UserEncryptedData;
+  readonly type = "Chat";
   readonly sessionId: string;
   readonly me: string;
   readonly otherUser: string;
@@ -976,7 +949,7 @@ export class Chat {
   }
 
   dispose() {
-    this.#socket?.off(this.otherUser);
+    this.#socket?.off(`${this.otherUser} -> ${this.me}`);
     this.#socket = null;
     this.#sessionCrypto = null;
     this.notifyChange.clear();
@@ -1000,7 +973,7 @@ export class Chat {
     this.#chattingSession = chattingSession;
   }
 
-  static async instantiate(me: string, encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chatData: ChatData, firstMessage?: { content: string, timestamp: number, delivery?: number }) {
+  static async instantiate(me: string, encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chatData: ChatData, firstMessage?: { content: string, timestamp: number, sentByMe: boolean, delivery?: number }) {
     const { chatDetails, exportedChattingSession, lastActivity, sessionId } = chatData;
     const contactDetails: Contact = await crypto.decryptData(chatDetails, encryptionBaseVector, "ContactDetails");
     const chattingSession = await ChattingSession.importSession(exportedChattingSession, encryptionBaseVector);
@@ -1008,8 +981,8 @@ export class Chat {
     chat.lastActivityTimestamp = lastActivity;
     chat.chatDetails = chatDetails;
     if (firstMessage) {
-      const { content, timestamp, delivery } = firstMessage;
-      await chat.encryptStoreMessage({ messageId: "0", sentByMe: true, content, timestamp } , delivery, delivery);
+      const { content, timestamp, sentByMe, delivery } = firstMessage;
+      await chat.encryptStoreMessage({ messageId: "0-0", sentByMe, content, timestamp } , delivery, delivery);
     }
     chat.loadNext().then(() => chat.loadUnprocessedMessages());
     return chat;
@@ -1030,7 +1003,7 @@ export class Chat {
     }
     this.#sessionCrypto = sessionCrypto;
     this.#socket = socket;
-    this.#socket.on(this.otherUser, this.receiveMessage.bind(this));
+    this.#socket.on(`${this.otherUser} -> ${this.me}`, this.receiveMessage.bind(this));
     this.#socket.on("disconnect", () => {
       this.dispose();
     })
@@ -1057,10 +1030,11 @@ export class Chat {
         let tries = 0;
         let success = false;
         if (this.hasRoom) {
+          const data = (await this.#sessionCrypto.signEncrypt(message, `${this.me} -> ${this.otherUser}`)).toString("base64");
           while (!success && tries <= 10) {
             tries++;
             success = await new Promise<boolean>((resolve) => {
-              this.#socket.emit(this.otherUser, message, (response: boolean) => resolve(response));
+              this.#socket.emit(`${this.me} -> ${this.otherUser}`, data, (response: boolean) => resolve(response));
             });
           }
         }
@@ -1077,12 +1051,13 @@ export class Chat {
           return success;
         }
     });
-    if (exportedChattingSession) {
-      const { lastActivity, chatDetails } = this;
-      await this.clientInterface.UpdateChat({ lastActivity, chatDetails, exportedChattingSession });
-      return true;
+    if (typeof exportedChattingSession === "string") {
+      logError(exportedChattingSession);
+      return false;
     }
-    return false;
+    const { lastActivity, chatDetails } = this;
+    await this.clientInterface.UpdateChat({ lastActivity, chatDetails, exportedChattingSession });
+    return true;
   }
 
   async sendEvent(event: "typing" | "stopped-typing"): Promise<boolean>;
@@ -1093,7 +1068,7 @@ export class Chat {
     }
     if (this.hasRoom) {
       return await new Promise<boolean>((resolve) => {
-        this.#socket.emit(this.otherUser, { event, messageId, timestamp }, (response: boolean) => resolve(response));
+        this.#socket.emit(`${this.me} -> ${this.otherUser}`, { event, messageId, timestamp }, (response: boolean) => resolve(response));
       });
     }
     else {
@@ -1155,18 +1130,19 @@ export class Chat {
   }
 
   private async receiveMessage(data: string, ack: (recv: boolean) => void) {
+    if (data === "confirmed") return;
     if (!data) {
       ack(false);
       return;
     }
     if (data === "disconnected") {
-      this.#socket?.off(this.otherUser);
+      this.#socket?.off(`${this.otherUser} -> ${this.me}`);
       this.#socket = null;
       this.#sessionCrypto = null;
       return;
     }
     try {
-      const decryptedData: MessageHeader | ChatEvent = await this.#sessionCrypto.decryptVerify(Buffer.from(data, "base64"), this.me);
+      const decryptedData: MessageHeader | ChatEvent = await this.#sessionCrypto.decryptVerify(Buffer.from(data, "base64"), `${this.otherUser} -> ${this.me}`);
       if (!decryptedData) {
         ack(false);
       }
@@ -1224,7 +1200,7 @@ export class Chat {
   private async openEncryptedMessage(encryptedMessage: MessageHeader): Promise<boolean> {
     const exportedChattingSession = await this.#chattingSession.receiveMessage(encryptedMessage, async (messageBody) => {
       const { sender, recipient, messageId, replyingTo: replyId, timestamp, content } = messageBody;
-      if (sender !== this.otherUser || recipient === this.me) {
+      if (sender !== this.otherUser || recipient !== this.me) {
         return false;
       }
       const replyingTo = await this.populateReplyingTo(replyId);
@@ -1276,6 +1252,7 @@ export class Chat {
 }
 
 export class ChatRequest {
+  readonly type = "ChatRequest";
   readonly otherUser: string;
   readonly contactDetails: Readonly<{ displayName: string, contactName?: string, profilePicture: string }>;
   readonly message: DisplayMessage;

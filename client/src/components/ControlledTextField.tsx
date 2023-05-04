@@ -12,7 +12,6 @@ export type ControlledTextFieldProps = {
   valid: boolean;
   variant?: "plain" | "outlined" | "soft" | "solid";
   helperText?: string;
-  validate?: (value: string) => void;
   onEnter?: () => void;
   forceInvalid?: boolean;
   disabled?: boolean;
@@ -24,7 +23,7 @@ export type ControlledTextFieldProps = {
 } & React.HTMLProps<HTMLInputElement>
 
 export default function ControlledTextField(args: ControlledTextFieldProps) {
-  const { placeholder, setValue, type, valid, defaultValue, value, disabled, errorMessage, forceInvalid, helperText, label, onEnter, preventSpaces, validate, variant, autoComplete, role, autoFocus } = args;
+  const { placeholder, setValue, type, valid, defaultValue, value, disabled, errorMessage, forceInvalid, helperText, label, onEnter, preventSpaces, variant, autoComplete, role, autoFocus } = args;
   const [cursor, setCursor] = useState(0);
   const [touched, setTouched] = useState<boolean>(null);
   const [enterDown, setEnterDown] = useState(false);
@@ -39,13 +38,15 @@ export default function ControlledTextField(args: ControlledTextFieldProps) {
     let newValue = e.target.value;
     if (preventSpaces) newValue = newValue.replace(/\s+/g, "");
     setValue(newValue);
-    validate?.(newValue);
   }
 
   function onBlur(e: React.FocusEvent<HTMLInputElement>) {
     if (touched === false) {
       setTouched(true);
-      args?.validate?.(value);
+      if (!e.target.value) {
+        setValue("\u2060");
+        setValue("");
+      }
     }
   }
 
