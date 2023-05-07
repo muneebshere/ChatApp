@@ -47,8 +47,8 @@ export async function digestToBuffer(algorithm: AlgorithmIdentifier, data: Buffe
     return Buffer.from(await subtle.digest(algorithm, data));
 }
 
-export async function digestToBase64(algorithm: AlgorithmIdentifier, data: BufferSource) {
-    return Buffer.from(await subtle.digest(algorithm, data)).toString("hex");
+export async function digest(algorithm: AlgorithmIdentifier, data: BufferSource) {
+    return Buffer.from(await subtle.digest(algorithm, data)).toString("base64");
 }
 
 export async function importRaw(source: Buffer | string): Promise<CryptoKey> {

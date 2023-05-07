@@ -1,59 +1,69 @@
 import _ from "./node_modules/lodash";
 import { Buffer } from "./node_modules/buffer";
-import * as crypto from "./cryptoOperator";
 import { RistrettoPoint } from "@noble/curves/ed25519";
+import { sha3_224, sha3_512 } from "@noble/hashes/sha3";
+import { Input, randomBytes } from "@noble/hashes/utils";
 
-function hexToBigInt(hex: string) {
-    return BigInt(`0x${hex}`);
+function toBigInt(uint8: Uint8Array) {
+    return BigInt(`0x${Buffer.from(uint8).toString("hex")}`);
 }
 
-async function getVerifierPrivateHex(saltBase64: string, passwordString: string) {
-    const passwordHash = await crypto.digestToBase64("SHA-512", Buffer.from(passwordString));
-    return await crypto.digestToHex("SHA-512", Buffer.from(`${saltBase64}#${passwordHash}`));
+function getPublicPoint(privateKey: Uint8Array) {
+    if (privateKey.length !== 28) throw "Private key must be 224-bit";
+    return RistrettoPoint.BASE.multiply(toBigInt(privateKey));
 }
 
-export function generateEphemeral(): [string, RistrettoPoint] {
-    const emphemeralPrivateHex = crypto.getRandomVector(64).toString("hex");
-    const ephemeralPublicHex = RistrettoPoint.hashToCurve(emphemeralPrivateHex);
-    return [emphemeralPrivateHex, ephemeralPublicHex];
+function sha3_512_base64(message: Input) {
+    return Buffer.from(sha3_512(message)).toString("base64");
+}
+
+async function getVerifierPrivateHex(saltBase64: string, username: string, password: string) {
+    return sha3_224(`${saltBase64}#${sha3_512_base64(`${username}#${password}`)}`);
+}
+
+export function generateEphemeral(): [Uint8Array, RistrettoPoint] {
+    const emphemeralPrivate = randomBytes(28);
+    const ephemeralPublic = getPublicPoint(emphemeralPrivate);
+    return [emphemeralPrivate, ephemeralPublic];
 }
 
 export async function generateClientRegistration(saltBase64: string, username: string, password: string) {
-    const verifierPointHex = RistrettoPoint.hashToCurve(await getVerifierPrivateHex(saltBase64, `${username}#${password}`)).toHex();
+    const verifierPointHex = getPublicPoint(await getVerifierPrivateHex(saltBase64, username, password)).toHex();
     return { username, verifierPointHex };
 }
 
-export async function clientCalculation(verifierPrivateHex: string, clientEphemeralPrivateHex: string, passwordEntangledHex: string) {
-    const verifierPoint = RistrettoPoint.hashToCurve(verifierPrivateHex);
-    const verifierExpanded = RistrettoPoint.hashToCurve(await crypto.digestToHex("SHA-512", verifierPoint.toRawBytes()));
+export async function clientCalculation(verifierPrivate: Uint8Array, clientEphemeralPrivate: Uint8Array, passwordEntangledHex: string) {
+    const verifierPoint = getPublicPoint(verifierPrivate);
+    const verifierExpanded = getPublicPoint(sha3_224(verifierPoint.toRawBytes()));
     const passwordEntangledPoint = RistrettoPoint.fromHex(passwordEntangledHex);
     const serverEphemeralPoint = passwordEntangledPoint.subtract(verifierExpanded);
-    const clientEphemeralPoint = RistrettoPoint.hashToCurve(clientEphemeralPrivateHex);
-    const commonHash = await crypto.digestToHex("SHA-512", serverEphemeralPoint.add(clientEphemeralPoint).toRawBytes());
-    const commonHashBigInt = hexToBigInt(commonHash);
-    const scalarCommonSum = hexToBigInt(clientEphemeralPrivateHex) + (commonHashBigInt * hexToBigInt(verifierPrivateHex));
+    const clientEphemeralPoint = getPublicPoint(clientEphemeralPrivate);
+    const commonHash = sha3_224(serverEphemeralPoint.add(clientEphemeralPoint).toRawBytes());
+    const commonHashBigInt = toBigInt(commonHash);
+    const scalarCommonSum = toBigInt(clientEphemeralPrivate) + (commonHashBigInt * toBigInt(verifierPrivate));
     const sharedSecret = Buffer.from(serverEphemeralPoint.multiply(scalarCommonSum).toRawBytes()).reverse();
     const sharedSecretBase64 = sharedSecret.toString("base64");
-    const confirmationCodeBase64 = await crypto.digestToBase64("SHA-512", Buffer.from((hexToBigInt(sharedSecret.toString("hex")) + commonHashBigInt).toString(16), "hex"));
+    const confirmationCodeBase64 = sha3_512_base64((toBigInt(sharedSecret) + commonHashBigInt).toString(36));
     return { sharedSecretBase64, confirmationCodeBase64 };
 }
 
-export async function serverCalculation(verifierPointHex: string, serverEphemeralPrivateHex: string, clientEphemeralPointHex: string) {
+export async function serverCalculation(verifierPointHex: string, serverEphemeralPrivate: Uint8Array, clientEphemeralPointHex: string) {
     const verifierPoint = RistrettoPoint.fromHex(verifierPointHex);
-    const serverEphemeralPoint = RistrettoPoint.hashToCurve(serverEphemeralPrivateHex);
+    const serverEphemeralPoint = getPublicPoint(serverEphemeralPrivate);
     const clientEphemeralPoint = RistrettoPoint.fromHex(clientEphemeralPointHex);
-    const commonHash = await crypto.digestToHex("SHA-512", serverEphemeralPoint.add(clientEphemeralPoint).toRawBytes());
-    const commonHashBigInt = hexToBigInt(commonHash);
+    const commonHash = sha3_224(serverEphemeralPoint.add(clientEphemeralPoint).toRawBytes());
+    const commonHashBigInt = toBigInt(commonHash);
     const vectorCommonSum = clientEphemeralPoint.add(verifierPoint.multiply(commonHashBigInt));
-    const sharedSecret = vectorCommonSum.multiply(hexToBigInt(serverEphemeralPrivateHex));
-    const sharedSecretBigInt = hexToBigInt(Buffer.from(sharedSecret.toRawBytes()).reverse().toString("hex"));
-    const confirmationCodeBase64 = await crypto.digestToBase64("SHA-512", Buffer.from((sharedSecretBigInt + commonHashBigInt).toString(16), "hex"));
-    return confirmationCodeBase64;
+    const sharedSecret = Buffer.from(vectorCommonSum.multiply(toBigInt(serverEphemeralPrivate)).toRawBytes()).reverse();
+    const sharedSecretBase64 = sharedSecret.toString("base64");
+    const confirmationCodeBase64 = sha3_512_base64((toBigInt(sharedSecret) + commonHashBigInt).toString(36));
+    return { sharedSecretBase64, confirmationCodeBase64 };
 }
 
-export async function serverGetEntangledPassword(verifierPointHex: string, serverEphemeralPrivateHex: string) {
+export async function serverGetEntangledPassword(verifierPointHex: string) {
+    const [serverEphemeralPrivate, serverEphemeralPoint] = generateEphemeral();
     const verifierPoint = RistrettoPoint.fromHex(verifierPointHex);
-    const verifierExpanded = RistrettoPoint.hashToCurve(await crypto.digestToHex("SHA-512", verifierPoint.toRawBytes()));
-    const serverEphemeralPoint = RistrettoPoint.hashToCurve(serverEphemeralPrivateHex);
-    return serverEphemeralPoint.add(verifierExpanded).toHex();
+    const verifierExpanded = getPublicPoint(sha3_224(verifierPoint.toRawBytes()));
+    const passwordEntangledHex = serverEphemeralPoint.add(verifierExpanded).toHex();
+    return { serverEphemeralPrivate, passwordEntangledHex };
 }
