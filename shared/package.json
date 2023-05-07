@@ -10,6 +10,7 @@
     "tslib": "^2.5.0"
   },
   "dependencies": {
+    "@noble/curves": "^1.0.0",
     "browser-or-node": "^2.1.1",
     "buffer": "^6.0.3",
     "lodash": "^4.17.21"
