@@ -3,6 +3,7 @@ import { Buffer } from "./node_modules/buffer";
 import { RistrettoPoint } from "@noble/curves/ed25519";
 import { sha3_224, sha3_512 } from "@noble/hashes/sha3";
 import { Input, randomBytes } from "@noble/hashes/utils";
+import { getRandomVector } from "./cryptoOperator";
 
 function toBigInt(uint8: Uint8Array) {
     return BigInt(`0x${Buffer.from(uint8).toString("hex")}`);
@@ -27,9 +28,10 @@ export function generateEphemeral(): [Uint8Array, RistrettoPoint] {
     return [emphemeralPrivate, ephemeralPublic];
 }
 
-export async function generateClientRegistration(saltBase64: string, username: string, password: string) {
+export async function generateClientRegistration(username: string, password: string) {
+    const saltBase64 = getRandomVector(64).toString("base64");
     const verifierPointHex = getPublicPoint(await getVerifierPrivateHex(saltBase64, username, password)).toHex();
-    return { username, verifierPointHex };
+    return { username, saltBase64, verifierPointHex };
 }
 
 export async function clientCalculation(verifierPrivate: Uint8Array, clientEphemeralPrivate: Uint8Array, passwordEntangledHex: string) {
