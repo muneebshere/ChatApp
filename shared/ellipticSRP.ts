@@ -19,7 +19,7 @@ function sha3_512_base64(message: Input) {
 }
 
 async function getVerifierPrivateHex(saltBase64: string, username: string, password: string) {
-    return sha3_224(`${saltBase64}#${sha3_512_base64(`${username}#${password}`)}`);
+    return sha3_224(`${saltBase64}|${sha3_512_base64(`${username}#${password}`)}`);
 }
 
 export function generateEphemeral(): [Uint8Array, RistrettoPoint] {

@@ -66,6 +66,10 @@ export async function deriveSymmetricBits(privateKey: CryptoKey, publicKey: Cryp
     return Buffer.from(await subtle.deriveBits({ name: "ECDH", public: publicKey }, privateKey, length));
 }
 
+export async function deriveSymmetricBitsKey(privateKey: CryptoKey, publicKey: CryptoKey, length: 256 | 512): Promise<CryptoKey> {
+    return await importRaw(await deriveSymmetricBits(privateKey, publicKey, length));
+}
+
 export async function importKey(keyData: Buffer, name: "ECDH" | "ECDSA", type: "public" | "private", extractable: boolean): Promise<CryptoKey> {
     const isPrivate = type === "private";
     const isSigning = name === "ECDSA"

@@ -78,12 +78,12 @@ class SocketHandler {
   #disposeRooms: (() => void)[] = [];
   #url: string;
 
-  constructor(socket: Socket, session: Session, sessionReference: string, sessionKeyBits: Buffer, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey, url: string, saveToken?: string, resuming = false) {
+  constructor(socket: Socket, session: Session, sessionReference: string, sessionKeyBits: Buffer, sessionKeyBitsImported: CryptoKey, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey, url: string, saveToken?: string, resuming = false) {
     this.#url = url;
     this.#saveToken = saveToken;
     this.#session = session;
     this.#sessionReference = sessionReference;
-    this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBits, sessionSigningKey, sessionVerifyingKey);
+    this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBitsImported, sessionSigningKey, sessionVerifyingKey);
     this.registerNewSocket(socket);
     if (!resuming) {
       this.registerRunningSession(session.id, sessionReference, sessionKeyBits, sessionSigningKey, sessionVerifyingKey);
@@ -149,13 +149,13 @@ class SocketHandler {
     socket.on("disconnect", this.onSocketDisconnect.bind(this));
   }
 
-  private async registerRunningSession(sessionId: string, sessionReference: string, sessionKeyBits: Buffer, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey) {
+  private async registerRunningSession(sessionId: string, sessionReference: string, sessionKeyBitsEx: Buffer, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey) {
     if ("sessionReference" in ((await MongoHandlerCentral.getSession(sessionId)) ?? {})) {
       return;
     }
     const sessionSigningKeyEx = await crypto.exportKey(sessionSigningKey);
     const sessionVerifyingKeyEx = await crypto.exportKey(sessionVerifyingKey);
-    await MongoHandlerCentral.addSession({ sessionId, sessionReference, sessionKeyBits, sessionSigningKeyEx, sessionVerifyingKeyEx });
+    await MongoHandlerCentral.addSession({ sessionId, sessionReference, sessionKeyBitsEx, sessionSigningKeyEx, sessionVerifyingKeyEx });
   }
 
   private onSocketDisconnect() {
@@ -761,6 +761,38 @@ function logError(err: any): void {
     console.log(`${err}`);
   }
 }
+
+function fromBase64(data: string) {
+  return Buffer.from(data, "base64");
+}
+
+let abortController: AbortController = new AbortController();
+async function hashCalculator() {
+  try {
+    const buffer = await fsPromises.readFile(`..\\client\\public\\main.js`, { flag: "r", signal: abortController.signal });
+    const hash = await crypto.digest("SHA-256", buffer);
+    return hash;
+  }
+  catch(err) {
+    logError(err);
+    return null;
+  } 
+};
+
+let jsHash = hashCalculator();
+async function watchForFileHashChange() {
+  const watcher = fsPromises.watch(`..\\client\\public\\main.js`);
+  for await (const { eventType } of watcher) {
+    if (eventType === "change") {
+      const prevController = abortController;
+      abortController = new AbortController();
+      jsHash = hashCalculator();
+      prevController.abort();
+    }
+  }
+}
+watchForFileHashChange();
+
 const mongoUrl = "mongodb://localhost:27017/chatapp";
 MongoHandlerCentral.connect(mongoUrl);
 const MongoDBStore = ConnectMongoDBSession(session);
@@ -780,30 +812,21 @@ const httpsServer = createServer(httpsOptions, app);
 const socketHandlers = new Map<string, SocketHandler>();
 const interruptedSessions = new Map<string, (socket: Socket, sessionReference: string) => boolean>();
 const onlineUsers = new Map<string, string>();
-let abortController: AbortController = new AbortController();
-const hashCalculator = async () => {
-  try {
-    const buffer = await fsPromises.readFile(`..\\client\\public\\main.js`, { flag: "r", signal: abortController.signal });
-    const hash = await crypto.digest("SHA-256", buffer);
-    return hash;
+const registeredKeys = new Map<string, { sessionKeyBits: Buffer, signingKey: CryptoKey, clientVerifyingKey: CryptoKey, timeout: NodeJS.Timeout }>();
+
+async function regenerateSigningKeys() {
+  async function generateKeys(): Promise<[CryptoKey, string]> {
+    const { privateKey, publicKey } = await crypto.generateKeyPair("ECDSA");
+    const exportedPublicKey = (await crypto.exportKey(publicKey)).toString("base64");
+    return [privateKey, exportedPublicKey];
   }
-  catch(err) {
-    logError(err);
-    return null;
-  } 
-};
-let jsHash = hashCalculator();
-(async () => {
-  const watcher = fsPromises.watch(`..\\client\\public\\main.js`);
-  for await (const { eventType } of watcher) {
-    if (eventType === "change") {
-      const prevController = abortController;
-      abortController = new AbortController();
-      jsHash = hashCalculator();
-      prevController.abort();
-    }
-  }
-})();
+
+  let [signingKey, verifyingKey] = await generateKeys();
+  setInterval(async () => [signingKey, verifyingKey] = await generateKeys(), 1_800_000);
+  return () => ({ signingKey, verifyingKey });
+}
+
+const getCurrentKeys = regenerateSigningKeys();
 
 const io = new SocketServer(httpsServer, {
   cors: {
@@ -834,6 +857,24 @@ app.post("/setSaveToken", (req, res) => {
   }
 });
 
+app.get("/currentVerifyingKey", async (req, res) => {
+  const { verifyingKey } = (await getCurrentKeys)();
+  res.json({ verifyingKey }).status(200).end();
+});
+
+app.post("/registerKeys", async (req, res) => {
+  const { sessionReference, publicDHKey, publicVerifyingKey } = req.body;
+  const { signingKey, verifyingKey } = (await getCurrentKeys)();
+  const { privateKey, publicKey } = await crypto.generateKeyPair("ECDH");
+  const clientVerifyingKey = await crypto.importKey(fromBase64(publicVerifyingKey), "ECDSA", "public", true);
+  const clientPublicKey = await crypto.importKey(fromBase64(publicDHKey), "ECDH", "public", true);
+  const sessionKeyBits = await crypto.deriveSymmetricBits(privateKey, clientPublicKey, 512);
+  const serverPublicKey = (await crypto.exportKey(publicKey)).toString("base64");
+  const timeout = setTimeout(() => registeredKeys.delete(sessionReference), 10_000);
+  registeredKeys.set(sessionReference, { sessionKeyBits, signingKey, clientVerifyingKey, timeout });
+  res.json({ serverPublicKey, verifyingKey }).status(200).end();
+});
+
 store.on("error", (err) => logError(err));
 httpsServer.listen(PORT, () => console.log(`listening on *:${PORT}`));
 io.use((socket: Socket, next) => { sessionMiddleware(socket.request as Request, {} as Response, next as NextFunction) });
@@ -842,8 +883,8 @@ io.on("connection", async (socket) => {
   const fileHashLocal = await jsHash;
   const { session, cookies: { saveToken: saveTokenCookie } } = socket.request;
   const { saveToken } = saveTokenCookie ?? {};
-  let { sessionReference, clientPublicKey, clientVerifyingKey, fileHash, url } = socket.handshake.auth ?? {};
-  if (!sessionReference || !clientPublicKey || !clientVerifyingKey || fileHash !== fileHashLocal) {
+  let { sessionReference, sessionSigned, fileHash, url } = socket.handshake.auth ?? {};
+  if (!sessionReference || !sessionSigned || fileHash !== fileHashLocal) {
     socket.emit(SocketEvents.CompleteHandshake, "", null, null, () => {});
     await sleep(5000);
     socket.disconnect(true);
@@ -856,29 +897,38 @@ io.on("connection", async (socket) => {
   }
   const crashedSession = await MongoHandlerCentral.getSession(session.id);
   if (crashedSession) {
-    const { sessionKeyBits, sessionSigningKeyEx, sessionVerifyingKeyEx } = crashedSession;
+    const { sessionKeyBitsEx, sessionSigningKeyEx, sessionVerifyingKeyEx } = crashedSession;
     const sessionSigningKey = await crypto.importKey(sessionSigningKeyEx, "ECDSA", "private", true);
     const sessionVerifyingKey = await crypto.importKey(sessionVerifyingKeyEx, "ECDSA", "public", true);
+    const sessionKeyBits = await crypto.importRaw(sessionKeyBitsEx);
     console.log(`Resuming crashed session #${session.id}.`);
-    new SocketHandler(socket, session, sessionReference, sessionKeyBits, sessionSigningKey, sessionVerifyingKey, url, saveToken, true);
+    new SocketHandler(socket, session, sessionReference, sessionKeyBitsEx, sessionKeyBits, sessionSigningKey, sessionVerifyingKey, url, saveToken, true);
     socket.emit(SocketEvents.CompleteHandshake, "1", null, null, () => {});
     return;
   }
-  clientPublicKey = await crypto.importKey(Buffer.from(clientPublicKey, "base64"), "ECDH", "public", true);
-  clientVerifyingKey = await crypto.importKey(Buffer.from(clientVerifyingKey, "base64"), "ECDSA", "public", true);
-  console.log(`Socket#${socket.id} connecting with session reference: ${sessionReference}.`);
-  const { privateKey, publicKey } = await crypto.generateKeyPair("ECDH");
-  const { privateKey: signingKey, publicKey: verifyingKey } = await crypto.generateKeyPair("ECDSA");
-  const sessionKeyBits = await crypto.deriveSymmetricBits(privateKey, clientPublicKey, 512);
-  const serverPublicKey = (await crypto.exportKey(publicKey)).toString("base64");
-  const serverVerifyingKey = (await crypto.exportKey(verifyingKey)).toString("base64");
+  if (!registeredKeys.has(sessionReference)) {
+    socket.emit(SocketEvents.CompleteHandshake, "", null, null, () => {});
+    await sleep(5000);
+    socket.disconnect(true);
+    return;
+  }
+  const { sessionKeyBits, clientVerifyingKey, signingKey, timeout } = registeredKeys.get(sessionReference);
+  clearTimeout(timeout);
+  registeredKeys.delete(sessionReference);
+  if (!(await crypto.verify(fromBase64(sessionSigned), fromBase64(sessionReference), clientVerifyingKey))) {
+    socket.emit(SocketEvents.CompleteHandshake, "", null, null, () => {});
+    await sleep(5000);
+    socket.disconnect(true);
+    return;
+  }
   const success = await new Promise((resolve) => {
-    socket.emit(SocketEvents.CompleteHandshake, sessionReference, serverPublicKey, serverVerifyingKey, resolve);
+    socket.emit(SocketEvents.CompleteHandshake, sessionReference, resolve);
     setTimeout(() => resolve(false), 30000);
   })
   if (!success) {
     socket.disconnect(true);
     return;
   }
-  new SocketHandler(socket, session, sessionReference, sessionKeyBits, signingKey, clientVerifyingKey, url, saveToken);
+  const sessionKeyBitsImported = await crypto.importRaw(sessionKeyBits);
+  new SocketHandler(socket, session, sessionReference, sessionKeyBits, sessionKeyBitsImported, signingKey, clientVerifyingKey, url, saveToken);
 });

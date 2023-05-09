@@ -9,7 +9,7 @@ import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PasswordEncrypte
 export type RunningSession = {
   sessionId: string;
   sessionReference: string;
-  sessionKeyBits: Buffer,
+  sessionKeyBitsEx: Buffer,
   sessionSigningKeyEx: Buffer,
   sessionVerifyingKeyEx: Buffer,
   lastRefreshedAt?: Date,
@@ -322,7 +322,7 @@ export class MongoHandlerCentral {
       required: true,
       immutable: true
     },
-    sessionKeyBits: {
+    sessionKeyBitsEx: {
       type: Schema.Types.Buffer,
       required: true,
       immutable: true,

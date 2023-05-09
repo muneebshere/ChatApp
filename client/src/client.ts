@@ -40,12 +40,6 @@ export type AwaitedRequest = Readonly<{
   type: "AwaitedRequest"
 }>;
 
-type ChatEvent = {
-    readonly event: "typing" | "stopped-typing" | "delivered" | "seen";
-    readonly timestamp?: number;
-    readonly messageId?: string;
-}
-
 type ClientChatInterface = Readonly<{
   SendMessage: (data: MessageHeader, timeout?: number) => Promise<Failure>,
   GetUnprocessedMessages: (timeout?: number) => Promise<MessageHeader[] | Failure>,
@@ -206,51 +200,35 @@ export class Client {
       const { privateKey, publicKey } = await crypto.generateKeyPair("ECDH");
       const { privateKey: signingKey, publicKey: verifyingKey } = await crypto.generateKeyPair("ECDSA");
       const sessionReference = this.#sessionReference ?? getRandomString();
-      const clientPublicKey = (await crypto.exportKey(publicKey)).toString("base64");
-      const clientVerifyingKey = (await crypto.exportKey(verifyingKey)).toString("base64");
+      const publicDHKey = (await crypto.exportKey(publicKey)).toString("base64");
+      const publicVerifyingKey = (await crypto.exportKey(verifyingKey)).toString("base64");
+      const { serverPublicKey, verifyingKey: serverVerifying } = (await this.axInstance.post("/registerKeys", { sessionReference, publicDHKey, publicVerifyingKey }))?.data || {};
+      const serverVerifyingKey = await crypto.importKey(fromBase64(serverVerifying), "ECDSA", "public", true);
+      console.log(`ServerPublicKey: ${serverPublicKey}`);
+      const serverPublicKeyImported = await crypto.importKey(fromBase64(serverPublicKey), "ECDH", "public", true);
+      const sessionKeyBits = await crypto.deriveSymmetricBitsKey(privateKey, serverPublicKeyImported, 512);
       const fileHash = await this.#fileHash;
-      const auth = { sessionReference, clientPublicKey, clientVerifyingKey, fileHash, url: this.url };
+      const sessionSigned = await crypto.sign(fromBase64(sessionReference), signingKey);
+      const auth = { sessionReference, sessionSigned, fileHash, url: this.url };
       this.#socket = io(this.url, { auth, withCredentials: true });
       this.#socket.on("disconnect", this.retryConnect.bind(this));
       let nevermind = false;
-      const completeHandshake = async (publicKey: string, verifyingKey: string, resolve: (success: boolean) => void, respond: (success: boolean) => void) => {
-        try {
-          if (nevermind) {
-            console.log("Nevermind");
-            respond(false);
-            resolve(false);
-            return;
-          }
-          console.log(`ServerPublicKey: ${publicKey}`);
-          const serverPublicKey = await crypto.importKey(Buffer.from(publicKey, "base64"), "ECDH", "public", true);
-          const serverVerifyingKey = await crypto.importKey(Buffer.from(verifyingKey, "base64"), "ECDSA", "public", true);
-          const sessionKeyBits = await crypto.deriveSymmetricBits(privateKey, serverPublicKey, 512);
-          this.#sessionReference = sessionReference;
-          this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBits, signingKey, serverVerifyingKey);
-          console.log(`Connected with session reference: ${sessionReference}`);
-          if (this.#username) {
-            this.notifyClientEvent?.(ClientEvent.SignedOut);
-            this.#displayName = null;
-            this.#username = null;
-            this.#x3dhUser = null;
-          }
-          respond(true);
-          resolve(true);
-        }
-        catch(err) {
-          logError(err);
-          respond(false);
-          resolve(false);
-        }
-      }
       let timeout: number = null;
-      const success: boolean = await new Promise((resolve) => {
-        this.#socket.once(SocketEvents.CompleteHandshake, (ref, publicKey, verifyingKey, respond) => {
+      const success = await new Promise<boolean>((resolve) => {
+        this.#socket.once(SocketEvents.CompleteHandshake, (ref, respond) => {
+          const finalize = (complete: boolean) => {
+            respond(complete);
+            resolve(complete);
+          }
           try {
+            if (nevermind) {
+              console.log("Nevermind");
+              finalize(false);
+              return;
+            }
             if (ref !== sessionReference) {
               const reconnected = this.#sessionReference && ref === "1";
-              respond(reconnected);
-              resolve(reconnected);
+              finalize(reconnected);
               if (reconnected) {
                 this.serverUnavailable = false;
               }
@@ -259,17 +237,23 @@ export class Client {
               }
               return;
             }
-            completeHandshake(publicKey, verifyingKey, resolve, respond); 
+            this.#sessionReference = sessionReference;
+            this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBits, signingKey, serverVerifyingKey);
+            console.log(`Connected with session reference: ${sessionReference}`);
+            if (this.#username) {
+              this.notifyClientEvent?.(ClientEvent.SignedOut);
+              this.#displayName = null;
+              this.#username = null;
+              this.#x3dhUser = null;
+            }
+            finalize(true);
           }
           catch(err) {
             logError(err);
-            respond(false);
-            resolve(false);
+            finalize(false);
           }
         });
-        timeout = window.setTimeout(() => {
-          resolve(false);
-        }, 15000);
+        timeout = window.setTimeout(() => resolve(false), 15000);
         this.#socket.io.on("error", (error) => {
           logError(error);
           if ((error as any).type === "TransportError") {
@@ -588,8 +572,7 @@ export class Client {
 
   private async extractSavedDetails(cookieSavedDetails: string, savedDetails: SavedDetails): Promise<[string, string]> {
     const { hSalt, keyBits } = savedDetails;
-    const ciphertext = Buffer.from(cookieSavedDetails, "base64");
-    const { username, password } = await crypto.deriveDecryptVerify(keyBits, ciphertext, hSalt, "Cookie Saved Details");
+    const { username, password } = await crypto.deriveDecryptVerify(keyBits, fromBase64(cookieSavedDetails), hSalt, "Cookie Saved Details");
     return [username, password];
   }
 
@@ -841,7 +824,7 @@ export class Client {
 
   private async requestRoom(chat: Chat) {
     const response = await this.RequestRoom({ username: chat.otherUser });
-    if ("reason" in response) {
+    if (response.reason) {
       return response;
     }
     const confirmed = await chat.establishRoom(this.#sessionCrypto, this.#socket);
@@ -1287,6 +1270,10 @@ function truncateText(text: string) {
   if (text.length <= maxChar) return text;
   const truncate = text.indexOf(" ", maxChar);
   return `${ text.slice(0, truncate) } ...`;
+}
+
+function fromBase64(data: string) {
+  return Buffer.from(data, "base64");
 }
 
 async function allSettledResults<T>(promises: Promise<T>[]) {

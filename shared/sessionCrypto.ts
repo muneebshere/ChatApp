@@ -12,12 +12,12 @@ type SignedEncryptedMessage = SignedEncryptedData & {
 }
 
 export class SessionCrypto {
-  readonly #sessionKeyBits: Buffer;
+  readonly#sessionKeyBits: CryptoKey;
   readonly #sessionReference: string;
   readonly #sessionSigningKey: CryptoKey;
   readonly #sessionVerifyingKey: CryptoKey;
   
-  constructor(sessionReference: string, sessionKeyBits: Buffer, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey) {
+  constructor(sessionReference: string, sessionKeyBits: CryptoKey, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey) {
     this.#sessionReference = sessionReference;
     this.#sessionKeyBits = sessionKeyBits;
     this.#sessionSigningKey = sessionSigningKey;
@@ -46,5 +46,9 @@ export class SessionCrypto {
         return null;
     }
 
+  }
+
+  changeKeyBits(newKeyBits: CryptoKey) {
+    return new SessionCrypto(this.#sessionReference, newKeyBits, this.#sessionSigningKey, this.#sessionVerifyingKey)
   }
 }

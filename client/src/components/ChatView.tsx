@@ -373,6 +373,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   const { messages, contactDetails: { displayName } } = chat;
   const [, triggerRerender] = useState(2);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const messageRef = useRef(message);
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollbar = () => scrollRef.current;
@@ -408,7 +409,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
     chat.subscribe("chatview", () => triggerRerender((rerender) => 10 / rerender));
     return () => {
       chat.unsubscribe("chatview");
-      setMessage(textareaRef.current.value);
+      setMessage(messageRef.current);
     }
   },[])
 
@@ -422,7 +423,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   }, []);
 
   const sendMessage = () => {
-    const content = textareaRef.current.value;
+    const content = messageRef.current;
     const timestamp = Date.now();
     chat.sendMessage({ content, timestamp, replyId}).then((success) => {
       scrollbar().scrollTo({ top: scrollbar().scrollHeight, behavior: "instant" });
@@ -477,6 +478,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
             }}
             placeholder="Type a message"
             defaultValue={message}
+            onChange={(e) => messageRef.current = e.target.value }
             onHeightUpdate={onHeightUpdate}
             onSubmit={sendMessage}
             minRows={1}
