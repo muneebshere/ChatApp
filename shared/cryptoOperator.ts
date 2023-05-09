@@ -51,7 +51,7 @@ export async function digest(algorithm: AlgorithmIdentifier, data: BufferSource)
     return Buffer.from(await subtle.digest(algorithm, data)).toString("base64");
 }
 
-export async function importRaw(source: Buffer | string): Promise<CryptoKey> {
+export async function importRaw(source: BufferSource | string): Promise<CryptoKey> {
     const usePbkdf = typeof source === "string";
     const bits = usePbkdf ? Buffer.from(source) : source;
     return await subtle.importKey("raw", bits, usePbkdf ? "PBKDF2" : "HKDF", false, ["deriveBits", "deriveKey"]);
