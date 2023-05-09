@@ -4,7 +4,7 @@ import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
 import { Buffer } from "./node_modules/buffer/";
 import { Buffer as NodeBuffer } from "node:buffer";
-import { ChatData, KeyBundle, MessageEvent, MessageHeader, ChatRequestHeader, PasswordEncryptedData, PublishKeyBundlesRequest, SavedDetails, StoredMessage, UserAuthInfo, UserEncryptedData } from "../shared/commonTypes";
+import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PasswordEncryptedData, PublishKeyBundlesRequest, SavedDetails, StoredMessage, UserAuthInfo, UserEncryptedData } from "../shared/commonTypes";
 
 export type RunningSession = {
   sessionId: string;
@@ -124,24 +124,13 @@ const messageSchema = new Schema({
   },
   messageId: {
     type: Schema.Types.String,
-    required: true,
-    match: /^\d+?\-\d+$/
+    required: true
   },
   timestamp: {
     type: Schema.Types.Number,
     required: true
   },
-  content: userEncryptedData,
-  delivered: {
-    type: Schema.Types.Number,
-    required: true,
-    default: 0
-  },
-  seen: {
-    type: Schema.Types.Number,
-    required: true,
-    default: 0
-  }
+  content: userEncryptedData
 });
 
 const chatSchema = new Schema({
@@ -156,30 +145,6 @@ const chatSchema = new Schema({
   },
   chatDetails: userEncryptedData,
   exportedChattingSession: userEncryptedData
-});
-
-const messageEventSchema = new Schema({
-  addressedTo: {
-    type: Schema.Types.String,
-    required: true
-  },
-  sessionId: {
-    type: Schema.Types.String,
-    required: true
-  },
-  messageId: {
-    type: Schema.Types.String,
-    required: true
-  },
-  timestamp: {
-    type: Schema.Types.Number,
-    required: true
-  },
-  event: {
-    type: Schema.Types.String,
-    required: true,
-    enum: ["delivered", "seen"]
-  }
 });
 
 export class MongoHandlerCentral {
@@ -393,8 +358,6 @@ export class MongoHandlerCentral {
 
   private static readonly MessageDeposit = mongoose.model("MessageDeposit", messageHeaderSchema.index({ addressedTo: "hashed", sessionId: "hashed" }).index({ addressedTo: 1, sessionId: 1, messageId: 1 }, { unique: true }), "message_deposit");
 
-  private static readonly MessageEvent = mongoose.model("MessageEvent", messageEventSchema.index({ addressedTo: "hashed", sessionId: "hashed" }).index({ addressedTo: 1, sessionId: 1, messageId: 1, event: 1 }, { unique: true }), "message_event");
-
   static onError: () => void;
 
   static async connect(url: string, options?: mongoose.ConnectOptions) {
@@ -523,20 +486,6 @@ export class MongoHandlerCentral {
     }
   }
 
-  static async logMessageEvent(event: MessageEvent) {
-    try {
-      const userHandler = this.userHandlers.get(event.addressedTo);
-      if (await userHandler.logMessageEvent(event)) return true;
-      const newEvent = new this.MessageEvent(event);
-      return (newEvent === await newEvent.save());
-    }
-    catch(err) {
-      logError(err);
-      return false;
-    }
-
-  }
-
   static async retrieveMessages(addressedTo: string, then: (messages: any[]) => Promise<boolean>) {
     try {
       const messages = await this.MessageDeposit.find({ addressedTo }).lean().exec();
@@ -565,26 +514,6 @@ export class MongoHandlerCentral {
     }
   }
 
-  static async retrieveMessageEvents(addressedTo: string, then: (events: MessageEvent) => Promise<boolean>) {
-    try {
-      const events = await this.MessageEvent.find({ addressedTo }).lean().exec();
-      let success = true;
-      for (const event of events) {
-        if (await then(event)) {
-          success &&= (await this.MessageEvent.findByIdAndDelete(event._id)).$isDeleted();
-        }
-        else {
-          success = false;
-        }
-      }
-      return success;
-    }
-    catch(err) {
-      logError(err);
-      return false;
-    }
-  }
-
   static registerUserHandler(username: string, userHandler: MongoUserHandler) {
     this.userHandlers.set(username, userHandler);
   }
@@ -600,9 +529,9 @@ export class MongoUserHandler {
   private readonly UnprocessedMessage: mongoose.Model<any>;
   private readonly Message: mongoose.Model<any>;
   private readonly Chat: mongoose.Model<any>;
-  private readonly notifyMessage: (message: MessageHeader | ChatRequestHeader | MessageEvent) => void;
+  private readonly notifyMessage: (message: MessageHeader | ChatRequestHeader) => void;
 
-  private constructor(username: string, notifyMessage: (message: MessageHeader | ChatRequestHeader | MessageEvent) => void) {
+  private constructor(username: string, notifyMessage: (message: MessageHeader | ChatRequestHeader) => void) {
     this.username = username;
     this.ChatRequest = mongoose.model(`${username}ChatRequests`, chatRequestHeaderSchema.index({ timestamp: -1 }).index({ sessionId: 1 }, { unique: true }), `${username}_chat_requests`);
     this.UnprocessedMessage = mongoose.model(`${username}UnprocessedMessages`, messageHeaderSchema.index({ sessionId: "hashed", timestamp: -1 }).index({ sessionId: 1, messageId: 1 }, { unique: true }), `${username}_unprocessed_messages`);
@@ -611,7 +540,7 @@ export class MongoUserHandler {
     this.notifyMessage = notifyMessage;
   }
 
-  static async createHandler(username: string, notifyMessage: (message: MessageHeader | ChatRequestHeader | MessageEvent) => void) {
+  static async createHandler(username: string, notifyMessage: (message: MessageHeader | ChatRequestHeader) => void) {
     const userHandler = new MongoUserHandler(username, notifyMessage);
     MongoHandlerCentral.registerUserHandler(username, userHandler);
     await userHandler.retrieve();
@@ -639,7 +568,6 @@ export class MongoUserHandler {
         return false;
       }
     });
-    MongoHandlerCentral.retrieveMessageEvents(this.username, (event) => this.logMessageEvent(event));
   }
 
   async depositMessage(message: MessageHeader) {
@@ -672,15 +600,6 @@ export class MongoUserHandler {
       logError(err);
       return false;
     }
-  }
-
-  async logMessageEvent(event: MessageEvent) {
-    if (event.addressedTo !== this.username) return false;
-    if (await this.updateMessage(event.sessionId, event.messageId, event.event, event.timestamp)) {
-      this.notifyMessage(event);
-      return true;
-    }
-    return false;
   }
 
   async getAllChats(): Promise<ChatData[]> {
@@ -726,6 +645,8 @@ export class MongoUserHandler {
 
   async storeMessage(message: StoredMessage) {
     try {
+      const { sessionId } = message;
+      await this.Message.deleteOne({ sessionId });
       const newMessage = new this.Message(bufferReplaceForMongo(message));
       if (newMessage === await newMessage.save()) {
         const { sessionId, messageId } = message;
@@ -740,33 +661,13 @@ export class MongoUserHandler {
     }
   }
 
-  async updateMessage(sessionId: string, messageId: string, event: "delivered" | "seen", timestamp: number) {
-    const message = await this.Message.findOne({ sessionId, messageId }).exec();
-    if (!message) return false;
-    if (event === "delivered") {
-      if (message.delivered) return false;
-      message.delivered = timestamp;
-    }
-    else {
-      if (message.seen) return false;
-      message.seen = timestamp;
-    }
-    try {
-      return (message === await message.save());
-    }
-    catch(err) {
-      logError(err);
-      return false;
-    }
-  }
-
   async createChat(chat: { sessionId: string, lastActivity: number, chatDetails: UserEncryptedData, chattingSession: UserEncryptedData }) {
     try {
       const newChat = new this.Chat(bufferReplaceForMongo(chat));
       if (newChat === await newChat.save()) {
         const { sessionId } = chat;
         await this.ChatRequest.deleteOne({ sessionId });
-        await this.UnprocessedMessage.deleteOne({ sessionId, messageId: "1-1" });
+        await this.UnprocessedMessage.deleteOne({ sessionId, messageId: "0" });
         return true;
       }
       return false;

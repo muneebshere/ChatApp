@@ -381,7 +381,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   const underbar = useScrollOnResize(scrollbar, orientationState.lastOrientation, setIsScrolledDown);
   const [msgBarHeight, onHeightUpdate] = useUpdateHeight(scrollbar);
   const adjustBar = useAdjustbar(scrollbar, underbar, msgBarHeight);
-  const [replyingToHeight, replyToId, setReplyTo, setTextareaRef, replyToElement] = useReplyingTo(displayName, setHighlight, belowXL);
+  const [replyingToHeight, replyId, setReplyTo, setTextareaRef, replyToElement] = useReplyingTo(displayName, setHighlight, belowXL);
   const [updateCurrentElement, registerMessageRef] = useScrollRestore(scrollbar, lastScrolledTo, setLastScrolledTo, orientationState);
   const [width, ] = useSize(scrollRef);
   const toggleScroll = (scrollOn: boolean) => { 
@@ -422,7 +422,9 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   }, []);
 
   const sendMessage = () => {
-    chat.sendMessage(textareaRef.current.value, Date.now(), replyToId).then((success) => {
+    const content = textareaRef.current.value;
+    const timestamp = Date.now();
+    chat.sendMessage({ content, timestamp, replyId}).then((success) => {
       scrollbar().scrollTo({ top: scrollbar().scrollHeight, behavior: "instant" });
     });
     textareaRef.current.value = "";

@@ -17,7 +17,7 @@ import SvgMessageCard from "./SvgMessageCard";
 import "katex/dist/katex.min.css";
 import { ReplyingToMemo } from "./ReplyingTo";
 import { StyledReactMarkdownVariable } from "./CommonElementStyles";
-import { DeliveryInfo, DisplayMessage, ReplyingToInfo } from "../../../shared/commonTypes";
+import { MessageDeliveryInfo, DisplayMessage, ReplyingToInfo } from "../../../shared/commonTypes";
 import { ElementRects } from "@floating-ui/react";
 import useSwipeDrag from "./Hooks/useSwipeDrag";
 import { SxProps } from "@mui/material";
@@ -43,8 +43,7 @@ export const MessageCardContext = createContext<MessageCardContextData>(null);
 
 const StyledReactMarkdownBody = StyledReactMarkdownVariable(22);
 
-function StatusButton(deliveryInfo: DeliveryInfo) {
-
+function StatusButton(deliveryInfo: MessageDeliveryInfo) {
   if (!deliveryInfo.sentByMe) return null;
   const { delivery } = deliveryInfo;
   if (!delivery) {

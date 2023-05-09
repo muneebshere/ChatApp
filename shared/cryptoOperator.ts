@@ -95,13 +95,13 @@ export async function decrypt(encryptInfo: EncryptInfo, ciphertext: Buffer): Pro
     return Buffer.from(await subtle.decrypt(aesGCM(iv), encryptKey, ciphertext));
 }
 
-export async function encryptData(data: any, keyBits: CryptoKey | Buffer, purpose: string, hSalt?: Buffer): Promise<UserEncryptedData> {
+export async function deriveEncrypt(data: any, keyBits: CryptoKey | Buffer, purpose: string, hSalt?: Buffer): Promise<UserEncryptedData> {
     hSalt ||= getRandomVector(48);
     const ciphertext = await encrypt(await deriveAESKey(keyBits, hSalt, purpose), serialize(data));
     return { ciphertext, hSalt };
 }
 
-export async function decryptData(data: UserEncryptedData, keyBits: CryptoKey | Buffer, purpose: string): Promise<any> {
+export async function deriveDecrypt(data: UserEncryptedData, keyBits: CryptoKey | Buffer, purpose: string): Promise<any> {
     const { ciphertext, hSalt } = data;
     return deserialize(await decrypt(await deriveAESKey(keyBits, hSalt, purpose), ciphertext));
 }
@@ -152,23 +152,24 @@ export async function deriveMACKey(keyBits: CryptoKey | Buffer, salt: Buffer, pu
     return await subtle.deriveKey(hkdfParams(salt, length, purpose), importedBits, hmacKeyGenParams(length), false, ["sign", "verify"]);
 }
 
-export async function deriveSignEncrypt(keyBits: CryptoKey | Buffer, plaintext: Buffer, salt: Buffer, purpose: string):
+export async function deriveSignEncrypt(keyBits: CryptoKey | Buffer, plaintext: any, salt: Buffer, purpose: string):
     Promise<EncryptedData>
-export async function deriveSignEncrypt(keyBits: CryptoKey | Buffer, plaintext: Buffer, salt: Buffer, purpose: string, signingKey: CryptoKey):
+export async function deriveSignEncrypt(keyBits: CryptoKey | Buffer, plaintext: any, salt: Buffer, purpose: string, signingKey: CryptoKey):
         Promise<SignedEncryptedData>
-export async function deriveSignEncrypt(keyBits: CryptoKey | Buffer, plaintext: Buffer, salt: Buffer, purpose: string, signingKey?: CryptoKey):
+export async function deriveSignEncrypt(keyBits: CryptoKey | Buffer, plaintext: any, salt: Buffer, purpose: string, signingKey?: CryptoKey):
     Promise<EncryptedData | SignedEncryptedData> {
-    const ciphertext = await encrypt(await deriveAESKey(keyBits, salt, purpose), plaintext);
+    const plaintextBuffer = serialize(plaintext);
+    const ciphertext = await encrypt(await deriveAESKey(keyBits, salt, purpose), plaintextBuffer);
     if (signingKey) {
-        const signature = await sign(plaintext, signingKey);
+        const signature = await sign(plaintextBuffer, signingKey);
         return { ciphertext, signature };
     }
     return { ciphertext };
 }
 
-export async function deriveDecryptVerify(keyBits: CryptoKey | Buffer, ciphertext: Buffer, salt: Buffer, purpose: string): Promise<Buffer>
-export async function deriveDecryptVerify(keyBits: CryptoKey | Buffer, ciphertext: Buffer, salt: Buffer, purpose: string, signature: Buffer, verifyingKey: CryptoKey): Promise<Buffer>
-export async function deriveDecryptVerify(keyBits: CryptoKey | Buffer, ciphertext: Buffer, salt: Buffer, purpose: string, signature?: Buffer, verifyingKey?: CryptoKey): Promise<Buffer> {
+export async function deriveDecryptVerify(keyBits: CryptoKey | Buffer, ciphertext: Buffer, salt: Buffer, purpose: string): Promise<any>
+export async function deriveDecryptVerify(keyBits: CryptoKey | Buffer, ciphertext: Buffer, salt: Buffer, purpose: string, signature: Buffer, verifyingKey: CryptoKey): Promise<any>
+export async function deriveDecryptVerify(keyBits: CryptoKey | Buffer, ciphertext: Buffer, salt: Buffer, purpose: string, signature?: Buffer, verifyingKey?: CryptoKey): Promise<any> {
     try {
         const plaintext = await decrypt(await deriveAESKey(keyBits, salt, purpose), ciphertext);
         if (signature) {
@@ -177,7 +178,7 @@ export async function deriveDecryptVerify(keyBits: CryptoKey | Buffer, ciphertex
                 return null;
             }
         }
-        return plaintext;
+        return deserialize(plaintext);
     }
     catch (err) {
         console.log(`${err}`);

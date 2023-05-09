@@ -5,10 +5,10 @@ import { io, Socket } from "socket.io-client";
 import { Buffer } from "./node_modules/buffer";
 import { stringify } from "safe-stable-stringify";
 import { SessionCrypto } from "../../shared/sessionCrypto";
-import { ChattingSession, ViewChatRequest, ViewPendingRequest, X3DHUser } from "./e2e-encryption";
+import { ChattingSession, SendingMessage, ViewChatRequest, ViewPendingRequest, X3DHUser } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
-import { ErrorStrings, Failure, Username, AuthSetupKey, UserEncryptedData, RegisterNewUserRequest, InitiateAuthenticationResponse, ConcludeAuthenticationRequest, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, randomFunctions, failure, SavedDetails, PasswordEncryptedData, AuthSetupKeyData, NewUserData, AuthChangeData, EstablishData, MessageHeader, ChatRequestHeader, StoredMessage, MessageEvent, ChatData, PlainMessage, MessageBody, DisplayMessage, Contact, Profile, ReplyingToInfo } from "../../shared/commonTypes";
+import { ErrorStrings, Failure, Username, AuthSetupKey, UserEncryptedData, RegisterNewUserRequest, InitiateAuthenticationResponse, ConcludeAuthenticationRequest, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, randomFunctions, failure, SavedDetails, PasswordEncryptedData, AuthSetupKeyData, NewUserData, AuthChangeData, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, DeliveryInfo } from "../../shared/commonTypes";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;
@@ -48,14 +48,12 @@ type ChatEvent = {
 
 type ClientChatInterface = Readonly<{
   SendMessage: (data: MessageHeader, timeout?: number) => Promise<Failure>,
-  SendMessageEvent: (data: Omit<MessageEvent, "sessionId">, timeout?: number) => Promise<Failure>,
   GetUnprocessedMessages: (timeout?: number) => Promise<MessageHeader[] | Failure>,
   GetMessagesByNumber: (data: { limit: number, olderThan?: number }, timeout?: number) => Promise<StoredMessage[] | Failure>,
   GetMessagesUptoTimestamp: (data: { newerThan: number, olderThan?: number }, timeout?: number) => Promise<StoredMessage[] | Failure>,
   GetMessagesUptoId: (data: { messageId: string, olderThan?: number }, timeout?: number) => Promise<StoredMessage[] | Failure>,
   GetMessageById: (data: { messageId: string }, timeout?: number) => Promise<StoredMessage | Failure>,
   StoreMessage: (data: Omit<StoredMessage, "sessionId">, timeout?: number) => Promise<Failure>,
-  UpdateMessage: (data: Omit<MessageEvent, "addressedTo" | "sessionId">, timeout?: number) => Promise<Failure>,
   UpdateChat: (data: Omit<ChatData, "sessionId">, timeout?: number) => Promise<Failure>
 }>;
 
@@ -68,8 +66,7 @@ export class Client {
   private readonly responseMap: Map<SocketEvents, any> = new Map([
     [SocketEvents.RequestRoom, this.roomRequested] as [SocketEvents, any],
     [SocketEvents.MessageReceived, this.messageReceived],
-    [SocketEvents.ChatRequestReceived, this.chatRequestReceived],
-    [SocketEvents.MessageEventLogged, this.messageEventLogged]
+    [SocketEvents.ChatRequestReceived, this.chatRequestReceived]
   ]);
   private readonly url: string;
   private readonly axInstance: Axios;
@@ -96,9 +93,6 @@ export class Client {
     SendMessage: (data: MessageHeader, timeout = 0) => {
       return this.request(SocketEvents.SendMessage, data, timeout);
     },
-    SendMessageEvent: (data: Omit<MessageEvent, "sessionId">, timeout = 0) => {
-      return this.request(SocketEvents.SendMessageEvent, data, timeout);
-    },
     GetUnprocessedMessages: (timeout = 0) => {
       return this.request(SocketEvents.GetUnprocessedMessages, { sessionId }, timeout);
     },
@@ -116,9 +110,6 @@ export class Client {
     },
     StoreMessage: (data: Omit<StoredMessage, "sessionId">, timeout = 0) => {
       return this.request(SocketEvents.StoreMessage, { sessionId, ...data }, timeout);
-    },
-    UpdateMessage: (data: Omit<MessageEvent, "addressedTo" | "sessionId">, timeout = 0) => {
-      return this.request(SocketEvents.UpdateMessage, { sessionId, ...data }, timeout);
     },
     UpdateChat: (data: Omit<ChatData, "sessionId">, timeout = 0) =>  {
       return this.request(SocketEvents.UpdateChat, { sessionId, ...data }, timeout);
@@ -351,8 +342,8 @@ export class Client {
     try {
       displayName ??= username;
       const encryptionBaseVector = getRandomVector(64);
-      const encryptionBase = await this.encrypt(username, password, encryptionBaseVector, "Encryption Base");
-      const serverProof = await this.encrypt(username, password, serialize({ username }), "Server Proof");
+      const encryptionBase = await this.encrypt(username, password, { encryptionBaseVector }, "Encryption Base");
+      const serverProof = await this.encrypt(username, password, { username }, "Server Proof");
       this.#encryptionBaseVector = await crypto.importRaw(encryptionBaseVector);
       const x3dhUser = await X3DHUser.new(username, this.#encryptionBaseVector);
       if (!x3dhUser) {
@@ -361,7 +352,7 @@ export class Client {
       }
       const keyBundles = await x3dhUser.publishKeyBundles();
       const x3dhInfo = await x3dhUser.exportUser();
-      const userDetails = await crypto.encryptData({ profilePicture, displayName }, this.#encryptionBaseVector, "User Details");
+      const userDetails = await crypto.deriveEncrypt({ profilePicture, displayName }, this.#encryptionBaseVector, "User Details");
       const newUserData: NewUserData = { username, userDetails, serverProof, encryptionBase, x3dhInfo, keyBundles };
       if (!x3dhInfo) {
         this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
@@ -446,7 +437,7 @@ export class Client {
         this.notifyClientEvent?.(ClientEvent.FailedSignIn);
         return concludeResponse;
       }
-      if (deserialize(await this.decrypt(username, password, response.authInfo.serverProof, "Server Proof")).username !== username) {
+      if ((await this.decrypt(username, password, response.authInfo.serverProof, "Server Proof")).username !== username) {
         this.notifyClientEvent?.(ClientEvent.FailedSignIn);
         return failure(ErrorStrings.ProcessFailed);
       }
@@ -457,13 +448,13 @@ export class Client {
         this.notifyClientEvent?.(ClientEvent.FailedSignIn);
         return failure(ErrorStrings.ProcessFailed);
       }
-      const { displayName, profilePicture } = await crypto.decryptData(userDetails, this.#encryptionBaseVector, "User Details");
+      const { displayName, profilePicture } = await crypto.deriveDecrypt(userDetails, this.#encryptionBaseVector, "User Details");
       this.#username = username;
       this.#displayName = displayName;
       this.#profilePicture = profilePicture;
       this.#x3dhUser = x3dhUser;
       for (const { sessionId, timestamp, otherUser, firstMessage } of this.#x3dhUser.pendingChatRequests) {
-        const awaited: AwaitedRequest = { sessionId, otherUser, lastActivity: timestamp, message: { messageId: "0-0", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } }, type: "AwaitedRequest" };
+        const awaited: AwaitedRequest = { sessionId, otherUser, lastActivity: timestamp, message: { messageId: "i", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } }, type: "AwaitedRequest" };
         this.addChat(awaited);
         const result = await this.GetUnprocessedMessages(sessionId);
         if ("reason" in result) {
@@ -513,7 +504,7 @@ export class Client {
       logError(reason);
       return failure(ErrorStrings.ProcessFailed);
     }
-    this.addChat({ sessionId, otherUser, lastActivity: timestamp, message: { messageId: "0-0", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } }, type: "AwaitedRequest" });
+    this.addChat({ sessionId, otherUser, lastActivity: timestamp, message: { messageId: "i", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } }, type: "AwaitedRequest" });
     return { reason: null };
   }
 
@@ -543,14 +534,14 @@ export class Client {
     }
   }
 
-  private async encrypt(username: string, password: string, data: Buffer, purpose: string): Promise<PasswordEncryptedData> {
+  private async encrypt(username: string, password: string, data: any, purpose: string): Promise<PasswordEncryptedData> {
     const [masterKeyBits, pInfo] = await crypto.deriveMasterKeyBits(`${username}#${password}`);
     const hSalt = getRandomVector(48);
     const encrypted = await crypto.deriveSignEncrypt(masterKeyBits, data, hSalt, purpose);
     return { ...encrypted, ...pInfo, hSalt };
   }
 
-  private async decrypt(username: string, password: string, data: PasswordEncryptedData, purpose: string) {
+  private async decrypt(username: string, password: string, data: PasswordEncryptedData, purpose: string): Promise<any> {
     const { ciphertext, hSalt, ...pInfo } = data;
     const masterKeyBits = await crypto.deriveMasterKeyBits(`${username}#${password}`, pInfo);
     return await crypto.deriveDecryptVerify(masterKeyBits, ciphertext, hSalt, purpose);
@@ -559,28 +550,28 @@ export class Client {
   private async processAuthSetupKey(username: string, authSetupKey: AuthSetupKey): Promise<AuthSetupKeyData> {
     const { authKeyData: { ciphertext }, dInfo: { hSalt, ...pInfo } } = authSetupKey;
     const userKeyBits = await crypto.deriveMasterKeyBits(username, pInfo);
-    return deserialize(await crypto.deriveDecryptVerify(userKeyBits, ciphertext, hSalt, "AuthKeyData"));
+    return await crypto.deriveDecryptVerify(userKeyBits, ciphertext, hSalt, "AuthKeyData");
   }
 
   private async createNewUserAuth(username: string, password: string, keyData: AuthSetupKeyData, userData: NewUserData): Promise<RegisterNewUserRequest> {
     const { newAuthReference, hSaltAuth, hSaltEncrypt, pInfo } = keyData;
     const newAuthBits = await crypto.deriveMasterKeyBits(`${username}#${password}`, pInfo);
     const signingKey = await crypto.deriveMACKey(newAuthBits, hSaltAuth, "NewUserVerify", 512);
-    const newUserData = await crypto.deriveSignEncrypt(newAuthBits, serialize(userData), hSaltEncrypt, "NewUser", signingKey);
+    const newUserData = await crypto.deriveSignEncrypt(newAuthBits, userData, hSaltEncrypt, "NewUser", signingKey);
     return { newAuthReference, newUserData, newAuthBits };
   }
 
   private async createNewAuth(username: string, password: string, keyData: AuthSetupKeyData, response: InitiateAuthenticationResponse): Promise<[ConcludeAuthenticationRequest, Buffer]> {
     const { currentAuthReference, authInfo: { pInfo: currentPInfo, encryptionBase: oldBase } } = response;
     const { newAuthReference, hSaltAuth, hSaltEncrypt, pInfo } = keyData;
-    const encryptionBaseVector = await this.decrypt(username, password, oldBase, "Encryption Base");
-    const serverProof = await this.encrypt(username, password, serialize({ username }), "Server Proof");
-    const encryptionBase = await this.encrypt(username, password, encryptionBaseVector, "Encryption Base");
+    const { encryptionBaseVector } = await this.decrypt(username, password, oldBase, "Encryption Base");
+    const serverProof = await this.encrypt(username, password, { username }, "Server Proof");
+    const encryptionBase = await this.encrypt(username, password, { encryptionBaseVector }, "Encryption Base");
     const currentAuthBits = await crypto.deriveMasterKeyBits(`${username}#${password}`, currentPInfo);
     const newAuthBits = await crypto.deriveMasterKeyBits(`${username}#${password}`, pInfo);
     const authChange: AuthChangeData = { username, newAuthBits, encryptionBase, serverProof };
     const signingKey = await crypto.deriveMACKey(currentAuthBits, hSaltAuth, "AuthChangeVerify", 512);
-    const authChangeData = await crypto.deriveSignEncrypt(currentAuthBits, serialize(authChange), hSaltEncrypt, "AuthChange", signingKey);
+    const authChangeData = await crypto.deriveSignEncrypt(currentAuthBits, authChange, hSaltEncrypt, "AuthChange", signingKey);
     const request: ConcludeAuthenticationRequest = { currentAuthReference, newAuthReference, currentAuthBits, authChangeData };
     return [request, encryptionBaseVector];
   }
@@ -589,7 +580,7 @@ export class Client {
     const saveToken = getRandomString();
     const keyBits = getRandomVector(32);
     const hSalt = getRandomVector(48);
-    const { ciphertext } = await crypto.deriveSignEncrypt(keyBits, serialize({ username, password }), hSalt, "Cookie Saved Details");
+    const { ciphertext } = await crypto.deriveSignEncrypt(keyBits, { username, password }, hSalt, "Cookie Saved Details");
     const cookieSavedDetails = ciphertext.toString("base64");
     const savedDetails: SavedDetails = { saveToken, keyBits, hSalt, url: this.url };
     return { cookieSavedDetails, savedDetails };
@@ -598,7 +589,7 @@ export class Client {
   private async extractSavedDetails(cookieSavedDetails: string, savedDetails: SavedDetails): Promise<[string, string]> {
     const { hSalt, keyBits } = savedDetails;
     const ciphertext = Buffer.from(cookieSavedDetails, "base64");
-    const { username, password } = deserialize(await crypto.deriveDecryptVerify(keyBits, ciphertext, hSalt, "Cookie Saved Details"));
+    const { username, password } = await crypto.deriveDecryptVerify(keyBits, ciphertext, hSalt, "Cookie Saved Details");
     return [username, password];
   }
 
@@ -685,7 +676,7 @@ export class Client {
     }
     const { profile, firstMessage, timestamp } = viewChatRequest;
     const lastActivity = respondingAt;
-    const chatDetails = await crypto.encryptData(profile, this.#encryptionBaseVector, "ContactDetails");
+    const chatDetails = await crypto.deriveEncrypt(profile, this.#encryptionBaseVector, "ContactDetails");
     const chatData = { chatDetails, exportedChattingSession, lastActivity, sessionId };
     await this.CreateChat(chatData);
     const newChat = await Chat.instantiate(this.#username, this.#encryptionBaseVector, this.chatInterface(sessionId), chatData, { content: firstMessage, sentByMe: false, timestamp });
@@ -718,7 +709,7 @@ export class Client {
     }
     const { message: { content, timestamp } } = awaitedRequest;
     const [{ profile, respondedAt }, exportedChattingSession] = response;
-    const chatDetails = await crypto.encryptData(profile, this.#encryptionBaseVector, "ContactDetails");
+    const chatDetails = await crypto.deriveEncrypt(profile, this.#encryptionBaseVector, "ContactDetails");
     const chatData = { chatDetails, exportedChattingSession, lastActivity: respondedAt, sessionId };
     const { reason } = await this.CreateChat(chatData);
     if (reason) {
@@ -730,7 +721,7 @@ export class Client {
     if (r2) {
       logError(r2);
     }
-    const newChat = await Chat.instantiate(this.#username, this.#encryptionBaseVector, this.chatInterface(sessionId), chatData, { content, timestamp, sentByMe: true, delivery: respondedAt });
+    const newChat = await Chat.instantiate(this.#username, this.#encryptionBaseVector, this.chatInterface(sessionId), chatData, { content, timestamp, sentByMe: true, deliveredAt: respondedAt });
     this.removeChat(sessionId, "sessionId");
     this.addChat(newChat);
     await this.requestRoom(newChat);
@@ -801,7 +792,7 @@ export class Client {
     return this.request(SocketEvents.DeleteChatRequest, data, timeout);
   }
   
-  private RequestRoom(data: Username & EstablishData, timeout = 0): Promise<EstablishData | Failure> { 
+  private RequestRoom(data: Username, timeout = 0): Promise<Failure> { 
     return this.request(SocketEvents.RequestRoom, data, timeout);
   }
 
@@ -811,8 +802,8 @@ export class Client {
     }
     return new Promise(async (resolve: (result: any) => void) => {
       data = { ...data, fileHash: await this.#fileHash, url: this.url };
-      this.#socket.emit(event, (await this.#sessionCrypto.signEncrypt(data, event)).toString("base64"), 
-      async (response: string) => resolve(response ? await this.#sessionCrypto.decryptVerify(Buffer.from(response, "base64"), event) : {}));
+      this.#socket.emit(event, (await this.#sessionCrypto.signEncryptToBase64(data, event)), 
+      async (response: string) => resolve(response ? await this.#sessionCrypto.decryptVerifyFromBase64(response, event) : {}));
       if (timeout > 0) {
         window.setTimeout(() => resolve({}), timeout);
       }
@@ -821,10 +812,10 @@ export class Client {
 
   private async respond(event: string, data: string, responseBy: (arg0: any) => any, respondAt: (arg0: string) => void) {
     const respond = async (response: any) => {
-      respondAt(Buffer.from(await this.#sessionCrypto.signEncrypt(response, event)).toString("base64"));
+      respondAt(await this.#sessionCrypto.signEncryptToBase64(response, event));
     }
     try {
-      const decryptedData = await this.#sessionCrypto.decryptVerify(Buffer.from(data, "base64"), event);
+      const decryptedData = await this.#sessionCrypto.decryptVerifyFromBase64(data, event);
       if (!decryptedData) await respond(failure(ErrorStrings.DecryptFailure));
       else {
         const response = await responseBy(decryptedData);
@@ -840,36 +831,20 @@ export class Client {
     }
   }
 
-  private async roomRequested({ username, sessionReference, publicKey, verifyingKey }: Username & EstablishData) {
+  private async roomRequested({ username }: Username) {
     if (username === this.#username) return failure(ErrorStrings.InvalidRequest);
     const chat = this.chatUsernamesList.get(username);
     if (!chat || chat.type !== "Chat") return failure(ErrorStrings.InvalidRequest);
-    const { privateKey, publicKey: myPublicKey } = await crypto.generateKeyPair("ECDH");
-    const { privateKey: signingKey, publicKey: myVerifyingKey } = await crypto.generateKeyPair("ECDSA");
-    const otherPublicKey = await crypto.importKey(publicKey, "ECDH", "public", true);
-    const otherVerifyingKey = await crypto.importKey(verifyingKey, "ECDSA", "public", true);
-    const sessionKeyBits = await crypto.deriveSymmetricBits(privateKey, otherPublicKey, 512);
-    chat.establishRoom(new SessionCrypto(sessionReference, sessionKeyBits, signingKey, otherVerifyingKey), this.#socket);
-    return { sessionReference, publicKey: await crypto.exportKey(myPublicKey), verifyingKey: await crypto.exportKey(myVerifyingKey) };
+    chat.establishRoom(this.#sessionCrypto, this.#socket);
+    return { reason: null };
   }
 
   private async requestRoom(chat: Chat) {
-    const sessionReference = getRandomString();
-    const { privateKey, publicKey: myPublicKey } = await crypto.generateKeyPair("ECDH");
-    const { privateKey: signingKey, publicKey: myVerifyingKey } = await crypto.generateKeyPair("ECDSA");
-    const data = { username: chat.otherUser, sessionReference, publicKey: await crypto.exportKey(myPublicKey), verifyingKey: await crypto.exportKey(myVerifyingKey) };
-    const response = await this.RequestRoom(data);
+    const response = await this.RequestRoom({ username: chat.otherUser });
     if ("reason" in response) {
       return response;
     }
-    const { sessionReference: ref, publicKey, verifyingKey } = response;
-    if (ref !== sessionReference) {
-      return failure(ErrorStrings.InvalidReference);
-    }
-    const otherPublicKey = await crypto.importKey(publicKey, "ECDH", "public", true);
-    const otherVerifyingKey = await crypto.importKey(verifyingKey, "ECDSA", "public", true);
-    const sessionKeyBits = await crypto.deriveSymmetricBits(privateKey, otherPublicKey, 512);
-    const confirmed = await chat.establishRoom(new SessionCrypto(sessionReference, sessionKeyBits, signingKey, otherVerifyingKey), this.#socket);
+    const confirmed = await chat.establishRoom(this.#sessionCrypto, this.#socket);
     if (!confirmed) return failure(ErrorStrings.ProcessFailed);
     return { reason: null };
   }
@@ -885,17 +860,13 @@ export class Client {
   private async chatRequestReceived(message: ChatRequestHeader) {
     return await this.loadRequest(message);
   }
-
-  private async messageEventLogged(messageEvent: MessageEvent) {
-    const { sessionId, messageId, event, timestamp } = messageEvent;
-    const chat = this.chatSessionIdsList.get(sessionId);
-    if (!chat || chat.type !== "Chat") {
-      logError("No chat found corresponding to event.")
-      return false;
-    }
-    return await chat.sendEvent(event, messageId, timestamp);
-  }
 }
+
+type MessageContent = Readonly<{
+  content: string;
+  timestamp: number;
+  replyId?: string;
+}>
 
 export class Chat {
   private disposed = false;
@@ -973,16 +944,17 @@ export class Chat {
     this.#chattingSession = chattingSession;
   }
 
-  static async instantiate(me: string, encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chatData: ChatData, firstMessage?: { content: string, timestamp: number, sentByMe: boolean, delivery?: number }) {
+  static async instantiate(me: string, encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chatData: ChatData, firstMessage?: { content: string, timestamp: number, sentByMe: boolean, deliveredAt?: number }) {
     const { chatDetails, exportedChattingSession, lastActivity, sessionId } = chatData;
-    const contactDetails: Contact = await crypto.decryptData(chatDetails, encryptionBaseVector, "ContactDetails");
+    const contactDetails: Contact = await crypto.deriveDecrypt(chatDetails, encryptionBaseVector, "ContactDetails");
     const chattingSession = await ChattingSession.importSession(exportedChattingSession, encryptionBaseVector);
     const chat = new Chat(sessionId, me, contactDetails, encryptionBaseVector, clientInterface, chattingSession);
     chat.lastActivityTimestamp = lastActivity;
     chat.chatDetails = chatDetails;
     if (firstMessage) {
-      const { content, timestamp, sentByMe, delivery } = firstMessage;
-      await chat.encryptStoreMessage({ messageId: "0-0", sentByMe, content, timestamp } , delivery, delivery);
+      const { content, timestamp, sentByMe, deliveredAt: deliveredAt } = firstMessage;
+      const delivery = { delivered: deliveredAt, seen: deliveredAt }
+      await chat.encryptStoreMessage({ messageId: "i", sentByMe, content, timestamp, delivery });
     }
     chat.loadNext().then(() => chat.loadUnprocessedMessages());
     return chat;
@@ -1011,71 +983,74 @@ export class Chat {
     this.notify();
   }
 
-  async sendMessage(content: string, timestamp: number, replyId?: string) {
+  async sendMessage(messageContent: MessageContent) {
     if (this.disposed) {
       return false;
     }
+    const { content, timestamp, replyId } = messageContent;
+    const messageId = getRandomString().slice(0, 10);
+    const sendingMessage = { messageId, content, timestamp, replyingTo: replyId };
     const sentByMe = true;
     const replyingTo = await this.populateReplyingTo(replyId);
     if (replyingTo === undefined) {
       logError("Failed to come up with replied-to message.");
       return false;
     }
-    const messageId = this.#chattingSession.nextMessageId;
     const displayMessage: DisplayMessage = { messageId, timestamp, content, replyingTo, sentByMe, delivery: null };
     this.addMessageToList(displayMessage);
-    const encryptedMessage = crypto.encryptData(displayMessage, this.#encryptionBaseVector, this.sessionId).then((content) => ({ messageId, timestamp, content }));
-    const exportedChattingSession = await this.#chattingSession.sendMessage({ content, timestamp, replyingTo: replyId }, 
-      async (message) => {
-        let tries = 0;
-        let success = false;
-        if (this.hasRoom) {
-          const data = (await this.#sessionCrypto.signEncrypt(message, `${this.me} -> ${this.otherUser}`)).toString("base64");
-          while (!success && tries <= 10) {
-            tries++;
-            success = await new Promise<boolean>((resolve) => {
-              this.#socket.emit(`${this.me} -> ${this.otherUser}`, data, (response: boolean) => resolve(response));
-            });
-          }
-        }
-        else {
-          while (!success && tries <= 10) {
-            tries++;
-            success = !(await this.clientInterface.SendMessage(message)).reason;
-          }
-        }
-        if (success) {
-          await this.clientInterface.StoreMessage(await encryptedMessage);
-          displayMessage.delivery = {};
-          this.notify();
-          return success;
-        }
-    });
+    const encryptedMessage = crypto.deriveEncrypt(displayMessage, this.#encryptionBaseVector, this.sessionId).then((content) => ({ messageId, timestamp, content }));
+    const exportedChattingSession = await this.#chattingSession.sendMessage(sendingMessage, async (header) => await this.dispatch(header, true));
+    if (typeof exportedChattingSession === "string") {
+      logError(exportedChattingSession);
+      return false;
+    }
+    await this.clientInterface.StoreMessage(await encryptedMessage);
+    displayMessage.delivery = {};
+    this.notify();
+    const { lastActivity, chatDetails } = this;
+    await this.clientInterface.UpdateChat({ lastActivity, chatDetails, exportedChattingSession });
+    return true;
+  }
+
+  async sendEvent(event: "typing" | "stopped-typing", timestamp: number): Promise<boolean>;
+  async sendEvent(event: "delivered" | "seen", timestamp: number, messageId: string): Promise<boolean>;
+  async sendEvent(event: "typing" | "stopped-typing" | "delivered" | "seen", timestamp: number, messageId?: string): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+    const sendWithoutRoom = event === "delivered" || event === "seen";
+    if (!sendWithoutRoom && !this.hasRoom) {
+      return false;
+    }
+    messageId ||= "";
+    const sendingMessage: SendingMessage = { event, messageId, timestamp };
+    const exportedChattingSession = await this.#chattingSession.sendMessage(sendingMessage, async (header) => await this.dispatch(header, sendWithoutRoom));
     if (typeof exportedChattingSession === "string") {
       logError(exportedChattingSession);
       return false;
     }
     const { lastActivity, chatDetails } = this;
     await this.clientInterface.UpdateChat({ lastActivity, chatDetails, exportedChattingSession });
-    return true;
   }
 
-  async sendEvent(event: "typing" | "stopped-typing"): Promise<boolean>;
-  async sendEvent(event: "delivered" | "seen", messageId: string, timestamp: number): Promise<boolean>;
-  async sendEvent(event: "typing" | "stopped-typing" | "delivered" | "seen", messageId?: string, timestamp?: number): Promise<boolean> {
-    if (this.disposed) {
-      return false;
-    }
+  private async dispatch(header: MessageHeader, sendWithoutRoom: boolean) {
+    let tries = 0;
+    let success = false;
     if (this.hasRoom) {
-      return await new Promise<boolean>((resolve) => {
-        this.#socket.emit(`${this.me} -> ${this.otherUser}`, { event, messageId, timestamp }, (response: boolean) => resolve(response));
-      });
-    }
-    else {
-      if (event === "seen" || event === "delivered") {
-        return !(await this.clientInterface.SendMessageEvent({ addressedTo: this.otherUser, event, messageId, timestamp })).reason;
+      while (!success && tries <= 10) {
+        tries++;
+        success = await new Promise<boolean>((resolve) => {
+          this.#socket.emit(`${this.me} -> ${this.otherUser}`, this.#sessionCrypto.signEncryptToBase64(header, `${this.me} -> ${this.otherUser}`), (response: boolean) => resolve(response));
+        });
       }
     }
+    else if (sendWithoutRoom) {
+      while (!success && tries <= 10) {
+        tries++;
+        success = !(await this.clientInterface.SendMessage(header)).reason;
+      }
+    }
+    return success;
   }
 
   async loadNext() {
@@ -1118,7 +1093,7 @@ export class Chat {
     if (this.disposed) {
       return false;
     }
-    return await this.openEncryptedMessage(message);    
+    return await this.processEncryptedMessage(message);    
   }
 
   private addMessageToList(message: DisplayMessage) {
@@ -1130,7 +1105,6 @@ export class Chat {
   }
 
   private async receiveMessage(data: string, ack: (recv: boolean) => void) {
-    if (data === "confirmed") return;
     if (!data) {
       ack(false);
       return;
@@ -1142,34 +1116,12 @@ export class Chat {
       return;
     }
     try {
-      const decryptedData: MessageHeader | ChatEvent = await this.#sessionCrypto.decryptVerify(Buffer.from(data, "base64"), `${this.otherUser} -> ${this.me}`);
+      const decryptedData: MessageHeader = await this.#sessionCrypto.decryptVerifyFromBase64(data, `${this.otherUser} -> ${this.me}`);
       if (!decryptedData) {
         ack(false);
       }
-      else if ("event" in decryptedData) {
-        const { event } = decryptedData;
-        if (event === "typing") {
-          this.isTyping = true;
-          ack(true);
-        }
-        else if (event === "stopped-typing") {
-          this.isTyping = false;
-          ack(true);
-        }
-        else {
-          const { timestamp, messageId } = decryptedData;
-          const message = this.messagesList.find((m) => m.messageId === messageId);
-          const delivery = event === "delivered" ? { delivered: timestamp } : { seen: timestamp };
-          if (message.sentByMe) {
-            message.delivery = { ...message.delivery, ...delivery };
-          }
-          this.notify();
-          await this.clientInterface.UpdateMessage({ messageId, timestamp, event });
-          ack(true);
-        }
-      }
       else {
-        ack(await this.openEncryptedMessage(decryptedData));
+        ack(await this.processEncryptedMessage(decryptedData));
       }
     }
     catch(e: any) {
@@ -1180,37 +1132,63 @@ export class Chat {
 
   private async decryptPushMessages(messages: StoredMessage[]) {
     await Promise.all(messages.map(async (message) => {
-      const { messageId, timestamp, content: encryptedContent, delivered, seen } = message;
-      const { content, replyingTo, sentByMe }: PlainMessage = await crypto.decryptData(encryptedContent, this.#encryptionBaseVector, this.sessionId);
-      const rest = { messageId, timestamp, content, replyingTo };
-      const displayMessage: DisplayMessage = sentByMe 
-                                              ? { sentByMe, delivery: { delivered, seen }, ...rest }
-                                              : { sentByMe, ...rest };
+      const displayMessage: DisplayMessage = await crypto.deriveDecrypt(message.content, this.#encryptionBaseVector, this.sessionId);
       this.addMessageToList(displayMessage);
     }));
   }
 
-  private async encryptStoreMessage(message: PlainMessage, delivered?: number, seen?: number) {
+  private async encryptStoreMessage(message: DisplayMessage) {
     const { messageId, timestamp } = message;
-    const encryptedContent = await crypto.encryptData(message, this.#encryptionBaseVector, this.sessionId);
-    const encryptedMessage = { messageId, timestamp, content: encryptedContent, delivered, seen };
+    const encryptedContent = await crypto.deriveEncrypt(message, this.#encryptionBaseVector, this.sessionId);
+    const encryptedMessage = { messageId, timestamp, content: encryptedContent };
     await this.clientInterface.StoreMessage(encryptedMessage); 
   }
 
-  private async openEncryptedMessage(encryptedMessage: MessageHeader): Promise<boolean> {
+  private async processEncryptedMessage(encryptedMessage: MessageHeader): Promise<boolean> {
     const exportedChattingSession = await this.#chattingSession.receiveMessage(encryptedMessage, async (messageBody) => {
-      const { sender, recipient, messageId, replyingTo: replyId, timestamp, content } = messageBody;
-      if (sender !== this.otherUser || recipient !== this.me) {
+      const { sender, messageId, timestamp } = messageBody;
+      if (sender !== this.otherUser) {
         return false;
       }
-      const replyingTo = await this.populateReplyingTo(replyId);
-      if (replyingTo === undefined) {
-        logError("Failed to come up with replied-to message.");
-        return false;
+      let message: DisplayMessage = null;
+      if ("event" in messageBody) {
+        const { event } = messageBody;
+        if (event === "typing" || event === "stopped-typing") {
+          if ((Date.now() - timestamp) < 5000) {
+            this.isTyping = event === "typing";
+            return true;
+          }
+        }
+        else {
+          let delivery: DeliveryInfo = event === "delivered" ? { delivered: timestamp } : { seen: timestamp };
+          this.messagesList.forEach((m) => {
+            if (m.messageId === messageId && m.sentByMe) {
+              delivery = { ...m.delivery, ...delivery };
+              m.delivery = delivery;
+              message = m;
+              this.notify();
+            }
+          })
+          if (!message) {
+            message = await this.getMessageById(messageId, true);
+            if (message.sentByMe) {
+              delivery = { ...message.delivery, ...delivery };
+              message = { ...message, ...delivery };
+            }
+          }
+        }
       }
-      const newMessage: PlainMessage = { messageId, timestamp, content, replyingTo, sentByMe: false };
-      this.addMessageToList(newMessage);
-      await this.encryptStoreMessage(newMessage);
+      else {
+        const { content, replyingTo: replyId } = messageBody;
+        const replyingTo = await this.populateReplyingTo(replyId);
+        if (replyingTo === undefined) {
+          logError("Failed to come up with replied-to message.");
+          return false;
+        }
+        message = { messageId, timestamp, content, replyingTo, sentByMe: false };
+        this.addMessageToList(message);
+      }
+      await this.encryptStoreMessage(message);
       return true;
     });
     if (typeof exportedChattingSession === "string") {
@@ -1224,18 +1202,26 @@ export class Chat {
 
   private async populateReplyingTo(id: string): Promise<ReplyingToInfo> {
     if (!id) return null;
-    let repliedTo = this.messagesList.find((m) => m.messageId === id);
-    if (!repliedTo) {
-      const fetched = await this.clientInterface.GetMessageById({ messageId: id });
-      if ("reason" in fetched) {
-        logError(fetched);
-        return undefined;
-      };
-      repliedTo = await crypto.decryptData(fetched.content, this.#encryptionBaseVector, this.sessionId);
-    }
+    const repliedTo = await this.getMessageById(id);
     const replyToOwn = repliedTo.sentByMe;
     const displayText = truncateText(repliedTo.content);
     return { id, replyToOwn, displayText };
+  }
+
+  private async getMessageById(messageId: string, skipList = false): Promise<DisplayMessage> {
+    if (!messageId) return null;
+    if (!skipList) {
+      const message = this.messagesList.find((m) => m.messageId === messageId);
+      if (message) {
+        return message;
+      }
+    }
+    const fetched = await this.clientInterface.GetMessageById({ messageId });
+    if ("reason" in fetched) {
+      logError(fetched);
+      return undefined;
+    };
+    return await crypto.deriveDecrypt(fetched.content, this.#encryptionBaseVector, this.sessionId);
   }
 
   private async loadUnprocessedMessages() {
@@ -1246,7 +1232,7 @@ export class Chat {
     }
     unprocessedMessages = _.sortBy(unprocessedMessages, ["sendingRatchetNumber", "sendingChainNumber"]);
     for (const message of unprocessedMessages) {
-      await this.openEncryptedMessage(message);
+      await this.processEncryptedMessage(message);
     }
   }
 }

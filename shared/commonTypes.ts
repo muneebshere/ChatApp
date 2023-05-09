@@ -88,34 +88,24 @@ export type Contact = Profile & {
     readonly contactName?: string;
 }
 
-export type MessageBody = Readonly<{
-    sender: string;
-    recipient: string;
-    messageId: string;
-    replyingTo?: string;
-    timestamp: number;
-    content: string;
-}>;
-
 export type ReplyingToInfo = Readonly<{ id: string, replyToOwn: boolean, displayText: string }>;
 
-export type PlainMessage = Readonly<{
-    sentByMe: boolean;
+export type DeliveryInfo = Readonly<{
+    readonly delivered?: number | false;
+    readonly seen?: number | false;
+}>
+
+export type MessageDeliveryInfo = ({ readonly sentByMe: false } | {
+    readonly sentByMe: true;
+    delivery?: DeliveryInfo
+})
+
+export type DisplayMessage = Readonly<{
     messageId: string;
     replyingTo?: ReplyingToInfo;
     timestamp: number;
     content: string;
-}>;
-
-export type DeliveryInfo = ({ readonly sentByMe: false } | {
-    readonly sentByMe: true;
-    delivery?: {
-        readonly delivered?: number | false;
-        readonly seen?: number | false;
-    }
-})
-
-export type DisplayMessage = Omit<PlainMessage, "sentByMe"> & DeliveryInfo
+}> & MessageDeliveryInfo;
 
 export type MessageHeader = Readonly<{
     addressedTo: string;
@@ -147,8 +137,6 @@ export type StoredMessage = Readonly<{
     messageId: string;
     timestamp: number;
     content: UserEncryptedData;
-    delivered?: number | false;
-    seen?: number | false;
 }>;
 
 export type ChatData = Readonly<{
@@ -156,14 +144,6 @@ export type ChatData = Readonly<{
   lastActivity: number,
   chatDetails: UserEncryptedData,
   exportedChattingSession: UserEncryptedData
-}>;
-
-export type MessageEvent = Readonly<{
-    addressedTo: string;
-    sessionId: string;
-    messageId: string;
-    timestamp: number;
-    event: "delivered" | "seen";
 }>;
 
 export type Username = { 
@@ -186,12 +166,6 @@ type SecretData = {
     serverProof: PasswordEncryptedData,
     encryptionBase: PasswordEncryptedData
 };
-
-export type EstablishData = {
-    sessionReference: string,
-    publicKey: Buffer,
-    verifyingKey: Buffer
-}
 
 export type AuthSetupKey = {
     authKeyData: EncryptedData,
@@ -281,12 +255,10 @@ export enum SocketEvents {
     
     SendChatRequest = "send-chat-request",
     SendMessage = "send-message",
-    SendMessageEvent = "send-message-event",
     DeleteChatRequest = "delete-chat-request",
 
     MessageReceived = "message-received",
     ChatRequestReceived = "chat-request-received",
-    MessageEventLogged = "message-event-logged",
 
     GetAllChats = "get-all-chats",
     GetAllRequests = "get-all-requests",
@@ -297,7 +269,6 @@ export enum SocketEvents {
     GetMessageById = "get-message-by-id",
 
     StoreMessage = "store-message",
-    UpdateMessage = "update-message",
     CreateChat = "create-chat",
     UpdateChat = "update-chat",
 
