@@ -8,12 +8,13 @@ import cookieParser from "cookie-parser";
 import ConnectMongoDBSession from "connect-mongodb-session";
 import express, { Request, Response, NextFunction, CookieOptions } from "express";
 import cors, { CorsOptions } from "cors";
+import * as ipaddr from "ipaddr.js";
 import { Server as SocketServer, Socket } from "socket.io";
 import { Buffer } from "./node_modules/buffer";
 import { SessionCrypto } from "../shared/sessionCrypto";
 import * as crypto from "../shared/cryptoOperator";
-import { serialize, deserialize } from "../shared/cryptoOperator";
-import { failure, Failure, ErrorStrings, Username, AuthSetupKey, AuthInfo, RegisterNewUserRequest, InitiateAuthenticationResponse, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, PasswordDeriveInfo, UserAuthInfo, randomFunctions, SavedDetails, AuthSetupKeyData, NewUserData, ConcludeAuthenticationRequest, AuthChangeData, ChatRequestHeader, KeyBundle, UserEncryptedData, MessageHeader, StoredMessage } from "../shared/commonTypes";
+import { serialize } from "../shared/cryptoOperator";
+import { failure, Failure, ErrorStrings, Username, AuthSetupKey, AuthInfo, RegisterNewUserRequest, InitiateAuthenticationResponse, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, PasswordDeriveInfo, UserAuthInfo, randomFunctions, SavedDetails, AuthSetupKeyData, NewUserData, ConcludeAuthenticationRequest, AuthChangeData, ChatRequestHeader, KeyBundle, UserEncryptedData, MessageHeader, StoredMessage, ChatData } from "../shared/commonTypes";
 import { MongoHandlerCentral, MongoUserHandler, bufferReplaceForMongo } from "./MongoHandler";
 
 try {
@@ -76,17 +77,17 @@ class SocketHandler {
   #mongoHandler: MongoUserHandler;
   #accessedBundles = new Map<string, KeyBundle>();
   #disposeRooms: (() => void)[] = [];
-  #url: string;
+  #ip: [string, string];
 
-  constructor(socket: Socket, session: Session, sessionReference: string, sessionKeyBits: Buffer, sessionKeyBitsImported: CryptoKey, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey, url: string, saveToken?: string, resuming = false) {
-    this.#url = url;
+  constructor(socket: Socket, session: Session, sessionReference: string, ip: [string, string], sessionKeyBits: Buffer, sessionKeyBitsImported: CryptoKey, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey, saveToken?: string, resuming = false) {
+    this.#ip = ip;
     this.#saveToken = saveToken;
     this.#session = session;
     this.#sessionReference = sessionReference;
     this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBitsImported, sessionSigningKey, sessionVerifyingKey);
     this.registerNewSocket(socket);
     if (!resuming) {
-      this.registerRunningSession(session.id, sessionReference, sessionKeyBits, sessionSigningKey, sessionVerifyingKey);
+      this.registerRunningSession(session.id, sessionReference, ip, sessionKeyBits, sessionSigningKey, sessionVerifyingKey);
     }
     else {
       MongoHandlerCentral.getSession(session.id).then((running) => {
@@ -100,10 +101,8 @@ class SocketHandler {
     console.log(`Session ${session.id} begun.`);
   }
 
-  setSaveToken(sessionReference: string, saveToken: string) {
-    const _saveToken = this.#saveToken;
-    const _sessionRef = this.#sessionReference;
-    if (sessionReference === this.#sessionReference && (!this.#saveToken || !saveToken)) {
+  setSaveToken(sessionReference: string, currentIp: string, saveToken: string) {
+    if (sessionReference === this.#sessionReference && currentIp === this.#ip[0] && (!this.#saveToken || !saveToken)) {
       if (!this.#saveToken && saveToken) {
         this.#saveToken = saveToken;
       }
@@ -149,13 +148,14 @@ class SocketHandler {
     socket.on("disconnect", this.onSocketDisconnect.bind(this));
   }
 
-  private async registerRunningSession(sessionId: string, sessionReference: string, sessionKeyBitsEx: Buffer, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey) {
+  private async registerRunningSession(sessionId: string, sessionReference: string, ip: [string, string], sessionKeyBitsEx: Buffer, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey) {
     if ("sessionReference" in ((await MongoHandlerCentral.getSession(sessionId)) ?? {})) {
       return;
     }
     const sessionSigningKeyEx = await crypto.exportKey(sessionSigningKey);
     const sessionVerifyingKeyEx = await crypto.exportKey(sessionVerifyingKey);
-    await MongoHandlerCentral.addSession({ sessionId, sessionReference, sessionKeyBitsEx, sessionSigningKeyEx, sessionVerifyingKeyEx });
+    const [ipRep, ipRead] = ip;
+    await MongoHandlerCentral.addSession({ sessionId, sessionReference, ipRep, ipRead , sessionKeyBitsEx, sessionSigningKeyEx, sessionVerifyingKeyEx });
   }
 
   private onSocketDisconnect() {
@@ -167,15 +167,15 @@ class SocketHandler {
     const sessionId = this.#session.id;
     console.log(`Disonnected: socket#${this.#socketId}`);
     console.log(`Session ${sessionId} interrupted.`);
-    interruptedSessions.set(sessionId, this.waitInterrupted.bind(this));
+    interruptedSessions.set(sessionId, this.waitInterrupted.bind(this) as typeof this.waitInterrupted);
     setTimeout(() => {
       interruptedSessions.delete(sessionId);
       this.terminateCurrentSession();
     }, 10*60*1000);
   }
 
-  private async waitInterrupted(newSocket: Socket, sessionReference: string) {
-    if (sessionReference !== this.#sessionReference) {
+  private async waitInterrupted(newSocket: Socket, sessionReference: string, currentIp: string) {
+    if (sessionReference !== this.#sessionReference || currentIp !== this.#ip[0]) {
       return false;
     }
     interruptedSessions.delete(this.#session.id);
@@ -184,7 +184,7 @@ class SocketHandler {
       onlineUsers.set(this.#username, newSocket.id);
     }
     this.registerNewSocket(newSocket);
-    newSocket.emit(SocketEvents.CompleteHandshake, "1", null, null, () => {});
+    newSocket.emit(SocketEvents.CompleteHandshake, "1", () => {});
     console.log(`Session ${this.#session.id} reconnected.`);
     return true;
   }
@@ -201,15 +201,11 @@ class SocketHandler {
 
   private async respond(event: string, data: string, responseBy: (arg0: any) => any, respondAt: (arg0: string) => void) {
     const respond = async (response: any) => {
-      respondAt(await this.#sessionCrypto.signEncryptToBase64(response, event));
+      respondAt(await this.#sessionCrypto.signEncryptToBase64({ payload: response, fileHash: await jsHash }, event));
     }
     try {
       const decryptedData = await this.#sessionCrypto.decryptVerifyFromBase64(data, event);
       if (!decryptedData) await respond(failure(ErrorStrings.DecryptFailure));
-      else if (decryptedData.url !== this.#url || decryptedData.fileHash !== await jsHash ) {
-        await respond(failure(ErrorStrings.InvalidRequest, "Url or File Hash do not match."));
-        this.terminateCurrentSession();
-      }
       else {
         const response = await responseBy(decryptedData);
         if (!response) await respond(failure(ErrorStrings.ProcessFailed));
@@ -394,19 +390,22 @@ class SocketHandler {
     }
   }
 
-  private async setSavedDetails(request: SavedDetails) : Promise<Failure> {
+  private async setSavedDetails(request: Omit<SavedDetails, "ip">) : Promise<Failure> {
     if (request.saveToken !== this.#saveToken) return failure(ErrorStrings.IncorrectData);
-    const success = await MongoHandlerCentral.setSavedDetails(request);
+    const [ipRep, ipRead] = this.#ip;
+    const success = await MongoHandlerCentral.setSavedDetails({ ...request, ipRep, ipRead });
     return success ? { reason: null } : failure(ErrorStrings.ProcessFailed);
   }
 
-  private async getSavedDetails({ saveToken }: { saveToken: string }) {
+  private async getSavedDetails({ saveToken }: { saveToken: string }): Promise<SavedDetails | Failure> {
     if (saveToken !== this.#saveToken) return failure(ErrorStrings.IncorrectData);
     this.#saveToken = null;
-    return (await MongoHandlerCentral.getSavedDetails(saveToken)) ?? failure(ErrorStrings.ProcessFailed);
+    const savedDetails = await MongoHandlerCentral.getSavedDetails(saveToken);
+    if (!savedDetails || savedDetails.ipRep !== this.#ip[0]) return failure(savedDetails ? ErrorStrings.ProcessFailed : ErrorStrings.InvalidRequest)
+    return savedDetails;
   }
 
-  private validateKeyBundleOwner(keyBundles: PublishKeyBundlesRequest, username: string) {
+  private validateKeyBundleOwner(keyBundles: PublishKeyBundlesRequest, username: string): boolean {
     let { defaultKeyBundle, oneTimeKeyBundles } = keyBundles;
     return [defaultKeyBundle.owner, ...oneTimeKeyBundles.map((kb) => kb.owner)].every((owner) => owner === username);
   }
@@ -480,7 +479,7 @@ class SocketHandler {
     }
   }
 
-  private async roomRequested({ username }: Username) {
+  private async roomRequested({ username }: Username): Promise<(() => void) | Failure> {
     if (!this.#username || this.#username === username) return failure(ErrorStrings.InvalidRequest);
     const otherSocketHandler = socketHandlers.get(onlineUsers.get(username));
     if (!otherSocketHandler) return failure(ErrorStrings.ProcessFailed);
@@ -493,7 +492,7 @@ class SocketHandler {
     return { reason: null };
   }
 
-  private async requestRoom(username: string, halfRoom: (roomUser2: RoomUser) => Promise<() => void>) {
+  private async requestRoom(username: string, halfRoom: (roomUser2: RoomUser) => Promise<() => void>): Promise<(() => void) | Failure> {
     if (!this.#username || this.#username === username) return failure(ErrorStrings.InvalidRequest);
     const response: Failure = await this.request(SocketEvents.RequestRoom, { username });
     if ("reason" in response) {
@@ -509,61 +508,61 @@ class SocketHandler {
     }
   }
 
-  private async sendChatRequest(chatRequest: ChatRequestHeader) {
+  private async sendChatRequest(chatRequest: ChatRequestHeader): Promise<Failure> {
     if (!this.#username || this.#username === chatRequest.addressedTo) return failure(ErrorStrings.InvalidRequest);
     if (!(await MongoHandlerCentral.depositChatRequest(chatRequest))) return failure(ErrorStrings.ProcessFailed);
     return { reason: null };
   }
 
-  private async sendMessage(message: MessageHeader) {
+  private async sendMessage(message: MessageHeader): Promise<Failure> {
     if (!this.#username || this.#username === message.addressedTo) return failure(ErrorStrings.InvalidRequest);
     if (!(await MongoHandlerCentral.depositMessage(message))) return failure(ErrorStrings.ProcessFailed);
     return { reason: null };
   }
 
-  private async getAllChats() {
+  private async getAllChats(): Promise<ChatData[]| Failure> {
     if (!this.#username) return failure(ErrorStrings.InvalidRequest);
     return await this.#mongoHandler.getAllChats();
   }
 
-  private async getAllRequests() {
+  private async getAllRequests(): Promise<ChatRequestHeader[] | Failure> {
     if (!this.#username) return failure(ErrorStrings.InvalidRequest);
     return await this.#mongoHandler.getAllRequests();
   }
 
-  private async getUnprocessedMessages(param: { sessionId: string }) {
+  private async getUnprocessedMessages(param: { sessionId: string }): Promise<MessageHeader[] | Failure> {
     if (!this.#username) return failure(ErrorStrings.InvalidRequest);
     return await this.#mongoHandler.getUnprocessedMessages(param.sessionId);
   }
 
-  private async getMessagesByNumber(param: { sessionId: string, limit: number, olderThan?: number }) {
+  private async getMessagesByNumber(param: { sessionId: string, limit: number, olderThan?: number }): Promise<StoredMessage[] | Failure> {
     if (!this.#username) return failure(ErrorStrings.InvalidRequest);
     let { sessionId, limit, olderThan } = param;
     olderThan ||= Date.now();
     return await this.#mongoHandler.getMessagesByNumber(sessionId, limit, olderThan);
   }
 
-  private async getMessagesUptoTimestamp(param: { sessionId: string, newerThan: number, olderThan?: number }) {
+  private async getMessagesUptoTimestamp(param: { sessionId: string, newerThan: number, olderThan?: number }): Promise<StoredMessage[] | Failure> {
     if (!this.#username) return failure(ErrorStrings.InvalidRequest);
     let { sessionId, newerThan, olderThan } = param;
     olderThan ||= Date.now();
     return await this.#mongoHandler.getMessagesUptoTimestamp(sessionId, newerThan, olderThan);
   }
 
-  private async getMessagesUptoId(param: { sessionId: string, messageId: string, olderThan?: number }) {
+  private async getMessagesUptoId(param: { sessionId: string, messageId: string, olderThan?: number }): Promise<StoredMessage[] | Failure> {
     if (!this.#username) return failure(ErrorStrings.InvalidRequest);
     let { sessionId, messageId, olderThan } = param;
     olderThan ||= Date.now();
     return await this.#mongoHandler.getMessagesUptoId(sessionId, messageId, olderThan);
   }
 
-  private async getMessageById(param: { sessionId: string, messageId: string }) {
+  private async getMessageById(param: { sessionId: string, messageId: string }): Promise<StoredMessage | Failure> {
     if (!this.#username) return failure(ErrorStrings.InvalidRequest);
     let { sessionId, messageId } = param;
     return await this.#mongoHandler.getMessageById(sessionId, messageId);
   }
 
-  private async storeMessage(message: StoredMessage) {
+  private async storeMessage(message: StoredMessage): Promise<Failure> {
     if (!this.#username) return failure(ErrorStrings.InvalidRequest);
     if (!(await this.#mongoHandler.storeMessage(message))) return failure(ErrorStrings.ProcessFailed);
     return { reason: null };
@@ -766,6 +765,26 @@ function fromBase64(data: string) {
   return Buffer.from(data, "base64");
 }
 
+function parseIpRepresentation(address: string) {
+  if (!ipaddr.isValid(address)) return null;
+  const ipv4_or_ipv6 = ipaddr.parse(address);
+  const ipv6 = 
+    (ipv4_or_ipv6.kind() === "ipv4") && ("octets" !in ipv4_or_ipv6)
+      ? ipv4_or_ipv6.toIPv4MappedAddress() 
+      : (ipv4_or_ipv6 as ipaddr.IPv6);
+  return Buffer.from(ipv6.toByteArray()).toString("base64");
+}
+
+function parseIpReadable(address: string) {
+  if (!ipaddr.isValid(address)) return null;
+  const ipv4_or_ipv6 = ipaddr.parse(address);
+  return (ipv4_or_ipv6.kind() === "ipv6") && ("parts" in ipv4_or_ipv6)
+            ? (ipv4_or_ipv6.isIPv4MappedAddress()
+                ? ipv4_or_ipv6.toIPv4Address().toString()
+                : ipv4_or_ipv6.toRFC5952String())
+            : ipv4_or_ipv6.toString();
+}
+
 let abortController: AbortController = new AbortController();
 async function hashCalculator() {
   try {
@@ -810,20 +829,21 @@ const cookieParserMiddle = cookieParser();
 const app = express().use(cors(corsOptions)).use(sessionMiddleware).use(cookieParserMiddle).use(express.json());
 const httpsServer = createServer(httpsOptions, app);
 const socketHandlers = new Map<string, SocketHandler>();
-const interruptedSessions = new Map<string, (socket: Socket, sessionReference: string) => boolean>();
+const interruptedSessions = new Map<string, (socket: Socket, sessionReference: string, currentIp: string) => Promise<boolean>>();
 const onlineUsers = new Map<string, string>();
-const registeredKeys = new Map<string, { sessionKeyBits: Buffer, signingKey: CryptoKey, clientVerifyingKey: CryptoKey, timeout: NodeJS.Timeout }>();
+const registeredKeys = new Map<string, { ipRep:string, sessionId: string, sessionKeyBits: Buffer, signingKey: CryptoKey, clientVerifyingKey: CryptoKey, timeout: NodeJS.Timeout }>();
 
 async function regenerateSigningKeys() {
-  async function generateKeys(): Promise<[CryptoKey, string]> {
+  async function generateKeys(): Promise<[string, CryptoKey, string]> {
     const { privateKey, publicKey } = await crypto.generateKeyPair("ECDSA");
     const exportedPublicKey = (await crypto.exportKey(publicKey)).toString("base64");
-    return [privateKey, exportedPublicKey];
+    const version = getRandomString().slice(0, 8);
+    return [version, privateKey, exportedPublicKey];
   }
 
-  let [signingKey, verifyingKey] = await generateKeys();
-  setInterval(async () => [signingKey, verifyingKey] = await generateKeys(), 1_800_000);
-  return () => ({ signingKey, verifyingKey });
+  let [version, signingKey, verifyingKey] = await generateKeys();
+  setInterval(async () => [version, signingKey, verifyingKey] = await generateKeys(), 1_800_000);
+  return () => ({ version, signingKey, verifyingKey });
 }
 
 const getCurrentKeys = regenerateSigningKeys();
@@ -837,9 +857,15 @@ const io = new SocketServer(httpsServer, {
 });
 
 app.post("/setSaveToken", (req, res) => {
-  const { saveToken, socketId, sessionReference } = req.body;
+  const { saveToken, socketId, sessionReference } = req.body || {};
+  const { socket: { remoteAddress } } = req;
+  if (!ipaddr.isValid(remoteAddress)) {
+    res.status(400).end();
+    return;
+  }
+  const currentIp = parseIpRepresentation(remoteAddress);
   if (saveToken === "0") {
-    if (socketHandlers.get(socketId)?.setSaveToken(sessionReference, null)) {
+    if (socketHandlers.get(socketId)?.setSaveToken(sessionReference, currentIp, null)) {
       res.clearCookie("saveToken").status(200).end();
     }
     else {
@@ -847,8 +873,7 @@ app.post("/setSaveToken", (req, res) => {
     }
     return;
   }
-
-  if (socketHandlers.get(socketId)?.setSaveToken(sessionReference, saveToken)) {
+  if (socketHandlers.get(socketId)?.setSaveToken(sessionReference, currentIp, saveToken)) {
     const cookieOptions : CookieOptions = { httpOnly: true, secure: true, maxAge: 10*24*60*60*1000, sameSite: "strict", expires: DateTime.now().plus({ days: 10 }).toJSDate() };
     res.cookie("saveToken", { saveToken }, cookieOptions).status(200).end();
   }
@@ -858,12 +883,19 @@ app.post("/setSaveToken", (req, res) => {
 });
 
 app.get("/currentVerifyingKey", async (req, res) => {
-  const { verifyingKey } = (await getCurrentKeys)();
-  res.json({ verifyingKey }).status(200).end();
+  const { version, verifyingKey } = (await getCurrentKeys)();
+  res.json({ version, verifyingKey }).status(200).end();
 });
 
 app.post("/registerKeys", async (req, res) => {
   const { sessionReference, publicDHKey, publicVerifyingKey } = req.body;
+  const { socket: { remoteAddress }, session: { id: sessionId } } = req;
+  if (!ipaddr.isValid(remoteAddress)) {
+    res.status(400).end();
+    return;
+  }
+  const ipRep = parseIpRepresentation(remoteAddress);
+  console.log(`Keys registered from ip ${parseIpReadable(remoteAddress)} with sessionReference ${sessionReference}`);
   const { signingKey, verifyingKey } = (await getCurrentKeys)();
   const { privateKey, publicKey } = await crypto.generateKeyPair("ECDH");
   const clientVerifyingKey = await crypto.importKey(fromBase64(publicVerifyingKey), "ECDSA", "public", true);
@@ -871,7 +903,7 @@ app.post("/registerKeys", async (req, res) => {
   const sessionKeyBits = await crypto.deriveSymmetricBits(privateKey, clientPublicKey, 512);
   const serverPublicKey = (await crypto.exportKey(publicKey)).toString("base64");
   const timeout = setTimeout(() => registeredKeys.delete(sessionReference), 10_000);
-  registeredKeys.set(sessionReference, { sessionKeyBits, signingKey, clientVerifyingKey, timeout });
+  registeredKeys.set(sessionReference, { ipRep, sessionId, sessionKeyBits, signingKey, clientVerifyingKey, timeout });
   res.json({ serverPublicKey, verifyingKey }).status(200).end();
 });
 
@@ -880,45 +912,56 @@ httpsServer.listen(PORT, () => console.log(`listening on *:${PORT}`));
 io.use((socket: Socket, next) => { sessionMiddleware(socket.request as Request, {} as Response, next as NextFunction) });
 io.use((socket: Socket, next) => { cookieParserMiddle(socket.request as Request, {} as Response, next as NextFunction) });
 io.on("connection", async (socket) => {
-  const fileHashLocal = await jsHash;
-  const { session, cookies: { saveToken: saveTokenCookie } } = socket.request;
-  const { saveToken } = saveTokenCookie ?? {};
-  let { sessionReference, sessionSigned, fileHash, url } = socket.handshake.auth ?? {};
-  if (!sessionReference || !sessionSigned || fileHash !== fileHashLocal) {
-    socket.emit(SocketEvents.CompleteHandshake, "", null, null, () => {});
+  const rejectConnection = async () => {
+    socket.emit(SocketEvents.CompleteHandshake, "", () => {});
     await sleep(5000);
     socket.disconnect(true);
+  }
+  const fileHashLocal = await jsHash;
+  const { session, cookies: { saveToken: saveTokenCookie }, socket: { remoteAddress } } = socket.request;
+  if (!ipaddr.isValid(remoteAddress)) {
+    await rejectConnection();
+    return;
+  }
+  const currentIp = parseIpRepresentation(remoteAddress);
+  const { saveToken } = saveTokenCookie ?? {};
+  let { sessionReference, sessionSigned, fileHash } = socket.handshake.auth ?? {};
+  if (!sessionReference || !sessionSigned || fileHash !== fileHashLocal) {
+    await rejectConnection();
     return;
   }
   if (interruptedSessions.has(session.id)) {
-    if (interruptedSessions.get(session.id)(socket, sessionReference)) {
-      return;
+    const resumed = await interruptedSessions.get(session.id)(socket, sessionReference, currentIp);
+    if (!resumed) {
+      await rejectConnection();
     }
+    return;
   }
   const crashedSession = await MongoHandlerCentral.getSession(session.id);
   if (crashedSession) {
-    const { sessionKeyBitsEx, sessionSigningKeyEx, sessionVerifyingKeyEx } = crashedSession;
+    const { sessionKeyBitsEx, sessionSigningKeyEx, sessionVerifyingKeyEx, ipRep, ipRead } = crashedSession;
+    if (ipRep !== currentIp) {
+      await rejectConnection();
+      return;
+    }
     const sessionSigningKey = await crypto.importKey(sessionSigningKeyEx, "ECDSA", "private", true);
     const sessionVerifyingKey = await crypto.importKey(sessionVerifyingKeyEx, "ECDSA", "public", true);
     const sessionKeyBits = await crypto.importRaw(sessionKeyBitsEx);
     console.log(`Resuming crashed session #${session.id}.`);
-    new SocketHandler(socket, session, sessionReference, sessionKeyBitsEx, sessionKeyBits, sessionSigningKey, sessionVerifyingKey, url, saveToken, true);
-    socket.emit(SocketEvents.CompleteHandshake, "1", null, null, () => {});
+    new SocketHandler(socket, session, sessionReference, [ipRep, ipRead], sessionKeyBitsEx, sessionKeyBits, sessionSigningKey, sessionVerifyingKey, saveToken, true);
+    socket.emit(SocketEvents.CompleteHandshake, "1", () => {});
     return;
   }
   if (!registeredKeys.has(sessionReference)) {
-    socket.emit(SocketEvents.CompleteHandshake, "", null, null, () => {});
-    await sleep(5000);
-    socket.disconnect(true);
+    await rejectConnection();
     return;
   }
-  const { sessionKeyBits, clientVerifyingKey, signingKey, timeout } = registeredKeys.get(sessionReference);
+  const ipRead = parseIpReadable(remoteAddress);
+  const { ipRep, sessionId, sessionKeyBits, clientVerifyingKey, signingKey, timeout } = registeredKeys.get(sessionReference);
   clearTimeout(timeout);
   registeredKeys.delete(sessionReference);
-  if (!(await crypto.verify(fromBase64(sessionSigned), fromBase64(sessionReference), clientVerifyingKey))) {
-    socket.emit(SocketEvents.CompleteHandshake, "", null, null, () => {});
-    await sleep(5000);
-    socket.disconnect(true);
+  if (ipRep !== currentIp || sessionId !== session.id || !(await crypto.verify(fromBase64(sessionSigned), fromBase64(sessionReference), clientVerifyingKey))) {
+    await rejectConnection();
     return;
   }
   const success = await new Promise((resolve) => {
@@ -930,5 +973,5 @@ io.on("connection", async (socket) => {
     return;
   }
   const sessionKeyBitsImported = await crypto.importRaw(sessionKeyBits);
-  new SocketHandler(socket, session, sessionReference, sessionKeyBits, sessionKeyBitsImported, signingKey, clientVerifyingKey, url, saveToken);
+  new SocketHandler(socket, session, sessionReference, [ipRep, ipRead], sessionKeyBits, sessionKeyBitsImported, signingKey, clientVerifyingKey, saveToken);
 });

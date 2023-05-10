@@ -1,5 +1,5 @@
 import _ from "lodash";
-import { Binary } from "mongodb";
+import { Binary, DeleteResult } from "mongodb";
 import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
 import { Buffer } from "./node_modules/buffer/";
@@ -9,6 +9,8 @@ import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PasswordEncrypte
 export type RunningSession = {
   sessionId: string;
   sessionReference: string;
+  ipRep: string;
+  ipRead: string;
   sessionKeyBitsEx: Buffer,
   sessionSigningKeyEx: Buffer,
   sessionVerifyingKeyEx: Buffer,
@@ -147,8 +149,24 @@ const chatSchema = new Schema({
   exportedChattingSession: userEncryptedData
 });
 
+const ipSchema = {
+  ipRep: {
+    type: Schema.Types.String,
+    required: true,
+    immutable: true,
+    unique: true
+  },
+  ipRead: {
+    type: Schema.Types.String,
+    required: true,
+    immutable: true,
+    unique: true
+  }
+}
+
 export class MongoHandlerCentral {
   private static readonly timeouts = new Map<string, NodeJS.Timeout>();
+  private static readonly waitDelete = new Map<string, Promise<any>>();
 
   private static readonly userHandlers = new Map<string, MongoUserHandler>();
 
@@ -213,11 +231,7 @@ export class MongoHandlerCentral {
       immutable: true,
       unique: true
     },
-    url: {
-      type: Schema.Types.String,
-      required: true,
-      immutable: true,
-    },
+    ...ipSchema,
     keyBits: {
       type: Schema.Types.Buffer,
       required: true,
@@ -320,25 +334,24 @@ export class MongoHandlerCentral {
     sessionReference: {
       type: Schema.Types.String,
       required: true,
-      immutable: true
+      immutable: true,
+      unique: true
     },
+    ...ipSchema,
     sessionKeyBitsEx: {
       type: Schema.Types.Buffer,
       required: true,
-      immutable: true,
-      unique: true
+      immutable: true
     },
     sessionSigningKeyEx: {
       type: Schema.Types.Buffer,
       required: true,
-      immutable: true,
-      unique: true
+      immutable: true
     },
     sessionVerifyingKeyEx: {
       type: Schema.Types.Buffer,
       required: true,
-      immutable: true,
-      unique: true
+      immutable: true
     },
     lastRefreshedAt: {
       type: Schema.Types.Date,
@@ -393,7 +406,7 @@ export class MongoHandlerCentral {
     }
   }
 
-  static async getSavedDetails(saveToken: string) {
+  static async getSavedDetails(saveToken: string): Promise<SavedDetails> {
     const details = bufferReplaceFromLean(await this.SavedDetails.findOne({ saveToken }).lean());
     await this.SavedDetails.deleteOne({ saveToken });
     return details;
@@ -421,13 +434,14 @@ export class MongoHandlerCentral {
 
   static async addSession(session: RunningSession): Promise<boolean> {
     try { 
+      const { sessionId } = session;
+      if (this.waitDelete.has(sessionId)) {
+        await this.waitDelete.get(sessionId);
+      }
       const newSession = await this.RunningSessions.create(bufferReplaceForMongo(session));
       if (newSession) {
-        const refresh = async (sessionId: string) => {
-          await this.RunningSessions.updateOne({ sessionId }, { lastRefreshedAt: new Date() });
-          this.timeouts.set(sessionId, setTimeout(() => refresh(sessionId), 30*1000));
-        }
-        await refresh(session.sessionId);
+        const timeout = setInterval(() => this.RunningSessions.updateOne({ sessionId }, { lastRefreshedAt: new Date() }), 30_000);
+        this.timeouts.set(session.sessionId, timeout);
         return true;
       }
       return false;
@@ -453,7 +467,12 @@ export class MongoHandlerCentral {
       clearTimeout(timeout);
       this.timeouts.delete(sessionId);
     }
-    return (await this.RunningSessions.deleteOne({ sessionId })).deletedCount === 1;
+    const deleted = new Promise<DeleteResult>(async (resolve) => resolve(await this.RunningSessions.deleteOne({ sessionId })));
+    this.waitDelete.set(sessionId, deleted);
+    return deleted.then((result) => {
+      this.waitDelete.delete(sessionId);
+      return result.deletedCount === 1;
+    });
   }
 
   static async getSession(sessionId: string): Promise<RunningSession> {

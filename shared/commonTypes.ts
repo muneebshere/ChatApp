@@ -156,8 +156,9 @@ export type Failure = {
 }
 
 export type SavedDetails = { 
-    url: string,
     saveToken: string,
+    ipRep: string,
+    ipRead: string,
     keyBits: Buffer, 
     hSalt: Buffer
 };

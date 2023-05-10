@@ -209,7 +209,7 @@ export class Client {
       const sessionKeyBits = await crypto.deriveSymmetricBitsKey(privateKey, serverPublicKeyImported, 512);
       const fileHash = await this.#fileHash;
       const sessionSigned = await crypto.sign(fromBase64(sessionReference), signingKey);
-      const auth = { sessionReference, sessionSigned, fileHash, url: this.url };
+      const auth = { sessionReference, sessionSigned, fileHash };
       this.#socket = io(this.url, { auth, withCredentials: true });
       this.#socket.on("disconnect", this.retryConnect.bind(this));
       let nevermind = false;
@@ -566,7 +566,7 @@ export class Client {
     const hSalt = getRandomVector(48);
     const { ciphertext } = await crypto.deriveSignEncrypt(keyBits, { username, password }, hSalt, "Cookie Saved Details");
     const cookieSavedDetails = ciphertext.toString("base64");
-    const savedDetails: SavedDetails = { saveToken, keyBits, hSalt, url: this.url };
+    const savedDetails: Omit<SavedDetails, "ipRep" | "ipRead"> = { saveToken, keyBits, hSalt };
     return { cookieSavedDetails, savedDetails };
   }
 
@@ -711,7 +711,7 @@ export class Client {
     return true;
   }
 
-  private SetSavedDetails(data: SavedDetails, timeout = 0): Promise<Failure> { 
+  private SetSavedDetails(data: Omit<SavedDetails, "ipRep" | "ipRead">, timeout = 0): Promise<Failure> { 
     return this.request(SocketEvents.SetSavedDetails, data, timeout);
   }
 
@@ -783,14 +783,17 @@ export class Client {
     if (!this.isConnected) {
       return {};
     }
-    return new Promise(async (resolve: (result: any) => void) => {
-      data = { ...data, fileHash: await this.#fileHash, url: this.url };
+    let { fileHash, payload } = await new Promise(async (resolve: (result: any) => void) => {
       this.#socket.emit(event, (await this.#sessionCrypto.signEncryptToBase64(data, event)), 
       async (response: string) => resolve(response ? await this.#sessionCrypto.decryptVerifyFromBase64(response, event) : {}));
       if (timeout > 0) {
         window.setTimeout(() => resolve({}), timeout);
       }
     })
+    if (fileHash !== await this.#fileHash) {
+      window.history.go();
+      return {};
+    } else return payload;
   }
 
   private async respond(event: string, data: string, responseBy: (arg0: any) => any, respondAt: (arg0: string) => void) {
