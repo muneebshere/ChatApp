@@ -5,9 +5,8 @@ import { io, Socket } from "socket.io-client";
 import { Buffer } from "./node_modules/buffer";
 import { stringify } from "safe-stable-stringify";
 import { SessionCrypto } from "../../shared/sessionCrypto";
-import { ChattingSession, SendingMessage, ViewChatRequest, ViewPendingRequest, X3DHUser } from "./e2e-encryption";
+import { ChattingSession, SendingMessage, ViewChatRequest, X3DHUser } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
-import { serialize, deserialize } from "../../shared/cryptoOperator";
 import { ErrorStrings, Failure, Username, AuthSetupKey, UserEncryptedData, RegisterNewUserRequest, InitiateAuthenticationResponse, ConcludeAuthenticationRequest, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, randomFunctions, failure, SavedDetails, PasswordEncryptedData, AuthSetupKeyData, NewUserData, AuthChangeData, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, DeliveryInfo } from "../../shared/commonTypes";
 
 const { getRandomVector, getRandomString } = randomFunctions();
@@ -194,7 +193,6 @@ export class Client {
 
   async establishSession() {
     if (!this.isConnected) {
-      console.log(`Attempting to establish secure session.`);
       this.notifyClientEvent?.(ClientEvent.Connecting);
       this.connecting = true;
       const { privateKey, publicKey } = await crypto.generateKeyPair("ECDH");
@@ -202,9 +200,13 @@ export class Client {
       const sessionReference = this.#sessionReference ?? getRandomString();
       const publicDHKey = (await crypto.exportKey(publicKey)).toString("base64");
       const publicVerifyingKey = (await crypto.exportKey(verifyingKey)).toString("base64");
-      const { serverPublicKey, verifyingKey: serverVerifying } = (await this.axInstance.post("/registerKeys", { sessionReference, publicDHKey, publicVerifyingKey }))?.data || {};
+      const { sessionId, serverPublicKey, verifyingKey: serverVerifying } = (await this.axInstance.post("/registerKeys", { sessionReference, publicDHKey, publicVerifyingKey }).catch(() => null))?.data || {};
+      if (!serverPublicKey) {
+        this.reportDone?.(null);
+        return;
+      }
+      console.log(`Keys registered from url ${this.url} with sessionReference ${sessionReference} and sessionID ${sessionId}`);
       const serverVerifyingKey = await crypto.importKey(fromBase64(serverVerifying), "ECDSA", "public", true);
-      console.log(`ServerPublicKey: ${serverPublicKey}`);
       const serverPublicKeyImported = await crypto.importKey(fromBase64(serverPublicKey), "ECDH", "public", true);
       const sessionKeyBits = await crypto.deriveSymmetricBitsKey(privateKey, serverPublicKeyImported, 512);
       const fileHash = await this.#fileHash;
@@ -215,14 +217,21 @@ export class Client {
       let nevermind = false;
       let timeout: number = null;
       const success = await new Promise<boolean>((resolve) => {
-        this.#socket.once(SocketEvents.CompleteHandshake, (ref, respond) => {
+        this.#socket.once(SocketEvents.CompleteHandshake, (ref, latestFileHash, respond) => {
           const finalize = (complete: boolean) => {
             respond(complete);
             resolve(complete);
           }
           try {
+            if (latestFileHash !== fileHash) {
+              console.log("Script file outdated.");
+              window.history.go();
+              finalize(false);
+              return;
+            }
             if (nevermind) {
               console.log("Nevermind");
+              console.log(`Connected with session reference: ${sessionReference} and socketId: ${this.#socket.id}`);
               finalize(false);
               return;
             }
@@ -232,14 +241,11 @@ export class Client {
               if (reconnected) {
                 this.serverUnavailable = false;
               }
-              else {
-                window.history.go();
-              }
               return;
             }
             this.#sessionReference = sessionReference;
             this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBits, signingKey, serverVerifyingKey);
-            console.log(`Connected with session reference: ${sessionReference}`);
+            console.log(`Connected with session reference: ${sessionReference} and socketId: ${this.#socket.id}`);
             if (this.#username) {
               this.notifyClientEvent?.(ClientEvent.SignedOut);
               this.#displayName = null;
@@ -263,6 +269,7 @@ export class Client {
             resolve(false);
           }
         });
+        console.log(`Connecting with session reference: ${sessionReference} and socketId: ${this.#socket.id}`);
         this.#socket.connect();
       });
       nevermind = true;

@@ -340,18 +340,15 @@ export class MongoHandlerCentral {
     ...ipSchema,
     sessionKeyBitsEx: {
       type: Schema.Types.Buffer,
-      required: true,
-      immutable: true
+      required: true
     },
     sessionSigningKeyEx: {
       type: Schema.Types.Buffer,
-      required: true,
-      immutable: true
+      required: true
     },
     sessionVerifyingKeyEx: {
       type: Schema.Types.Buffer,
-      required: true,
-      immutable: true
+      required: true
     },
     lastRefreshedAt: {
       type: Schema.Types.Date,

@@ -77,17 +77,17 @@ class SocketHandler {
   #mongoHandler: MongoUserHandler;
   #accessedBundles = new Map<string, KeyBundle>();
   #disposeRooms: (() => void)[] = [];
-  #ip: [string, string];
+  #ipRep: string;
 
-  constructor(socket: Socket, session: Session, sessionReference: string, ip: [string, string], sessionKeyBits: Buffer, sessionKeyBitsImported: CryptoKey, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey, saveToken?: string, resuming = false) {
-    this.#ip = ip;
+  constructor(socket: Socket, session: Session, sessionReference: string, ipRep: string, sessionKeyBits: Buffer, sessionKeyBitsImported: CryptoKey, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey, saveToken?: string, resuming = false) {
+    this.#ipRep = ipRep;
     this.#saveToken = saveToken;
     this.#session = session;
     this.#sessionReference = sessionReference;
     this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBitsImported, sessionSigningKey, sessionVerifyingKey);
     this.registerNewSocket(socket);
     if (!resuming) {
-      this.registerRunningSession(session.id, sessionReference, ip, sessionKeyBits, sessionSigningKey, sessionVerifyingKey);
+      this.registerRunningSession(session.id, sessionReference, ipRep, sessionKeyBits, sessionSigningKey, sessionVerifyingKey);
     }
     else {
       MongoHandlerCentral.getSession(session.id).then((running) => {
@@ -102,7 +102,7 @@ class SocketHandler {
   }
 
   setSaveToken(sessionReference: string, currentIp: string, saveToken: string) {
-    if (sessionReference === this.#sessionReference && currentIp === this.#ip[0] && (!this.#saveToken || !saveToken)) {
+    if (sessionReference === this.#sessionReference && currentIp === this.#ipRep && (!this.#saveToken || !saveToken)) {
       if (!this.#saveToken && saveToken) {
         this.#saveToken = saveToken;
       }
@@ -148,13 +148,13 @@ class SocketHandler {
     socket.on("disconnect", this.onSocketDisconnect.bind(this));
   }
 
-  private async registerRunningSession(sessionId: string, sessionReference: string, ip: [string, string], sessionKeyBitsEx: Buffer, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey) {
+  private async registerRunningSession(sessionId: string, sessionReference: string, ipRep: string, sessionKeyBitsEx: Buffer, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey) {
     if ("sessionReference" in ((await MongoHandlerCentral.getSession(sessionId)) ?? {})) {
       return;
     }
     const sessionSigningKeyEx = await crypto.exportKey(sessionSigningKey);
     const sessionVerifyingKeyEx = await crypto.exportKey(sessionVerifyingKey);
-    const [ipRep, ipRead] = ip;
+    const ipRead = parseIpReadable(ipRep);
     await MongoHandlerCentral.addSession({ sessionId, sessionReference, ipRep, ipRead , sessionKeyBitsEx, sessionSigningKeyEx, sessionVerifyingKeyEx });
   }
 
@@ -175,7 +175,7 @@ class SocketHandler {
   }
 
   private async waitInterrupted(newSocket: Socket, sessionReference: string, currentIp: string) {
-    if (sessionReference !== this.#sessionReference || currentIp !== this.#ip[0]) {
+    if (sessionReference !== this.#sessionReference || currentIp !== this.#ipRep) {
       return false;
     }
     interruptedSessions.delete(this.#session.id);
@@ -184,7 +184,7 @@ class SocketHandler {
       onlineUsers.set(this.#username, newSocket.id);
     }
     this.registerNewSocket(newSocket);
-    newSocket.emit(SocketEvents.CompleteHandshake, "1", () => {});
+    newSocket.emit(SocketEvents.CompleteHandshake, "1", await jsHash, () => {});
     console.log(`Session ${this.#session.id} reconnected.`);
     return true;
   }
@@ -392,7 +392,8 @@ class SocketHandler {
 
   private async setSavedDetails(request: Omit<SavedDetails, "ip">) : Promise<Failure> {
     if (request.saveToken !== this.#saveToken) return failure(ErrorStrings.IncorrectData);
-    const [ipRep, ipRead] = this.#ip;
+    const ipRep = this.#ipRep;
+    const ipRead = parseIpReadable(ipRep);
     const success = await MongoHandlerCentral.setSavedDetails({ ...request, ipRep, ipRead });
     return success ? { reason: null } : failure(ErrorStrings.ProcessFailed);
   }
@@ -401,7 +402,7 @@ class SocketHandler {
     if (saveToken !== this.#saveToken) return failure(ErrorStrings.IncorrectData);
     this.#saveToken = null;
     const savedDetails = await MongoHandlerCentral.getSavedDetails(saveToken);
-    if (!savedDetails || savedDetails.ipRep !== this.#ip[0]) return failure(savedDetails ? ErrorStrings.ProcessFailed : ErrorStrings.InvalidRequest)
+    if (!savedDetails || savedDetails.ipRep !== this.#ipRep) return failure(savedDetails ? ErrorStrings.ProcessFailed : ErrorStrings.InvalidRequest)
     return savedDetails;
   }
 
@@ -769,20 +770,17 @@ function parseIpRepresentation(address: string) {
   if (!ipaddr.isValid(address)) return null;
   const ipv4_or_ipv6 = ipaddr.parse(address);
   const ipv6 = 
-    (ipv4_or_ipv6.kind() === "ipv4") && ("octets" !in ipv4_or_ipv6)
+    "octets" in ipv4_or_ipv6
       ? ipv4_or_ipv6.toIPv4MappedAddress() 
-      : (ipv4_or_ipv6 as ipaddr.IPv6);
+      : ipv4_or_ipv6;
   return Buffer.from(ipv6.toByteArray()).toString("base64");
 }
 
-function parseIpReadable(address: string) {
-  if (!ipaddr.isValid(address)) return null;
-  const ipv4_or_ipv6 = ipaddr.parse(address);
-  return (ipv4_or_ipv6.kind() === "ipv6") && ("parts" in ipv4_or_ipv6)
-            ? (ipv4_or_ipv6.isIPv4MappedAddress()
-                ? ipv4_or_ipv6.toIPv4Address().toString()
-                : ipv4_or_ipv6.toRFC5952String())
-            : ipv4_or_ipv6.toString();
+function parseIpReadable(ipRep: string) {
+  const ipv6 = new ipaddr.IPv6(Array.from(Buffer.from(ipRep, "base64")));
+  return ipv6.isIPv4MappedAddress()
+          ? ipv6.toIPv4Address().toString()
+          : ipv6.toRFC5952String();
 }
 
 let abortController: AbortController = new AbortController();
@@ -821,8 +819,18 @@ const httpsOptions : ServerOptions = {
   cert: fs.readFileSync(`..\\certificates\\cert.pem`)
 }
 const cookie: SessionCookieOptions = { httpOnly: true, sameSite: "strict", secure: false }
-const sessionOptions: SessionOptions = { secret: getRandomString(), cookie, genid(req) {
-  return `${getRandomString()}-${req.ip}`; }, name: "chatapp.session.id", resave: false, store, unset: "destroy", saveUninitialized: false };
+const sessionOptions: SessionOptions = { 
+  secret: getRandomString(),
+  cookie, 
+  genid(req) {
+    return `${getRandomString()}-${req.socket.remoteAddress}`; 
+  }, 
+  name: "chatapp.session.id", 
+  resave: true, 
+  store, 
+  unset: "destroy", 
+  saveUninitialized: true
+};
 const corsOptions: CorsOptions = { origin: /.*/, methods: ["GET", "POST"], exposedHeaders: ["set-cookie"], allowedHeaders: ["content-type"], credentials: true };
 const sessionMiddleware = session(sessionOptions);
 const cookieParserMiddle = cookieParser();
@@ -859,11 +867,11 @@ const io = new SocketServer(httpsServer, {
 app.post("/setSaveToken", (req, res) => {
   const { saveToken, socketId, sessionReference } = req.body || {};
   const { socket: { remoteAddress } } = req;
-  if (!ipaddr.isValid(remoteAddress)) {
+  const currentIp = parseIpRepresentation(remoteAddress);
+  if (!currentIp) {
     res.status(400).end();
     return;
   }
-  const currentIp = parseIpRepresentation(remoteAddress);
   if (saveToken === "0") {
     if (socketHandlers.get(socketId)?.setSaveToken(sessionReference, currentIp, null)) {
       res.clearCookie("saveToken").status(200).end();
@@ -889,13 +897,15 @@ app.get("/currentVerifyingKey", async (req, res) => {
 
 app.post("/registerKeys", async (req, res) => {
   const { sessionReference, publicDHKey, publicVerifyingKey } = req.body;
-  const { socket: { remoteAddress }, session: { id: sessionId } } = req;
-  if (!ipaddr.isValid(remoteAddress)) {
+  const { socket: { remoteAddress }, session } = req;
+  session.save();
+  const ipRep = parseIpRepresentation(remoteAddress);
+  if (!ipRep) {
     res.status(400).end();
     return;
   }
-  const ipRep = parseIpRepresentation(remoteAddress);
-  console.log(`Keys registered from ip ${parseIpReadable(remoteAddress)} with sessionReference ${sessionReference}`);
+  const sessionId = session.id;
+  console.log(`Keys registered from ip ${parseIpReadable(ipRep)} with sessionReference ${sessionReference} and sessionID ${sessionId}`);
   const { signingKey, verifyingKey } = (await getCurrentKeys)();
   const { privateKey, publicKey } = await crypto.generateKeyPair("ECDH");
   const clientVerifyingKey = await crypto.importKey(fromBase64(publicVerifyingKey), "ECDSA", "public", true);
@@ -904,32 +914,35 @@ app.post("/registerKeys", async (req, res) => {
   const serverPublicKey = (await crypto.exportKey(publicKey)).toString("base64");
   const timeout = setTimeout(() => registeredKeys.delete(sessionReference), 10_000);
   registeredKeys.set(sessionReference, { ipRep, sessionId, sessionKeyBits, signingKey, clientVerifyingKey, timeout });
-  res.json({ serverPublicKey, verifyingKey }).status(200).end();
+  res.json({ serverPublicKey, verifyingKey, sessionId }).status(200).end();
 });
 
 store.on("error", (err) => logError(err));
 httpsServer.listen(PORT, () => console.log(`listening on *:${PORT}`));
-io.use((socket: Socket, next) => { sessionMiddleware(socket.request as Request, {} as Response, next as NextFunction) });
-io.use((socket: Socket, next) => { cookieParserMiddle(socket.request as Request, {} as Response, next as NextFunction) });
+io.use((socket: Socket, next) => { 
+  sessionMiddleware(socket.request as Request, ((socket.request as any).res || {}) as Response, next as NextFunction) });
+io.use((socket: Socket, next) => { 
+  cookieParserMiddle(socket.request as Request, ((socket.request as any).res || {}) as Response, next as NextFunction) });
 io.on("connection", async (socket) => {
+  const fileHashLocal = await jsHash;
   const rejectConnection = async () => {
-    socket.emit(SocketEvents.CompleteHandshake, "", () => {});
+    socket.emit(SocketEvents.CompleteHandshake, "", fileHashLocal, () => {});
     await sleep(5000);
     socket.disconnect(true);
   }
-  const fileHashLocal = await jsHash;
   const { session, cookies: { saveToken: saveTokenCookie }, socket: { remoteAddress } } = socket.request;
-  if (!ipaddr.isValid(remoteAddress)) {
+  const currentIp = parseIpRepresentation(remoteAddress);
+  if (!currentIp) {
     await rejectConnection();
     return;
   }
-  const currentIp = parseIpRepresentation(remoteAddress);
   const { saveToken } = saveTokenCookie ?? {};
   let { sessionReference, sessionSigned, fileHash } = socket.handshake.auth ?? {};
   if (!sessionReference || !sessionSigned || fileHash !== fileHashLocal) {
     await rejectConnection();
     return;
   }
+  console.log(`Socket connected from ip ${parseIpReadable(currentIp)} with sessionReference ${sessionReference} and session.id ${session.id} and sessionID ${(socket.request as any).sessionID}`);
   if (interruptedSessions.has(session.id)) {
     const resumed = await interruptedSessions.get(session.id)(socket, sessionReference, currentIp);
     if (!resumed) {
@@ -947,16 +960,15 @@ io.on("connection", async (socket) => {
     const sessionSigningKey = await crypto.importKey(sessionSigningKeyEx, "ECDSA", "private", true);
     const sessionVerifyingKey = await crypto.importKey(sessionVerifyingKeyEx, "ECDSA", "public", true);
     const sessionKeyBits = await crypto.importRaw(sessionKeyBitsEx);
-    console.log(`Resuming crashed session #${session.id}.`);
-    new SocketHandler(socket, session, sessionReference, [ipRep, ipRead], sessionKeyBitsEx, sessionKeyBits, sessionSigningKey, sessionVerifyingKey, saveToken, true);
-    socket.emit(SocketEvents.CompleteHandshake, "1", () => {});
+    console.log(`Resuming crashed session #${session.id} at ip ${ipRead}`);
+    new SocketHandler(socket, session, sessionReference, ipRep, sessionKeyBitsEx, sessionKeyBits, sessionSigningKey, sessionVerifyingKey, saveToken, true);
+    socket.emit(SocketEvents.CompleteHandshake, "1", fileHashLocal, () => {});
     return;
   }
   if (!registeredKeys.has(sessionReference)) {
     await rejectConnection();
     return;
   }
-  const ipRead = parseIpReadable(remoteAddress);
   const { ipRep, sessionId, sessionKeyBits, clientVerifyingKey, signingKey, timeout } = registeredKeys.get(sessionReference);
   clearTimeout(timeout);
   registeredKeys.delete(sessionReference);
@@ -965,7 +977,7 @@ io.on("connection", async (socket) => {
     return;
   }
   const success = await new Promise((resolve) => {
-    socket.emit(SocketEvents.CompleteHandshake, sessionReference, resolve);
+    socket.emit(SocketEvents.CompleteHandshake, sessionReference, fileHashLocal, resolve);
     setTimeout(() => resolve(false), 30000);
   })
   if (!success) {
@@ -973,5 +985,5 @@ io.on("connection", async (socket) => {
     return;
   }
   const sessionKeyBitsImported = await crypto.importRaw(sessionKeyBits);
-  new SocketHandler(socket, session, sessionReference, [ipRep, ipRead], sessionKeyBits, sessionKeyBitsImported, signingKey, clientVerifyingKey, saveToken);
+  new SocketHandler(socket, session, sessionReference, ipRep, sessionKeyBits, sessionKeyBitsImported, signingKey, clientVerifyingKey, saveToken);
 });
