@@ -14,7 +14,7 @@ import { Buffer } from "./node_modules/buffer";
 import { SessionCrypto } from "../shared/sessionCrypto";
 import * as crypto from "../shared/cryptoOperator";
 import { serialize } from "../shared/cryptoOperator";
-import { failure, Failure, ErrorStrings, Username, AuthSetupKey, AuthInfo, RegisterNewUserRequest, InitiateAuthenticationResponse, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, PasswordDeriveInfo, UserAuthInfo, randomFunctions, SavedDetails, AuthSetupKeyData, NewUserData, ConcludeAuthenticationRequest, AuthChangeData, ChatRequestHeader, KeyBundle, UserEncryptedData, MessageHeader, StoredMessage, ChatData } from "../shared/commonTypes";
+import { failure, Failure, ErrorStrings, Username, AuthSetupKey, AuthInfo, RegisterNewUserRequest, InitiateAuthenticationResponse, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, PasswordDeriveInfo, UserAuthInfo, randomFunctions, SavedDetails, AuthSetupKeyData, NewUserData, ConcludeAuthenticationRequest, AuthChangeData, ChatRequestHeader, KeyBundle, UserEncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, typedEntries } from "../shared/commonTypes";
 import { MongoHandlerCentral, MongoUserHandler, bufferReplaceForMongo } from "./MongoHandler";
 
 try {
@@ -36,35 +36,40 @@ declare module "http" {
   }
 }
 
+type ResponseMap = Readonly<{
+  [E in SocketClientSideEventsKey]: (arg: SocketClientRequestParameters[E]) => Promise<SocketClientRequestReturn[E] | Failure>
+}>
+
 class SocketHandler {
-  private readonly responseMap: Map<SocketEvents, any> = new Map([
-    [SocketEvents.UsernameExists, this.usernameExists] as [SocketEvents, any], 
-    [SocketEvents.UserLoginPermitted, this.userLoginPermitted], 
-    [SocketEvents.RequestAuthSetupKey, this.generateAuthSetupKey], 
-    [SocketEvents.RegisterNewUser, this.registerNewUser], 
-    [SocketEvents.InitiateAuthentication, this.initiateAuthentication], 
-    [SocketEvents.ConcludeAuthentication, this.concludeAuthentication],
-    [SocketEvents.SetSavedDetails, this.setSavedDetails],
-    [SocketEvents.GetSavedDetails, this.getSavedDetails],
-    [SocketEvents.PublishKeyBundles, this.publishKeyBundles],
-    [SocketEvents.UpdateX3DHUser, this.updateX3DHUser],
-    [SocketEvents.RequestKeyBundle, this.requestKeyBundle],
-    [SocketEvents.GetAllChats, this.getAllChats],
-    [SocketEvents.GetAllRequests, this.getAllRequests],
-    [SocketEvents.GetUnprocessedMessages, this.getUnprocessedMessages],
-    [SocketEvents.GetMessagesByNumber, this.getMessagesByNumber],
-    [SocketEvents.GetMessagesUptoTimestamp, this.getMessagesUptoTimestamp],
-    [SocketEvents.GetMessagesUptoId, this.getMessagesUptoId],
-    [SocketEvents.GetMessageById, this.getMessageById],
-    [SocketEvents.StoreMessage, this.storeMessage],
-    [SocketEvents.CreateChat, this.createChat],
-    [SocketEvents.UpdateChat, this.updateChat],
-    [SocketEvents.SendChatRequest, this.sendChatRequest],
-    [SocketEvents.SendMessage, this.sendMessage],
-    [SocketEvents.DeleteChatRequest, this.deleteChatRequest],
-    [SocketEvents.LogOut, this.logOut],
-    [SocketEvents.RequestRoom, this.roomRequested]
-  ]);
+  private readonly responseMap: ResponseMap = {
+    [SocketClientSideEvents.UsernameExists]: this.usernameExists,
+    [SocketClientSideEvents.UserLoginPermitted]: this.userLoginPermitted, 
+    [SocketClientSideEvents.RequestAuthSetupKey]: this.generateAuthSetupKey, 
+    [SocketClientSideEvents.RegisterNewUser]: this.registerNewUser, 
+    [SocketClientSideEvents.InitiateAuthentication]: this.initiateAuthentication, 
+    [SocketClientSideEvents.ConcludeAuthentication]: this.concludeAuthentication,
+    [SocketClientSideEvents.SetSavedDetails]: this.setSavedDetails,
+    [SocketClientSideEvents.GetSavedDetails]: this.getSavedDetails,
+    [SocketClientSideEvents.PublishKeyBundles]: this.publishKeyBundles,
+    [SocketClientSideEvents.UpdateX3DHUser]: this.updateX3DHUser,
+    [SocketClientSideEvents.RequestKeyBundle]: this.requestKeyBundle,
+    [SocketClientSideEvents.GetAllChats]: this.getAllChats,
+    [SocketClientSideEvents.GetAllRequests]: this.getAllRequests,
+    [SocketClientSideEvents.GetUnprocessedMessages]: this.getUnprocessedMessages,
+    [SocketClientSideEvents.GetMessagesByNumber]: this.getMessagesByNumber,
+    [SocketClientSideEvents.GetMessagesUptoTimestamp]: this.getMessagesUptoTimestamp,
+    [SocketClientSideEvents.GetMessagesUptoId]: this.getMessagesUptoId,
+    [SocketClientSideEvents.GetMessageById]: this.getMessageById,
+    [SocketClientSideEvents.StoreMessage]: this.storeMessage,
+    [SocketClientSideEvents.CreateChat]: this.createChat,
+    [SocketClientSideEvents.UpdateChat]: this.updateChat,
+    [SocketClientSideEvents.SendChatRequest]: this.sendChatRequest,
+    [SocketClientSideEvents.SendMessage]: this.sendMessage,
+    [SocketClientSideEvents.DeleteChatRequest]: this.deleteChatRequest,
+    [SocketClientSideEvents.LogOut]: this.logOut,
+    [SocketClientSideEvents.RequestRoom]: this.roomRequested,
+    [SocketClientSideEvents.TerminateCurrentSession]: this.terminateCurrentSession
+  };
   #saveToken: string;
   #session: Session;
   #sessionReference: string;
@@ -86,17 +91,6 @@ class SocketHandler {
     this.#sessionReference = sessionReference;
     this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBitsImported, sessionSigningKey, sessionVerifyingKey);
     this.registerNewSocket(socket);
-    if (!resuming) {
-      this.registerRunningSession(session.id, sessionReference, ipRep, sessionKeyBits, sessionSigningKey, sessionVerifyingKey);
-    }
-    else {
-      MongoHandlerCentral.getSession(session.id).then((running) => {
-        const { accessedBundles } = running;
-        if (accessedBundles) {
-          this.#accessedBundles = accessedBundles;
-        }
-      })
-    }
     console.log(`Connected: socket#${socket.id} with session reference ${sessionReference}`);
     console.log(`Session ${session.id} begun.`);
   }
@@ -138,24 +132,15 @@ class SocketHandler {
     this.#socket = socket;
     this.#socketId = socket.id;
     socketHandlers.set(socket.id, this);
-    for (const [event, response] of this.responseMap.entries()) {
-      socket.on(event, async (data: string, respond) => await this.respond(event, data, response.bind(this), respond));
+    for (let [event] of typedEntries(this.responseMap)) {
+      const responseBy = this.responseMap[event].bind(this);
+      socket.on(event, async (data: string, resolve) => await this.respond(event, data, responseBy, resolve));
     }
-    socket.on(SocketEvents.TerminateCurrentSession, (_, respond) => {
+    socket.on(SocketClientSideEvents.TerminateCurrentSession, (_, respond) => {
       this.terminateCurrentSession();
       respond();
     });
     socket.on("disconnect", this.onSocketDisconnect.bind(this));
-  }
-
-  private async registerRunningSession(sessionId: string, sessionReference: string, ipRep: string, sessionKeyBitsEx: Buffer, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey) {
-    if ("sessionReference" in ((await MongoHandlerCentral.getSession(sessionId)) ?? {})) {
-      return;
-    }
-    const sessionSigningKeyEx = await crypto.exportKey(sessionSigningKey);
-    const sessionVerifyingKeyEx = await crypto.exportKey(sessionVerifyingKey);
-    const ipRead = parseIpReadable(ipRep);
-    await MongoHandlerCentral.addSession({ sessionId, sessionReference, ipRep, ipRead , sessionKeyBitsEx, sessionSigningKeyEx, sessionVerifyingKeyEx });
   }
 
   private onSocketDisconnect() {
@@ -166,27 +151,6 @@ class SocketHandler {
     this.deregisterSocket();
     const sessionId = this.#session.id;
     console.log(`Disonnected: socket#${this.#socketId}`);
-    console.log(`Session ${sessionId} interrupted.`);
-    interruptedSessions.set(sessionId, this.waitInterrupted.bind(this) as typeof this.waitInterrupted);
-    setTimeout(() => {
-      interruptedSessions.delete(sessionId);
-      this.terminateCurrentSession();
-    }, 10*60*1000);
-  }
-
-  private async waitInterrupted(newSocket: Socket, sessionReference: string, currentIp: string) {
-    if (sessionReference !== this.#sessionReference || currentIp !== this.#ipRep) {
-      return false;
-    }
-    interruptedSessions.delete(this.#session.id);
-    socketHandlers.set(newSocket.id, this);
-    if (this.#username) {
-      onlineUsers.set(this.#username, newSocket.id);
-    }
-    this.registerNewSocket(newSocket);
-    newSocket.emit(SocketEvents.CompleteHandshake, "1", await jsHash, () => {});
-    console.log(`Session ${this.#session.id} reconnected.`);
-    return true;
   }
 
   private async request(event: string, data: any, timeout = 0): Promise<any> {
@@ -199,24 +163,25 @@ class SocketHandler {
     }).catch((err) => console.log(`${err}\n${err.stack}`));
   }
 
-  private async respond(event: string, data: string, responseBy: (arg0: any) => any, respondAt: (arg0: string) => void) {
-    const respond = async (response: any) => {
-      respondAt(await this.#sessionCrypto.signEncryptToBase64({ payload: response, fileHash: await jsHash }, event));
+  private async respond(event: SocketClientSideEventsKey, data: string, responseBy: (arg: SocketClientRequestParameters[typeof event]) => Promise<SocketClientRequestReturn[typeof event] | Failure>, resolve: (arg0: string) => void) {
+    const encryptResolve = async (response: SocketClientRequestReturn[typeof event] | Failure) => {
+      if (!this.#sessionCrypto) resolve(null);
+      else resolve(await this.#sessionCrypto.signEncryptToBase64({ payload: response, fileHash: await jsHash }, event));
     }
     try {
       const decryptedData = await this.#sessionCrypto.decryptVerifyFromBase64(data, event);
-      if (!decryptedData) await respond(failure(ErrorStrings.DecryptFailure));
+      if (!decryptedData) await encryptResolve(failure(ErrorStrings.DecryptFailure));
       else {
         const response = await responseBy(decryptedData);
-        if (!response) await respond(failure(ErrorStrings.ProcessFailed));
+        if (!response) await encryptResolve(failure(ErrorStrings.ProcessFailed));
         else {
-          respond(response);
+          encryptResolve(response);
         }
       }
     }
     catch(err) {
       logError(err)
-      respond(failure(ErrorStrings.ProcessFailed, err));
+      encryptResolve(failure(ErrorStrings.ProcessFailed, err));
     }
   }
 
@@ -390,7 +355,7 @@ class SocketHandler {
     }
   }
 
-  private async setSavedDetails(request: Omit<SavedDetails, "ip">) : Promise<Failure> {
+  private async setSavedDetails(request: Omit<SavedDetails, "ipRep" | "ipRead">) : Promise<Failure> {
     if (request.saveToken !== this.#saveToken) return failure(ErrorStrings.IncorrectData);
     const ipRep = this.#ipRep;
     const ipRead = parseIpReadable(ipRep);
@@ -468,10 +433,6 @@ class SocketHandler {
     }
     try {
       if (saveRequired && otherUser !== await otherUser.save()) return failure(ErrorStrings.ProcessFailed);
-      if (saveRequired) {
-        this.#accessedBundles.set(username, keyBundle);
-        await MongoHandlerCentral.addAccessedBundle(this.#session.id, username, keyBundle);
-      }
       return { keyBundle };
     }
     catch(err) {
@@ -480,7 +441,7 @@ class SocketHandler {
     }
   }
 
-  private async roomRequested({ username }: Username): Promise<(() => void) | Failure> {
+  private async roomRequested({ username }: Username): Promise<Failure> {
     if (!this.#username || this.#username === username) return failure(ErrorStrings.InvalidRequest);
     const otherSocketHandler = socketHandlers.get(onlineUsers.get(username));
     if (!otherSocketHandler) return failure(ErrorStrings.ProcessFailed);
@@ -495,7 +456,7 @@ class SocketHandler {
 
   private async requestRoom(username: string, halfRoom: (roomUser2: RoomUser) => Promise<() => void>): Promise<(() => void) | Failure> {
     if (!this.#username || this.#username === username) return failure(ErrorStrings.InvalidRequest);
-    const response: Failure = await this.request(SocketEvents.RequestRoom, { username });
+    const response: Failure = await this.request(SocketServerSideEvents.RoomRequested, { username });
     if ("reason" in response) {
       return response;
     }
@@ -569,13 +530,13 @@ class SocketHandler {
     return { reason: null };
   }
 
-  private async createChat(chat: { sessionId: string, lastActivity: number, chatDetails: UserEncryptedData, chattingSession: UserEncryptedData }) {
+  private async createChat(chat: ChatData) {
     if (!this.#username) return failure(ErrorStrings.InvalidRequest);
     if (!(await this.#mongoHandler.createChat(chat))) return failure(ErrorStrings.ProcessFailed);
     return { reason: null };
   }
 
-  private async updateChat(chat: { sessionId: string, lastActivity: number, chatDetails: UserEncryptedData, chattingSession: UserEncryptedData }) {
+  private async updateChat(chat: ChatData) {
     if (!this.#username) return failure(ErrorStrings.InvalidRequest);
     if (!(await this.#mongoHandler.updateChat(chat))) return failure(ErrorStrings.ProcessFailed);
     return { reason: null };
@@ -590,10 +551,10 @@ class SocketHandler {
   private async notifyMessage(message: MessageHeader | ChatRequestHeader) {
     if (message.addressedTo !== this.#username) return;
     if ("messageBody" in message) {
-      await this.request(SocketEvents.MessageReceived, message);
+      await this.request(SocketServerSideEvents.MessageReceived, message);
     }
     else if ("initialMessage" in message) {
-      await this.request(SocketEvents.ChatRequestReceived, message);
+      await this.request(SocketServerSideEvents.ChatRequestReceived, message);
     }
   }
 
@@ -602,17 +563,17 @@ class SocketHandler {
     this.dispose();
   }
 
-  private terminateCurrentSession() {
+  private async terminateCurrentSession(): Promise<Failure> {
     this.#session?.destroy((err) => {
       console.log(`Session ${this.#session.id} destroyed.`);
       this.dispose();
     });
+    return { reason: null }
   }
 
   private dispose() {
     console.log(`Disposing connection: session reference ${this.#sessionReference}`);
     this.deregisterSocket();
-    MongoHandlerCentral.deleteSession(this.#session.id);
     MongoHandlerCentral.deregisterUserHandler(this.#username);
     this.#session = null;
     this.#sessionReference = null;
@@ -661,12 +622,12 @@ async function createRoom([username1, socket1, sessionCrypto1]: RoomUser, [usern
     return new Promise<boolean>((resolve) => {
       const response = (withUser: string) => { 
         if (withUser === otherUsername) {
-          socket.off(SocketEvents.RoomEstablished, response);
+          socket.off(SocketServerSideEvents.RoomEstablished, response);
           resolve(true);
         } };
-      socket.on(SocketEvents.RoomEstablished, response);
+      socket.on(SocketServerSideEvents.RoomEstablished, response);
       setTimeout(() => {
-        socket.off(SocketEvents.RoomEstablished, response);
+        socket.off(SocketServerSideEvents.RoomEstablished, response);
         resolve(false);
       }, 20000);
     });
@@ -837,7 +798,6 @@ const cookieParserMiddle = cookieParser();
 const app = express().use(cors(corsOptions)).use(sessionMiddleware).use(cookieParserMiddle).use(express.json());
 const httpsServer = createServer(httpsOptions, app);
 const socketHandlers = new Map<string, SocketHandler>();
-const interruptedSessions = new Map<string, (socket: Socket, sessionReference: string, currentIp: string) => Promise<boolean>>();
 const onlineUsers = new Map<string, string>();
 const registeredKeys = new Map<string, { ipRep:string, sessionId: string, sessionKeyBits: Buffer, signingKey: CryptoKey, clientVerifyingKey: CryptoKey, timeout: NodeJS.Timeout }>();
 
@@ -925,46 +885,21 @@ io.use((socket: Socket, next) => {
   cookieParserMiddle(socket.request as Request, ((socket.request as any).res || {}) as Response, next as NextFunction) });
 io.on("connection", async (socket) => {
   const fileHashLocal = await jsHash;
+  const { session, cookies: { saveToken: saveTokenCookie }, socket: { remoteAddress } } = socket.request;
+  const currentIp = parseIpRepresentation(remoteAddress);
+  const { saveToken } = saveTokenCookie ?? {};
+  let { sessionReference, sessionSigned, fileHash } = socket.handshake.auth ?? {};
   const rejectConnection = async () => {
-    socket.emit(SocketEvents.CompleteHandshake, "", fileHashLocal, () => {});
+    console.log(`Rejecting sessionReference ${sessionReference}`);
+    socket.emit(SocketServerSideEvents.CompleteHandshake, "", fileHashLocal, () => {});
     await sleep(5000);
     socket.disconnect(true);
   }
-  const { session, cookies: { saveToken: saveTokenCookie }, socket: { remoteAddress } } = socket.request;
-  const currentIp = parseIpRepresentation(remoteAddress);
-  if (!currentIp) {
-    await rejectConnection();
-    return;
-  }
-  const { saveToken } = saveTokenCookie ?? {};
-  let { sessionReference, sessionSigned, fileHash } = socket.handshake.auth ?? {};
-  if (!sessionReference || !sessionSigned || fileHash !== fileHashLocal) {
+  if (!currentIp || !sessionReference || !sessionSigned || fileHash !== fileHashLocal) {
     await rejectConnection();
     return;
   }
   console.log(`Socket connected from ip ${parseIpReadable(currentIp)} with sessionReference ${sessionReference} and session.id ${session.id} and sessionID ${(socket.request as any).sessionID}`);
-  if (interruptedSessions.has(session.id)) {
-    const resumed = await interruptedSessions.get(session.id)(socket, sessionReference, currentIp);
-    if (!resumed) {
-      await rejectConnection();
-    }
-    return;
-  }
-  const crashedSession = await MongoHandlerCentral.getSession(session.id);
-  if (crashedSession) {
-    const { sessionKeyBitsEx, sessionSigningKeyEx, sessionVerifyingKeyEx, ipRep, ipRead } = crashedSession;
-    if (ipRep !== currentIp) {
-      await rejectConnection();
-      return;
-    }
-    const sessionSigningKey = await crypto.importKey(sessionSigningKeyEx, "ECDSA", "private", true);
-    const sessionVerifyingKey = await crypto.importKey(sessionVerifyingKeyEx, "ECDSA", "public", true);
-    const sessionKeyBits = await crypto.importRaw(sessionKeyBitsEx);
-    console.log(`Resuming crashed session #${session.id} at ip ${ipRead}`);
-    new SocketHandler(socket, session, sessionReference, ipRep, sessionKeyBitsEx, sessionKeyBits, sessionSigningKey, sessionVerifyingKey, saveToken, true);
-    socket.emit(SocketEvents.CompleteHandshake, "1", fileHashLocal, () => {});
-    return;
-  }
   if (!registeredKeys.has(sessionReference)) {
     await rejectConnection();
     return;
@@ -977,7 +912,7 @@ io.on("connection", async (socket) => {
     return;
   }
   const success = await new Promise((resolve) => {
-    socket.emit(SocketEvents.CompleteHandshake, sessionReference, fileHashLocal, resolve);
+    socket.emit(SocketServerSideEvents.CompleteHandshake, sessionReference, fileHashLocal, resolve);
     setTimeout(() => resolve(false), 30000);
   })
   if (!success) {

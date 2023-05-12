@@ -1,5 +1,5 @@
 import _ from "lodash";
-import { match } from "ts-pattern";
+import { match, P } from "ts-pattern";
 import axios, { Axios } from "axios";
 import { io, Socket } from "socket.io-client";
 import { Buffer } from "./node_modules/buffer";
@@ -7,7 +7,7 @@ import { stringify } from "safe-stable-stringify";
 import { SessionCrypto } from "../../shared/sessionCrypto";
 import { ChattingSession, SendingMessage, ViewChatRequest, X3DHUser } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
-import { ErrorStrings, Failure, Username, AuthSetupKey, UserEncryptedData, RegisterNewUserRequest, InitiateAuthenticationResponse, ConcludeAuthenticationRequest, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketEvents, randomFunctions, failure, SavedDetails, PasswordEncryptedData, AuthSetupKeyData, NewUserData, AuthChangeData, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, DeliveryInfo } from "../../shared/commonTypes";
+import { ErrorStrings, Failure, Username, AuthSetupKey, UserEncryptedData, RegisterNewUserRequest, InitiateAuthenticationResponse, ConcludeAuthenticationRequest, SignInResponse, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, randomFunctions, failure, SavedDetails, PasswordEncryptedData, AuthSetupKeyData, NewUserData, AuthChangeData, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, DeliveryInfo, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn } from "../../shared/commonTypes";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;
@@ -55,11 +55,46 @@ type ClientChatRequestInterface = Readonly<{
   respondToRequest: (request: ChatRequestHeader, respondingAt: number) => Promise<boolean>
 }>
 
+type RequestMap = Readonly<{
+  [E in SocketClientSideEventsKey]: (arg: SocketClientRequestParameters[E], timeout?: number) => Promise<SocketClientRequestReturn[E] | Failure>
+}>
+
+function SocketHandler(socket: Socket, sessionCrypto: SessionCrypto, currentFileHash: Promise<string>, isConnected: () => boolean): RequestMap {
+
+  async function request(event: SocketClientSideEventsKey, data: any, timeout = 0): Promise<any | Failure> {
+    if (!isConnected()) {
+      return {};
+    }
+    let { fileHash, payload } = await new Promise(async (resolve: (result: any) => void) => {
+      socket.emit(event, (await sessionCrypto.signEncryptToBase64(data, event)), 
+      async (response: string) => resolve(response ? await sessionCrypto.decryptVerifyFromBase64(response, event) : {}));
+      if (timeout > 0) {
+        window.setTimeout(() => resolve({}), timeout);
+      }
+    })
+    if (fileHash !== await currentFileHash) {
+      window.history.go();
+      return {};
+    } else return payload;
+  }
+
+  function makeRequest(event: SocketClientSideEventsKey) {
+    return (data: any, timeout = 0) => request(event, data, timeout);
+  }
+
+  const requestMap: any = {};
+  let event: SocketClientSideEventsKey;
+  for (event in SocketClientSideEvents) {
+    requestMap[event] = makeRequest(event);
+  }
+  return requestMap as RequestMap;
+}
+
 export class Client {
-  private readonly responseMap: Map<SocketEvents, any> = new Map([
-    [SocketEvents.RequestRoom, this.roomRequested] as [SocketEvents, any],
-    [SocketEvents.MessageReceived, this.messageReceived],
-    [SocketEvents.ChatRequestReceived, this.chatRequestReceived]
+  private readonly responseMap: Map<SocketServerSideEventsKey, any> = new Map([
+    [SocketServerSideEvents.RoomRequested, this.roomRequested] as [SocketServerSideEventsKey, any],
+    [SocketServerSideEvents.MessageReceived, this.messageReceived],
+    [SocketServerSideEvents.ChatRequestReceived, this.chatRequestReceived]
   ]);
   private readonly url: string;
   private readonly axInstance: Axios;
@@ -75,7 +110,8 @@ export class Client {
   #username: string;
   #x3dhUser: X3DHUser;
   #sessionReference: string;
-  #sessionCrypto: SessionCrypto;
+  #sessionCrypto: SessionCrypto
+  #socketHandler: RequestMap;
   #encryptionBaseVector: CryptoKey;
   #fileHash: Promise<string>;
   private readonly chatList: string[] = [];
@@ -84,28 +120,28 @@ export class Client {
 
   private readonly chatInterface: (sessionId: string) => ClientChatInterface = (sessionId) => ({
     SendMessage: (data: MessageHeader, timeout = 0) => {
-      return this.request(SocketEvents.SendMessage, data, timeout);
+      return this.#socketHandler.SendMessage(data, timeout);
     },
     GetUnprocessedMessages: (timeout = 0) => {
-      return this.request(SocketEvents.GetUnprocessedMessages, { sessionId }, timeout);
+      return this.#socketHandler.GetUnprocessedMessages({ sessionId }, timeout);
     },
     GetMessagesByNumber: (data: { limit: number, olderThan?: number }, timeout = 0) => {
-      return this.request(SocketEvents.GetMessagesByNumber, { sessionId, ...data }, timeout);
+      return this.#socketHandler.GetMessagesByNumber({ sessionId, ...data }, timeout);
     },
     GetMessagesUptoTimestamp: (data: { newerThan: number, olderThan?: number }, timeout = 0) => {
-      return this.request(SocketEvents.GetMessagesUptoTimestamp, { sessionId, ...data }, timeout);
+      return this.#socketHandler.GetMessagesUptoTimestamp({ sessionId, ...data }, timeout);
     },
     GetMessagesUptoId: (data: { messageId: string, olderThan?: number }, timeout = 0) => {
-      return this.request(SocketEvents.GetMessagesUptoId, { sessionId, ...data }, timeout);
+      return this.#socketHandler.GetMessagesUptoId({ sessionId, ...data }, timeout);
     },
     GetMessageById: (data: { messageId: string }, timeout = 0) => {
-      return this.request(SocketEvents.GetMessageById, { sessionId, ...data }, timeout);
+      return this.#socketHandler.GetMessageById({ sessionId, ...data }, timeout);
     },
     StoreMessage: (data: Omit<StoredMessage, "sessionId">, timeout = 0) => {
-      return this.request(SocketEvents.StoreMessage, { sessionId, ...data }, timeout);
+      return this.#socketHandler.StoreMessage({ sessionId, ...data }, timeout);
     },
     UpdateChat: (data: Omit<ChatData, "sessionId">, timeout = 0) =>  {
-      return this.request(SocketEvents.UpdateChat, { sessionId, ...data }, timeout);
+      return this.#socketHandler.UpdateChat({ sessionId, ...data }, timeout);
     }
   })
  
@@ -217,7 +253,7 @@ export class Client {
       let nevermind = false;
       let timeout: number = null;
       const success = await new Promise<boolean>((resolve) => {
-        this.#socket.once(SocketEvents.CompleteHandshake, (ref, latestFileHash, respond) => {
+        this.#socket.once(SocketServerSideEvents.CompleteHandshake, (ref, latestFileHash, respond) => {
           const finalize = (complete: boolean) => {
             respond(complete);
             resolve(complete);
@@ -236,15 +272,13 @@ export class Client {
               return;
             }
             if (ref !== sessionReference) {
-              const reconnected = this.#sessionReference && ref === "1";
-              finalize(reconnected);
-              if (reconnected) {
-                this.serverUnavailable = false;
-              }
+              this.serverUnavailable = !ref;
+              finalize(false);
               return;
             }
             this.#sessionReference = sessionReference;
             this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBits, signingKey, serverVerifyingKey);
+            this.#socketHandler = SocketHandler(this.#socket, this.#sessionCrypto, this.#fileHash, () => this.isConnected);
             console.log(`Connected with session reference: ${sessionReference} and socketId: ${this.#socket.id}`);
             if (this.#username) {
               this.notifyClientEvent?.(ClientEvent.SignedOut);
@@ -319,12 +353,19 @@ export class Client {
   }
 
   async checkUsernameExists(username: string) {
-    const { exists }: { exists: boolean } = await this.request(SocketEvents.UsernameExists, { username });
-    return exists;
+    const result = await this.#socketHandler.UsernameExists({ username });
+    if ("reason" in result) {
+      throw "Can't determine if username exists.";
+    }
+    return result.exists;
   }
 
   async userLogInPermitted(username: string): Promise<{ tries: number, allowsAt: number }> {
-    return await this.request(SocketEvents.UserLoginPermitted, { username });
+    const result = await this.#socketHandler.UserLoginPermitted({ username });
+    if ("reason" in result) {
+      throw "Can't determine if username login is permitted.";
+    }
+    return result;
   }
 
   async registerNewUser(username: string, password: string, displayName: string, profilePicture: string, savePassword: boolean): Promise<Failure> {
@@ -349,14 +390,14 @@ export class Client {
         this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
         return failure(ErrorStrings.ProcessFailed);
       }
-      const response = await this.RequestAuthSetupKey({ username });
+      const response = await this.#socketHandler.RequestAuthSetupKey({ username });
       if ("reason" in response) {
         this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
         return response;
       }
       const keyData = await this.processAuthSetupKey(username, response);
       const newUserRequest = await this.createNewUserAuth(username, password, keyData, newUserData);
-      let { reason } = await this.RegisterNewUser(newUserRequest);
+      let { reason } = await this.#socketHandler.RegisterNewUser(newUserRequest);
       if (reason) {
         this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
         return { reason };
@@ -397,7 +438,7 @@ export class Client {
           this.notifyClientEvent?.(ClientEvent.FailedSignIn);
           return failure(ErrorStrings.InvalidRequest);
         }
-        const details = await this.GetSavedDetails({ saveToken });
+        const details = await this.#socketHandler.GetSavedDetails({ saveToken });
         await this.clearCookie();
         if ("reason" in details) {
           this.notifyClientEvent?.(ClientEvent.FailedSignIn);
@@ -410,7 +451,7 @@ export class Client {
         }
         savePassword = true;
       }
-      const response = await this.InitiateAuthentication({ username });
+      const response = await this.#socketHandler.InitiateAuthentication({ username });
       if ("reason" in response) {
         this.notifyClientEvent?.(ClientEvent.FailedSignIn);
         return response;
@@ -423,7 +464,7 @@ export class Client {
       }
       const [concludeRequest, encryptionBaseVector] = result;
       this.#encryptionBaseVector = await crypto.importRaw(encryptionBaseVector);
-      const concludeResponse = await this.ConcludeAuthentication(concludeRequest);
+      const concludeResponse = await this.#socketHandler.ConcludeAuthentication(concludeRequest);
       if ("reason" in concludeResponse) {
         this.notifyClientEvent?.(ClientEvent.FailedSignIn);
         return concludeResponse;
@@ -447,7 +488,7 @@ export class Client {
       for (const { sessionId, timestamp, otherUser, firstMessage } of this.#x3dhUser.pendingChatRequests) {
         const awaited: AwaitedRequest = { sessionId, otherUser, lastActivity: timestamp, message: { messageId: "i", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } }, type: "AwaitedRequest" };
         this.addChat(awaited);
-        const result = await this.GetUnprocessedMessages(sessionId);
+        const result = await this.#socketHandler.GetUnprocessedMessages({ sessionId });
         if ("reason" in result) {
           logError(result.reason);
           return;
@@ -470,7 +511,7 @@ export class Client {
   async sendChatRequest(otherUser: string, firstMessage: string, madeAt: number): Promise<Failure> {
     if (!this.isConnected) return failure(ErrorStrings.NoConnectivity);
     if (!(await this.checkUsernameExists(otherUser))) return failure(ErrorStrings.InvalidRequest);
-    const keyBundleResponse = await this.RequestKeyBundle({ username: otherUser });
+    const keyBundleResponse = await this.#socketHandler.RequestKeyBundle({ username: otherUser });
     if ("reason" in keyBundleResponse) {
       logError(keyBundleResponse);
       return keyBundleResponse;
@@ -478,7 +519,7 @@ export class Client {
     const { keyBundle } = keyBundleResponse;
     const { displayName, profilePicture } = this;
     const result = await this.#x3dhUser.generateChatRequest(keyBundle, firstMessage, madeAt, { displayName, profilePicture }, async (chatRequest) => {
-      const result = await this.SendChatRequest(chatRequest);
+      const result = await this.#socketHandler.SendChatRequest(chatRequest);
       if (result.reason) {
         logError(result);
         return false;
@@ -490,7 +531,7 @@ export class Client {
       return failure(ErrorStrings.ProcessFailed, result);
     }
     const [{ sessionId, timestamp }, x3dhInfo] = result;
-    const { reason } = await this.UpdateX3DHUser({ x3dhInfo, username: this.username });
+    const { reason } = await this.#socketHandler.UpdateX3DHUser({ x3dhInfo, username: this.username });
     if (reason) {
       logError(reason);
       return failure(ErrorStrings.ProcessFailed);
@@ -507,19 +548,19 @@ export class Client {
     this.#displayName = null;
     this.#x3dhUser = null;
     this.#encryptionBaseVector = null;
-    await this.request(SocketEvents.LogOut, { username });
+    await this.#socketHandler.LogOut({ username });
     this.notifyClientEvent?.(ClientEvent.SignedOut);
     await this.retryConnect("");
   }
 
   async terminateCurrentSession(end = true) {
-    await new Promise((resolve, _) => this.#socket.emit(SocketEvents.TerminateCurrentSession, "", resolve));
+    await this.#socketHandler.TerminateCurrentSession([]);
     console.log(`Terminating session: reference #${this.#sessionReference}`);
     this.#displayName = null;
     this.#username = null;
     this.#x3dhUser = null;
     this.#sessionReference = null;
-    this.#sessionCrypto = null;
+    this.#socketHandler = null;
     if (!end) {
       await this.retryConnect("");
     }
@@ -591,7 +632,7 @@ export class Client {
       const sessionReference = this.#sessionReference;
       const response = await this.axInstance.post("/setSaveToken", { saveToken, socketId, sessionReference });
       if (response.status === 200) {
-        const { reason } = await this.SetSavedDetails(savedDetails);
+        const { reason } = await this.#socketHandler.SetSavedDetails(savedDetails);
         if (!reason ) {
           window.localStorage.setItem("SavedDetails", stringify({ saveToken, cookieSavedDetails }));
         }
@@ -610,7 +651,7 @@ export class Client {
   }
 
   private async loadChats() {
-    const chatsData = await this.GetAllChats();
+    const chatsData = await this.#socketHandler.GetAllChats([]);
     if ("reason" in chatsData) return;
     const chats = await Promise.all(chatsData.map((chatData) => Chat.instantiate(this.#username, this.#encryptionBaseVector, this.chatInterface(chatData.sessionId), chatData)));
     for (const chat of chats) {
@@ -639,7 +680,7 @@ export class Client {
   }
 
   private async loadRequests() {
-    const requests = await this.GetAllRequests();
+    const requests = await this.#socketHandler.GetAllRequests([]);
     if ("reason" in requests) {
       logError(requests);
       return false;
@@ -653,7 +694,7 @@ export class Client {
     const { displayName, profilePicture } = this;
     const viewChatRequest = await this.#x3dhUser.viewChatRequest(request);
     const exportedChattingSession = await this.#x3dhUser.acceptChatRequest(request, respondingAt, { displayName, profilePicture }, async (response) => {
-      const sent = await this.SendMessage(response);
+      const sent = await this.#socketHandler.SendMessage(response);
       if (sent.reason) {
         logError(sent);
         return false;
@@ -668,7 +709,7 @@ export class Client {
     const lastActivity = respondingAt;
     const chatDetails = await crypto.deriveEncrypt(profile, this.#encryptionBaseVector, "ContactDetails");
     const chatData = { chatDetails, exportedChattingSession, lastActivity, sessionId };
-    await this.CreateChat(chatData);
+    await this.#socketHandler.CreateChat(chatData);
     const newChat = await Chat.instantiate(this.#username, this.#encryptionBaseVector, this.chatInterface(sessionId), chatData, { content: firstMessage, sentByMe: false, timestamp });
     this.removeChat(sessionId, "sessionId");
     this.addChat(newChat);
@@ -676,7 +717,7 @@ export class Client {
   }
 
   private async rejectRequest(sessionId: string, oneTimeKeyId: string) {
-    const result = await this.DeleteChatRequest({ sessionId });
+    const result = await this.#socketHandler.DeleteChatRequest({ sessionId });
     if (result.reason) {
       logError(result);
       return false;
@@ -701,13 +742,13 @@ export class Client {
     const [{ profile, respondedAt }, exportedChattingSession] = response;
     const chatDetails = await crypto.deriveEncrypt(profile, this.#encryptionBaseVector, "ContactDetails");
     const chatData = { chatDetails, exportedChattingSession, lastActivity: respondedAt, sessionId };
-    const { reason } = await this.CreateChat(chatData);
+    const { reason } = await this.#socketHandler.CreateChat(chatData);
     if (reason) {
       logError(reason);
       return false;
     }
     const x3dhInfo = await this.#x3dhUser.deleteWaitingRequest(sessionId);
-    const { reason: r2 } = await this.UpdateX3DHUser({ x3dhInfo, username: this.username });
+    const { reason: r2 } = await this.#socketHandler.UpdateX3DHUser({ x3dhInfo, username: this.username });
     if (r2) {
       logError(r2);
     }
@@ -716,91 +757,6 @@ export class Client {
     this.addChat(newChat);
     await this.requestRoom(newChat);
     return true;
-  }
-
-  private SetSavedDetails(data: Omit<SavedDetails, "ipRep" | "ipRead">, timeout = 0): Promise<Failure> { 
-    return this.request(SocketEvents.SetSavedDetails, data, timeout);
-  }
-
-  private GetSavedDetails(data: { saveToken: string }, timeout = 0): Promise<SavedDetails | Failure> { 
-    return this.request(SocketEvents.GetSavedDetails, data, timeout);
-  }
-
-  private RequestAuthSetupKey(data: Username, timeout = 0): Promise<AuthSetupKey | Failure> { 
-    return this.request(SocketEvents.RequestAuthSetupKey, data, timeout);
-  }
-  
-  private RegisterNewUser(data: RegisterNewUserRequest, timeout = 0): Promise<Failure> { 
-    return this.request(SocketEvents.RegisterNewUser, data, timeout);
-  }
-  
-  private InitiateAuthentication(data: Username, timeout = 0): Promise<InitiateAuthenticationResponse | Failure> { 
-    return this.request(SocketEvents.InitiateAuthentication, data, timeout);
-  }
-  
-  private ConcludeAuthentication(data: ConcludeAuthenticationRequest, timeout = 0): Promise<SignInResponse | Failure> { 
-    return this.request(SocketEvents.ConcludeAuthentication, data, timeout);
-  }
-  
-  private PublishKeyBundles(data: PublishKeyBundlesRequest, timeout = 0): Promise<Failure> { 
-    return this.request(SocketEvents.PublishKeyBundles, data, timeout);
-  }
-  
-  private UpdateX3DHUser(data: { x3dhInfo: UserEncryptedData } & Username, timeout = 0): Promise<Failure> { 
-    return this.request(SocketEvents.UpdateX3DHUser, data, timeout);
-  }
-  
-  private RequestKeyBundle(data: Username, timeout = 0): Promise<RequestKeyBundleResponse | Failure> { 
-    return this.request(SocketEvents.RequestKeyBundle, data, timeout);
-  }
-
-  private SendChatRequest(data: ChatRequestHeader, timeout = 0): Promise<Failure> {
-    return this.request(SocketEvents.SendChatRequest, data, timeout);
-  }
-
-  private GetAllChats(timeout = 0): Promise<ChatData[] | Failure> {
-    return this.request(SocketEvents.GetAllChats, {}, timeout);
-  }
-
-  private GetUnprocessedMessages(sessionId: string, timeout = 0): Promise<MessageHeader[] | Failure> {
-    return this.request(SocketEvents.GetUnprocessedMessages, { sessionId }, timeout);
-  }
-
-  private GetAllRequests(timeout = 0): Promise<ChatRequestHeader[] | Failure> {
-    return this.request(SocketEvents.GetAllRequests, {}, timeout);
-  }
-
-  private SendMessage(data: MessageHeader, timeout = 0): Promise<Failure> {
-    return this.request(SocketEvents.SendMessage, data, timeout);
-  }
- 
-  private CreateChat(data: ChatData, timeout = 0): Promise<Failure> {
-    return this.request(SocketEvents.CreateChat, data, timeout);
-  }
-
-  private DeleteChatRequest(data: { sessionId: string }, timeout = 0): Promise<Failure> {
-    return this.request(SocketEvents.DeleteChatRequest, data, timeout);
-  }
-  
-  private RequestRoom(data: Username, timeout = 0): Promise<Failure> { 
-    return this.request(SocketEvents.RequestRoom, data, timeout);
-  }
-
-  private async request(event: SocketEvents, data: any, timeout = 0): Promise<any | Failure> {
-    if (!this.isConnected) {
-      return {};
-    }
-    let { fileHash, payload } = await new Promise(async (resolve: (result: any) => void) => {
-      this.#socket.emit(event, (await this.#sessionCrypto.signEncryptToBase64(data, event)), 
-      async (response: string) => resolve(response ? await this.#sessionCrypto.decryptVerifyFromBase64(response, event) : {}));
-      if (timeout > 0) {
-        window.setTimeout(() => resolve({}), timeout);
-      }
-    })
-    if (fileHash !== await this.#fileHash) {
-      window.history.go();
-      return {};
-    } else return payload;
   }
 
   private async respond(event: string, data: string, responseBy: (arg0: any) => any, respondAt: (arg0: string) => void) {
@@ -833,7 +789,7 @@ export class Client {
   }
 
   private async requestRoom(chat: Chat) {
-    const response = await this.RequestRoom({ username: chat.otherUser });
+    const response = await this.#socketHandler.RequestRoom({ username: chat.otherUser });
     if (response.reason) {
       return response;
     }
@@ -957,7 +913,7 @@ export class Chat {
     if (this.disposed) {
       return false;
     }
-    socket.emit(SocketEvents.RoomEstablished, this.otherUser);
+    socket.emit(SocketServerSideEvents.RoomEstablished, this.otherUser);
     const confirmed = await new Promise((resolve) => {
       socket.once(this.otherUser, (confirmation: string) => resolve(confirmation === "confirmed"))
       window.setTimeout(() => resolve(false), 20000);
