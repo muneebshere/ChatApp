@@ -3,36 +3,38 @@ import { Buffer } from "./node_modules/buffer";
 import { RistrettoPoint } from "@noble/curves/ed25519";
 import { sha3_224, sha3_512 } from "@noble/hashes/sha3";
 import { Input, randomBytes } from "@noble/hashes/utils";
+import * as crypto from "./cryptoOperator";
 import { getRandomVector, importRaw } from "./cryptoOperator";
 
 function toBigInt(uint8: Uint8Array) {
     return BigInt(`0x${Buffer.from(uint8).toString("hex")}`);
 }
 
-function getPublicPoint(privateKey: Uint8Array) {
+function getSharedSecret(privateKey: Uint8Array, publicKey: RistrettoPoint) {
     if (privateKey.length !== 28) throw "Private key must be 224-bit";
-    return RistrettoPoint.BASE.multiply(toBigInt(privateKey));
+    return publicKey.multiply(toBigInt(privateKey));
+}
+
+function getPublicPoint(privateKey: Uint8Array) {
+    return getSharedSecret(privateKey, RistrettoPoint.BASE);
 }
 
 function sha3_512_base64(message: Input) {
     return Buffer.from(sha3_512(message)).toString("base64");
 }
 
-function calculateConfirmationCode(seed: string, commonHash: bigint, sharedSecret: bigint) {
-    return sha3_512_base64((toBigInt(Buffer.from(seed, "utf8")) * (sharedSecret + commonHash)).toString(36));
-}
-
-function getConfirmationCodes(commonHash: bigint, sharedSecret: bigint) {
-    const [clientConfirmationCode, serverConfirmationCode] = 
-        ["client", "server"].map((seed) => calculateConfirmationCode(seed, commonHash, sharedSecret));
-    return { clientConfirmationCode, serverConfirmationCode }; 
-}
-
-async function calculateShared(vectorCommonSum: RistrettoPoint, commonHash: bigint) {
-    const sharedSecret = Buffer.from(vectorCommonSum.toRawBytes()).reverse();
+async function calculateSharedKeyBits(vector1: RistrettoPoint, vector2: RistrettoPoint, commonHash: Uint8Array) {
+    const sharedSecret = Buffer.from(vector1.add(vector2).toRawBytes()).reverse();
     const sharedKeyBits = await importRaw(sha3_512(sharedSecret));
-    const confirmationCodes = getConfirmationCodes(commonHash, toBigInt(sharedSecret));
-    return { sharedKeyBits, ...confirmationCodes };
+    return { sharedKeyBits, commonHash: Buffer.from(commonHash) };
+}
+
+export async function calculateConfirmationCode(publicPointHex: string, commonHash: Buffer, sharedKeyBits: CryptoKey, purpose: string) {
+    return await crypto.deriveSign(Buffer.from(publicPointHex, "hex"), sharedKeyBits, commonHash, purpose);
+}
+
+export async function verifyConfirmationCode(signature: Buffer, publicPointHex: string, commonHash: Buffer, sharedKeyBits: CryptoKey, purpose: string) {
+    return await crypto.deriveVerify(Buffer.from(publicPointHex, "hex"), signature, sharedKeyBits, commonHash, purpose);
 }
 
 export function getVerifierPrivate(saltBase64: string, username: string, password: string) {
@@ -57,20 +59,20 @@ export async function clientCalculation(verifierPrivate: Uint8Array, clientEphem
     const passwordEntangledPoint = RistrettoPoint.fromHex(passwordEntangledHex);
     const serverEphemeralPoint = passwordEntangledPoint.subtract(verifierExpanded);
     const clientEphemeralPoint = getPublicPoint(clientEphemeralPrivate);
-    const commonHash = toBigInt(sha3_224(serverEphemeralPoint.add(clientEphemeralPoint).toRawBytes()));
-    const vector1 = serverEphemeralPoint.multiply(toBigInt(clientEphemeralPrivate));
-    const vector2 = serverEphemeralPoint.multiply(toBigInt(verifierPrivate)).multiply(commonHash);
-    return await calculateShared(vector1.add(vector2), commonHash);
+    const commonHash = sha3_224(serverEphemeralPoint.add(clientEphemeralPoint).toRawBytes());
+    const vector1 = getSharedSecret(clientEphemeralPrivate, serverEphemeralPoint);
+    const vector2 = getSharedSecret(verifierPrivate, serverEphemeralPoint).multiply(toBigInt(commonHash));
+    return { ...(await calculateSharedKeyBits(vector1, vector2, commonHash)), serverEphemeralPoint };
 }
 
 export async function serverCalculation(verifierPointHex: string, serverEphemeralPrivate: Uint8Array, clientEphemeralPointHex: string) {
     const verifierPoint = RistrettoPoint.fromHex(verifierPointHex);
     const serverEphemeralPoint = getPublicPoint(serverEphemeralPrivate);
     const clientEphemeralPoint = RistrettoPoint.fromHex(clientEphemeralPointHex);
-    const commonHash = toBigInt(sha3_224(serverEphemeralPoint.add(clientEphemeralPoint).toRawBytes()));
-    const vector1 = clientEphemeralPoint.multiply(toBigInt(serverEphemeralPrivate));
-    const vector2 = verifierPoint.multiply(toBigInt(serverEphemeralPrivate)).multiply(commonHash);
-    return await calculateShared(vector1.add(vector2), commonHash);
+    const commonHash = sha3_224(serverEphemeralPoint.add(clientEphemeralPoint).toRawBytes());
+    const vector1 = getSharedSecret(serverEphemeralPrivate, clientEphemeralPoint);
+    const vector2 = getSharedSecret(serverEphemeralPrivate, verifierPoint).multiply(toBigInt(commonHash));
+    return await calculateSharedKeyBits(vector1, vector2, commonHash);
 }
 
 export function serverGetEntangledPassword(verifierPointHex: string) {
@@ -78,5 +80,5 @@ export function serverGetEntangledPassword(verifierPointHex: string) {
     const verifierPoint = RistrettoPoint.fromHex(verifierPointHex);
     const verifierExpanded = getPublicPoint(sha3_224(verifierPoint.toRawBytes()));
     const passwordEntangledHex = serverEphemeralPoint.add(verifierExpanded).toHex();
-    return { serverEphemeralPrivate, passwordEntangledHex };
+    return { serverEphemeralPrivate, serverEphemeralPoint, passwordEntangledHex };
 }

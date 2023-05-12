@@ -77,7 +77,7 @@ class SocketHandler {
   #socket: Socket;
   #socketId: string;
   #newAuthReference: { authRef: string, uname: string, pInfo: PasswordDeriveInfo, hSaltAuth: Buffer, hSaltEncrypt: Buffer };
-  #currentAuthReference: { authRef: string, originalData: Buffer, signedData: Buffer, hSalt: Buffer };
+  #currentAuthReference: { authRef: string, originalData: Buffer, signature: Buffer, hSalt: Buffer };
   #username: string;
   #mongoHandler: MongoUserHandler;
   #accessedBundles = new Map<string, KeyBundle>();
@@ -250,11 +250,11 @@ class SocketHandler {
 
   private async verifyCurrentAuth(currentAuthReference: string, currentAuthBits: Buffer): Promise<{ passwordCorrect: boolean } | Failure> {
     if (!this.#currentAuthReference) return failure(ErrorStrings.InvalidRequest);
-    const { authRef, originalData, signedData, hSalt } = this.#currentAuthReference;
+    const { authRef, originalData, signature, hSalt } = this.#currentAuthReference;
     this.#currentAuthReference = null;
     if (authRef !== currentAuthReference) return failure(ErrorStrings.IncorrectData);
     const verifyKey = await crypto.deriveMACKey(currentAuthBits, hSalt, "AuthSign", 512);
-    const passwordCorrect = await crypto.verify(signedData, originalData, verifyKey);
+    const passwordCorrect = await crypto.verify(originalData, signature, verifyKey);
     return { passwordCorrect };
   }
 
@@ -289,7 +289,7 @@ class SocketHandler {
     let { authInfo : { encryptionBase, originalData, signedData, serverProof, dInfo: { hSalt, ...pInfo } } } = (await MongoHandlerCentral.getLeanUser(username)) ?? {};
     if (!originalData) return failure(ErrorStrings.IncorrectData);
     const currentAuthReference = getRandomString();
-    this.#currentAuthReference = { authRef: currentAuthReference, originalData, signedData, hSalt };
+    this.#currentAuthReference = { authRef: currentAuthReference, originalData, signature: signedData, hSalt };
     const authInfo: AuthInfo = { encryptionBase, serverProof, pInfo };
     const newAuthSetup = await this.generateAuthSetupKey({ username }, false);
     if ("reason" in newAuthSetup) return newAuthSetup
@@ -907,7 +907,7 @@ io.on("connection", async (socket) => {
   const { ipRep, sessionId, sessionKeyBits, clientVerifyingKey, signingKey, timeout } = registeredKeys.get(sessionReference);
   clearTimeout(timeout);
   registeredKeys.delete(sessionReference);
-  if (ipRep !== currentIp || sessionId !== session.id || !(await crypto.verify(fromBase64(sessionSigned), fromBase64(sessionReference), clientVerifyingKey))) {
+  if (ipRep !== currentIp || sessionId !== session.id || !(await crypto.verify(fromBase64(sessionReference), fromBase64(sessionSigned), clientVerifyingKey))) {
     await rejectConnection();
     return;
   }
