@@ -6,18 +6,6 @@ import { Buffer } from "./node_modules/buffer/";
 import { Buffer as NodeBuffer } from "node:buffer";
 import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PasswordEncryptedData, PublishKeyBundlesRequest, SavedDetails, StoredMessage, UserAuthInfo, UserEncryptedData } from "../shared/commonTypes";
 
-export type RunningSession = {
-  sessionId: string;
-  sessionReference: string;
-  ipRep: string;
-  ipRead: string;
-  sessionKeyBitsEx: Buffer,
-  sessionSigningKeyEx: Buffer,
-  sessionVerifyingKeyEx: Buffer,
-  lastRefreshedAt?: Date,
-  accessedBundles?: Map<string, KeyBundle>
-}
-
 const exposedSignedKey = {
   exportedPublicKey: {
     type: Schema.Types.Buffer,
@@ -324,46 +312,6 @@ export class MongoHandlerCentral {
     },
   }), "user_retries");
 
-  private static readonly RunningSessions = mongoose.model("RunningSessions", new Schema({
-    sessionId: {
-      type: Schema.Types.String,
-      required: true,
-      immutable: true,
-      unique: true
-    },
-    sessionReference: {
-      type: Schema.Types.String,
-      required: true,
-      immutable: true,
-      unique: true
-    },
-    ...ipSchema,
-    sessionKeyBitsEx: {
-      type: Schema.Types.Buffer,
-      required: true
-    },
-    sessionSigningKeyEx: {
-      type: Schema.Types.Buffer,
-      required: true
-    },
-    sessionVerifyingKeyEx: {
-      type: Schema.Types.Buffer,
-      required: true
-    },
-    lastRefreshedAt: {
-      type: Schema.Types.Date,
-      required: true,
-      default: new Date(),
-      expires: 60*60
-    },
-    accessedBundles: {
-      type: Map,
-      of: this.keyBundleSchema,
-      required: false,
-      default: new Map()
-    }
-  }), "running_sessions");
-
   private static readonly ChatRequestDeposit = mongoose.model("ChatRequestDeposit", chatRequestHeaderSchema.index({ addressedTo: "hashed" }).index({ addressedTo: 1, sessionId: 1 }, { unique: true }), "chat_request_deposit");
 
   private static readonly MessageDeposit = mongoose.model("MessageDeposit", messageHeaderSchema.index({ addressedTo: "hashed", sessionId: "hashed" }).index({ addressedTo: 1, sessionId: 1, messageId: 1 }, { unique: true }), "message_deposit");
@@ -427,53 +375,6 @@ export class MongoHandlerCentral {
   static async updateUserRetries(username: string, allowsAt: number, tries: number = null) {
     const upd = tries !== null ? { tries, allowsAt } : { allowsAt };
     await this.UserRetries.updateOne({ username }, upd, { upsert: true });
-  }
-
-  static async addSession(session: RunningSession): Promise<boolean> {
-    try { 
-      const { sessionId } = session;
-      if (this.waitDelete.has(sessionId)) {
-        await this.waitDelete.get(sessionId);
-      }
-      const newSession = await this.RunningSessions.create(bufferReplaceForMongo(session));
-      if (newSession) {
-        const timeout = setInterval(() => this.RunningSessions.updateOne({ sessionId }, { lastRefreshedAt: new Date() }), 30_000);
-        this.timeouts.set(session.sessionId, timeout);
-        return true;
-      }
-      return false;
-    }
-    catch(err) {
-      logError(err);
-      return false;
-    }
-  }
-
-  static async addAccessedBundle(sessionId: string, username: string, bundle: KeyBundle): Promise<boolean> {
-    const session = await this.RunningSessions.findOne({ sessionId });
-    if (!session) return false;
-    session.accessedBundles.set(username, bufferReplaceForMongo(bundle));
-    session.lastRefreshedAt = new Date();
-    await session.save();
-    return true;
-  }
-
-  static async deleteSession(sessionId: string): Promise<boolean> {
-    const timeout = this.timeouts.get(sessionId);
-    if (timeout) {
-      clearTimeout(timeout);
-      this.timeouts.delete(sessionId);
-    }
-    const deleted = new Promise<DeleteResult>(async (resolve) => resolve(await this.RunningSessions.deleteOne({ sessionId })));
-    this.waitDelete.set(sessionId, deleted);
-    return deleted.then((result) => {
-      this.waitDelete.delete(sessionId);
-      return result.deletedCount === 1;
-    });
-  }
-
-  static async getSession(sessionId: string): Promise<RunningSession> {
-    return bufferReplaceFromLean(await this.RunningSessions.findOne({ sessionId }).lean());
   }
 
   static async depositMessage(message: MessageHeader) {
@@ -677,7 +578,7 @@ export class MongoUserHandler {
     }
   }
 
-  async createChat(chat: { sessionId: string, lastActivity: number, chatDetails: UserEncryptedData, chattingSession: UserEncryptedData }) {
+  async createChat(chat: ChatData) {
     try {
       const newChat = new this.Chat(bufferReplaceForMongo(chat));
       if (newChat === await newChat.save()) {
@@ -694,7 +595,7 @@ export class MongoUserHandler {
     }
   }
 
-  async updateChat({ sessionId, ...chat }: { sessionId: string, lastActivity: number, chatDetails: UserEncryptedData, chattingSession: UserEncryptedData }) {
+  async updateChat({ sessionId, ...chat }: ChatData) {
     try {
       return !!(await this.Chat.findOneAndUpdate({ sessionId }, bufferReplaceForMongo(chat)).exec());
     }

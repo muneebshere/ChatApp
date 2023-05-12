@@ -1,3 +1,4 @@
+import _ from "lodash";
 import { Buffer } from "./node_modules/buffer/";
 import { isBrowser, isNode, isWebWorker } from "./node_modules/browser-or-node";
 
@@ -237,47 +238,143 @@ export type RequestKeyBundleResponse = {
     keyBundle: KeyBundle;
 };
 
-export enum SocketEvents {
-    CompleteHandshake = "complete-handshake",
-    UsernameExists = "username-exists",
-    UserLoginPermitted = "user-login-permitted",
-    RequestAuthSetupKey = "request-auth-setup-key",
+enum SocketClientSideEventsEnum {
+    UsernameExists, 
+    UserLoginPermitted, 
+    RequestAuthSetupKey, 
+    RegisterNewUser, 
+    InitiateAuthentication, 
+    ConcludeAuthentication,
+    SetSavedDetails,
+    GetSavedDetails,
+    PublishKeyBundles,
+    UpdateX3DHUser,
+    RequestKeyBundle,
+    GetAllChats,
+    GetAllRequests,
+    GetUnprocessedMessages,
+    GetMessagesByNumber,
+    GetMessagesUptoTimestamp,
+    GetMessagesUptoId,
+    GetMessageById,
+    StoreMessage,
+    CreateChat,
+    UpdateChat,
+    SendChatRequest,
+    SendMessage,
+    DeleteChatRequest,
+    LogOut,
+    RequestRoom,
+    TerminateCurrentSession
+}
 
-    RegisterNewUser = "register-new-user",
-    InitiateAuthentication = "initiate-authentication",
-    ConcludeAuthentication = "conclude-authentication",
+export type SocketClientSideEventsKey = Exclude<keyof typeof SocketClientSideEventsEnum, number>
 
-    SetSavedDetails = "set-saved-details",
-    GetSavedDetails = "get-saved-details",
+type SocketClientSideEventsMap = {
+    [E in SocketClientSideEventsKey]: E
+}
 
-    PublishKeyBundles = "publish-key-bundles",
-    UpdateX3DHUser = "update-x3dhuser",
-    RequestKeyBundle = "request-key-bundle",
-    
-    SendChatRequest = "send-chat-request",
-    SendMessage = "send-message",
-    DeleteChatRequest = "delete-chat-request",
+function constructSocketClientSideEvents() {
+    const enums: any = {}
+    for (let e in SocketClientSideEventsEnum) {
+        if (Number.isNaN(parseInt(e))) enums[e] = e;
+    }
+    return enums as SocketClientSideEventsMap;
+}
 
-    MessageReceived = "message-received",
-    ChatRequestReceived = "chat-request-received",
+export const SocketClientSideEvents = constructSocketClientSideEvents();
 
-    GetAllChats = "get-all-chats",
-    GetAllRequests = "get-all-requests",
-    GetUnprocessedMessages = "get-unprocessed-messages",
-    GetMessagesByNumber = "get-messages-by-number",
-    GetMessagesUptoTimestamp = "get-messages-upto-timestamp",
-    GetMessagesUptoId = "get-messages-upto-id",
-    GetMessageById = "get-message-by-id",
+enum SocketServerSideEventsEnum {
+    CompleteHandshake,
+    MessageReceived,
+    ChatRequestReceived,
+    RoomRequested,
+    RoomEstablished,
+}
 
-    StoreMessage = "store-message",
-    CreateChat = "create-chat",
-    UpdateChat = "update-chat",
+export type SocketServerSideEventsKey = Exclude<keyof typeof SocketServerSideEventsEnum, number>
 
-    RequestRoom = "request-room",
-    RoomEstablished = "room-established",
-    
-    TerminateCurrentSession = "terminate-current-session",
-    LogOut = "log-out"
+type SocketServerSideEventsMap = {
+    [E in SocketServerSideEventsKey]: E
+}
+
+function constructSocketServerSideEvents() {
+    const enums: any = {}
+    for (let e in SocketServerSideEventsEnum) {
+        if (Number.isNaN(parseInt(e))) enums[e] = e;
+    }
+    return enums as SocketServerSideEventsMap;
+}
+
+export const SocketServerSideEvents = constructSocketServerSideEvents();
+
+type SocketClientRequestParametersMap = {
+    UsernameExists: Username, 
+    UserLoginPermitted: Username, 
+    RequestAuthSetupKey: Username, 
+    RegisterNewUser: RegisterNewUserRequest, 
+    InitiateAuthentication: Username, 
+    ConcludeAuthentication: ConcludeAuthenticationRequest,
+    SetSavedDetails: Omit<SavedDetails, "ipRep" | "ipRead">,
+    GetSavedDetails: { saveToken: string },
+    PublishKeyBundles: PublishKeyBundlesRequest,
+    UpdateX3DHUser: { x3dhInfo: UserEncryptedData } & Username,
+    RequestKeyBundle: Username,
+    GetAllChats: [],
+    GetAllRequests: [],
+    GetUnprocessedMessages: { sessionId: string },
+    GetMessagesByNumber: { sessionId: string, limit: number, olderThan?: number },
+    GetMessagesUptoTimestamp: { sessionId: string, newerThan: number, olderThan?: number },
+    GetMessagesUptoId: { sessionId: string, messageId: string, olderThan?: number },
+    GetMessageById: { sessionId: string, messageId: string },
+    StoreMessage: StoredMessage,
+    CreateChat: ChatData,
+    UpdateChat: ChatData,
+    SendChatRequest: { sessionId: string },
+    SendMessage: MessageHeader,
+    DeleteChatRequest: { sessionId: string },
+    LogOut: Username,
+    RequestRoom: Username,
+    TerminateCurrentSession: []
+}
+
+export type SocketClientRequestParameters = {
+    [E in SocketClientSideEventsKey]: SocketClientRequestParametersMap[E];
+}
+
+
+type SocketClientRequestReturnMap = {
+    UsernameExists: { exists: boolean }, 
+    UserLoginPermitted: { tries: number, allowsAt: number }, 
+    RequestAuthSetupKey: AuthSetupKey, 
+    RegisterNewUser: never, 
+    InitiateAuthentication: InitiateAuthenticationResponse, 
+    ConcludeAuthentication: SignInResponse,
+    SetSavedDetails: never,
+    GetSavedDetails: SavedDetails,
+    PublishKeyBundles: never,
+    UpdateX3DHUser: never,
+    RequestKeyBundle: RequestKeyBundleResponse,
+    GetAllChats: ChatData[],
+    GetAllRequests: ChatRequestHeader[],
+    GetUnprocessedMessages: MessageHeader[],
+    GetMessagesByNumber: StoredMessage[],
+    GetMessagesUptoTimestamp: StoredMessage[],
+    GetMessagesUptoId: StoredMessage[],
+    GetMessageById: StoredMessage,
+    StoreMessage: never,
+    CreateChat: never,
+    UpdateChat: never,
+    SendChatRequest: never,
+    SendMessage: never,
+    DeleteChatRequest: never,
+    LogOut: never,
+    RequestRoom: never,
+    TerminateCurrentSession: never
+}
+
+export type SocketClientRequestReturn = {
+    [E in SocketClientSideEventsKey]: SocketClientRequestReturnMap[E];
 }
 
 export enum ErrorStrings {
@@ -289,4 +386,12 @@ export enum ErrorStrings {
     IncorrectData = "IncorrectData",
     IncorrectPassword = "IncorrectPassword",
     TooManyWrongTries = "TooManyWrongTries"
+}
+
+export type Entry<T> = { 
+    [K in keyof T]: [K, T[K]] 
+}[keyof T]
+
+export function typedEntries<T extends {}>(object: T): ReadonlyArray<Entry<T>> {
+  return Object.entries(object) as unknown as ReadonlyArray<Entry<T>>; 
 }
