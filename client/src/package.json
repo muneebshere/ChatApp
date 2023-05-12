@@ -18,7 +18,6 @@
     "@mui/joy": "^5.0.0-alpha.65",
     "@mui/material": "^5.11.7",
     "@react-hook/resize-observer": "^1.2.6",
-    "@types/estree": "^1.0.1",
     "@wysimark/react": "^1.0.55",
     "axios": "^1.3.0",
     "beautiful-react-hooks": "^4.3.0",

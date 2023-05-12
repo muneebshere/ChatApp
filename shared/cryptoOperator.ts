@@ -1,4 +1,4 @@
-import _ from "./node_modules/lodash";
+import _ from "lodash";
 import { isBrowser, isNode, isWebWorker } from "./node_modules/browser-or-node";
 import { Buffer } from "./node_modules/buffer";
 import BufferSerializer from "./custom_modules/buffer-serializer";
