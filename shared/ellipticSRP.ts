@@ -53,36 +53,36 @@ export function generateClientRegistration(username: string, password: string) {
 }
 
 export async function clientSetupAuthProcess(username: string, password: string) {
-    const [clientEphemeralPrivate, clientEphemeralPoint] = generateEphemeral();
-    const clientEphemeralPointHex = clientEphemeralPoint.toHex();
-    const processAuthChallenge = async (saltBase64: string, passwordEntangledHex: string, serverConfirmationCode: Buffer) => {
+    const [clientEphemeralPrivate, clientEphemeralPublic] = generateEphemeral();
+    const clientEphemeralPublicHex = clientEphemeralPublic.toHex();
+    const processAuthChallenge = async (saltBase64: string, verifierEntangledHex: string, serverConfirmationCode: Buffer) => {
         const verifierPrivate = getVerifierPrivate(saltBase64, username, password)
         const verifierExpandedPoint = getPublicPoint(sha3_224(getPublicPoint(verifierPrivate).toRawBytes()));
-        const passwordEntangledPoint = RistrettoPoint.fromHex(passwordEntangledHex);
-        const serverEphemeralPoint = passwordEntangledPoint.subtract(verifierExpandedPoint);
-        const commonHash = sha3_224(serverEphemeralPoint.add(clientEphemeralPoint).toRawBytes());
-        const vector1 = getSharedSecret(clientEphemeralPrivate, serverEphemeralPoint);
-        const vector2 = getSharedSecret(verifierPrivate, serverEphemeralPoint).multiply(toBigInt(commonHash));
+        const verifierEntangledPoint = RistrettoPoint.fromHex(verifierEntangledHex);
+        const serverEphemeralPublic = verifierEntangledPoint.subtract(verifierExpandedPoint);
+        const commonHash = sha3_224(serverEphemeralPublic.add(clientEphemeralPublic).toRawBytes());
+        const vector1 = getSharedSecret(clientEphemeralPrivate, serverEphemeralPublic);
+        const vector2 = getSharedSecret(verifierPrivate, serverEphemeralPublic).multiply(toBigInt(commonHash));
         const sharedSecret = vector1.add(vector2).toRawBytes();
         const sharedKeyBits = await importRaw(sha3_512(sharedSecret));
-        const { confirmationCode, confirmCode } = await setupConfirmation(sharedSecret, serverEphemeralPoint, clientEphemeralPoint, "Client");
+        const { confirmationCode, confirmCode } = await setupConfirmation(sharedSecret, serverEphemeralPublic, clientEphemeralPublic, "Client");
         const confirmed = await confirmCode(serverConfirmationCode);
         return confirmed ? { sharedKeyBits, confirmationCode } : null;
     }
-    return { clientEphemeralPointHex, processAuthChallenge }
+    return { clientEphemeralPublicHex, processAuthChallenge }
 }
 
-export async function serverSetupAuthChallenge(verifierPointHex: string, clientEphemeralPointHex: string) {
-    const [serverEphemeralPrivate, serverEphemeralPoint] = generateEphemeral();
+export async function serverSetupAuthChallenge(verifierPointHex: string, clientEphemeralPublicHex: string) {
+    const [serverEphemeralPrivate, serverEphemeralPublic] = generateEphemeral();
     const verifierPoint = RistrettoPoint.fromHex(verifierPointHex);
     const verifierExpandedPoint = getPublicPoint(sha3_224(verifierPoint.toRawBytes()));
-    const clientEphemeralPoint = RistrettoPoint.fromHex(clientEphemeralPointHex);
-    const commonHash = sha3_224(serverEphemeralPoint.add(clientEphemeralPoint).toRawBytes());
-    const vector1 = getSharedSecret(serverEphemeralPrivate, clientEphemeralPoint);
+    const clientEphemeralPublic = RistrettoPoint.fromHex(clientEphemeralPublicHex);
+    const commonHash = sha3_224(serverEphemeralPublic.add(clientEphemeralPublic).toRawBytes());
+    const vector1 = getSharedSecret(serverEphemeralPrivate, clientEphemeralPublic);
     const vector2 = getSharedSecret(serverEphemeralPrivate, verifierPoint).multiply(toBigInt(commonHash));
     const sharedSecret = vector1.add(vector2).toRawBytes();
     const sharedKeyBits = await importRaw(sha3_512(sharedSecret));
-    const { confirmationCode, confirmCode } = await setupConfirmation(sharedSecret, clientEphemeralPoint, serverEphemeralPoint, "Server");
-    const passwordEntangledHex = serverEphemeralPoint.add(verifierExpandedPoint).toHex();
-    return { sharedKeyBits, confirmationCode, confirmCode, passwordEntangledHex };
+    const { confirmationCode, confirmCode } = await setupConfirmation(sharedSecret, clientEphemeralPublic, serverEphemeralPublic, "Server");
+    const verifierEntangledHex = serverEphemeralPublic.add(verifierExpandedPoint).toHex();
+    return { sharedKeyBits, confirmationCode, confirmCode, verifierEntangledHex };
 }
