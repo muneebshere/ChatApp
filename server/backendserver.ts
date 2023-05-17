@@ -85,8 +85,7 @@ class SocketHandler {
     #socketId: string;
     #registerChallengeTemp: RegisterChallengeTemp;
     #logInChallengeTemp: LogInChallengeTemp;
-    #newAuthReference: { authRef: string, uname: string, pInfo: PasswordDeriveInfo, hSaltAuth: Buffer, hSaltEncrypt: Buffer };
-    #currentAuthReference: { authRef: string, originalData: Buffer, signature: Buffer, hSalt: Buffer };
+    #switchingSessionCrypto = false
     #username: string;
     #mongoHandler: MongoUserHandler;
     #accessedBundles = new Map<string, KeyBundle>();
@@ -179,6 +178,9 @@ class SocketHandler {
             else resolve(await this.#sessionCrypto.signEncryptToBase64({ payload: response, fileHash: await jsHash }, event));
         }
         try {
+            if (this.#switchingSessionCrypto) {
+                encryptResolve(failure(ErrorStrings.InvalidRequest));
+            }
             const decryptedData = await this.#sessionCrypto.decryptVerifyFromBase64(data, event);
             if (!decryptedData) await encryptResolve(failure(ErrorStrings.DecryptFailure));
             else {
@@ -196,7 +198,7 @@ class SocketHandler {
     }
 
     private async UserLoginPermitted({ username }: Username): Promise<{ tries: number, allowsAt: number }> {
-        const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username);
+        const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username, this.#ipRep);
         return allowsAt && allowsAt > Date.now() ? { tries, allowsAt } : { tries: null, allowsAt: null };
     }
 
@@ -205,9 +207,11 @@ class SocketHandler {
     }
 
     private awaitSwitchSessionCrypto(sharedKeyBits: CryptoKey, clientVerifyingKey: CryptoKey): Promise<boolean> {
+        this.#switchingSessionCrypto = true;
         return new Promise<boolean>((resolve) => {
             const stop = () => {
                 this.#socket.off("SwitchSessionCrypto", switchSessionCrypto);
+                this.#switchingSessionCrypto = false;
                 resolve(false);
                 this.TerminateCurrentSession();
             };
@@ -215,6 +219,7 @@ class SocketHandler {
             const switchSessionCrypto = async (ref: string, respond: (success: boolean) => void) => {
                 if (ref === this.#sessionReference) {
                     this.#sessionCrypto = new SessionCrypto(this.#sessionReference, sharedKeyBits, (await identityKeys).signingKey, clientVerifyingKey);
+                    this.#switchingSessionCrypto = false;
                     clearTimeout(timeout);
                     respond(true);
                     resolve(true);
@@ -257,7 +262,7 @@ class SocketHandler {
                 this.awaitSwitchSessionCrypto(sharedKeyBits, clientVerifyingKey).then(async (success) => {
                     if (success) {
                         this.#username = username;
-                        this.#mongoHandler = await MongoUserHandler.createHandler(username, this.notifyMessage.bind(this));
+                        this.#mongoHandler = await MongoUserHandler.createHandler(username, this.notifyMessage.bind(this));onlineUsers.set(username, this.#socketId);
                     }
                 });
                 return { reason: null };
@@ -273,7 +278,7 @@ class SocketHandler {
     private async LogIn(request: LogInRequest): Promise<LogInChallenge | Failure> {
         if (this.#username) return failure(ErrorStrings.InvalidRequest);
         const { username, clientEphemeralPublicHex } = request;
-        const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username);
+        const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username, this.#ipRep);
         if (allowsAt && allowsAt > Date.now()) {
             return failure(ErrorStrings.TooManyWrongTries, { tries, allowsAt });
         }
@@ -296,25 +301,24 @@ class SocketHandler {
         const { confirmCode, sharedKeyBits, username, clientVerifyingKey, userData } = this.#logInChallengeTemp;
         try {
             if (!(await confirmCode(clientConfirmationCode))) {
-                let { tries } = await MongoHandlerCentral.getUserRetries(username);
+                let { tries } = await MongoHandlerCentral.getUserRetries(username, this.#ipRep);
                 tries ??= 0;
                 tries++;
                 if (tries >= 5) {
                     const forbidInterval = 1000 * (30 + 15 * (tries - 5));
                     const allowsAt = Date.now() + forbidInterval;
-                    await MongoHandlerCentral.updateUserRetries(username, allowsAt, tries);
-                    setTimeout(async () => {
-                        await MongoHandlerCentral.updateUserRetries(username, null);
-                    }, forbidInterval);
+                    await MongoHandlerCentral.updateUserRetries(username, this.#ipRep, allowsAt, tries);
                     return failure(ErrorStrings.TooManyWrongTries, { tries, allowsAt });
                 }
-                await MongoHandlerCentral.updateUserRetries(username, null, tries);
+                await MongoHandlerCentral.updateUserRetries(username, this.#ipRep, null, tries);
                 return failure(ErrorStrings.IncorrectPassword, { tries });   
             }
             this.awaitSwitchSessionCrypto(sharedKeyBits, clientVerifyingKey).then(async (success) => {
                 if (success) {
                     this.#username = username;
                     this.#mongoHandler = await MongoUserHandler.createHandler(username, this.notifyMessage.bind(this));
+                    await MongoHandlerCentral.updateUserRetries(username, this.#ipRep, null, 0);
+                    onlineUsers.set(username, this.#socketId);
                     console.log(`User ${username} logged in.`);
                 }
             });
@@ -563,8 +567,9 @@ class SocketHandler {
         this.#session = null;
         this.#sessionReference = null;
         this.#sessionCrypto = null;
-        this.#newAuthReference = null;
-        this.#currentAuthReference = null;
+        this.#registerChallengeTemp = null;
+        this.#logInChallengeTemp = null;
+        this.#switchingSessionCrypto = false;
         this.#username = null;
     }
 }
@@ -723,7 +728,7 @@ function parseIpRepresentation(address: string) {
     return Buffer.from(ipv6.toByteArray()).toString("base64");
 }
 
-function parseIpReadable(ipRep: string) {
+export function parseIpReadable(ipRep: string) {
     const ipv6 = new ipaddr.IPv6(Array.from(Buffer.from(ipRep, "base64")));
     return ipv6.isIPv4MappedAddress()
         ? ipv6.toIPv4Address().toString()

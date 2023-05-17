@@ -6,6 +6,7 @@ import { Buffer } from "./node_modules/buffer/";
 import { Buffer as NodeBuffer } from "node:buffer";
 import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PasswordEncryptedData, PublishKeyBundlesRequest, SavedDetails, StoredMessage, RegisterNewUserRequest, NewUserData } from "../shared/commonTypes";
 import * as crypto from "../shared/cryptoOperator";
+import { parseIpReadable } from "./backendserver";
 
 const exposedSignedKey = {
     exportedPublicKey: {
@@ -305,7 +306,6 @@ export class MongoHandlerCentral {
             type: Schema.Types.String,
             required: true,
             immutable: true,
-            unique: true,
             lowercase: true,
             trim: true,
             minLength: 3,
@@ -322,7 +322,8 @@ export class MongoHandlerCentral {
             required: true,
             default: null
         },
-    }), "user_retries");
+        ...ipSchema
+    }).index({ username: 1, ipRep: 1 }, { unique: true }), "user_retries");
 
     private static readonly ChatRequestDeposit = mongoose.model("ChatRequestDeposit", chatRequestHeaderSchema.index({ addressedTo: "hashed" }).index({ addressedTo: 1, sessionId: 1 }, { unique: true }), "chat_request_deposit");
 
@@ -396,14 +397,15 @@ export class MongoHandlerCentral {
         return details;
     }
 
-    static async getUserRetries(username: string): Promise<{ tries: number, allowsAt?: number }> {
-        const retries = bufferReplaceFromLean(await this.UserRetries.findOne({ username }).lean());
+    static async getUserRetries(username: string, ipRep: string): Promise<{ tries: number, allowsAt?: number }> {
+        const retries = bufferReplaceFromLean(await this.UserRetries.findOne({ username, ipRep }).lean());
         return retries ?? {};
     }
 
-    static async updateUserRetries(username: string, allowsAt: number, tries: number = null) {
+    static async updateUserRetries(username: string, ipRep: string, allowsAt: number, tries: number = null) {
+        const ipRead = parseIpReadable(ipRep);
         const upd = tries !== null ? { tries, allowsAt } : { allowsAt };
-        await this.UserRetries.updateOne({ username }, upd, { upsert: true });
+        await this.UserRetries.updateOne({ username, ipRep, ipRead }, upd, { upsert: true });
     }
 
     static async depositMessage(message: MessageHeader) {

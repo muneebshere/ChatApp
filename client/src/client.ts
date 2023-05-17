@@ -60,15 +60,15 @@ type RequestMap = Readonly<{
     [E in SocketClientSideEventsKey]: (arg: SocketClientRequestParameters[E], timeout?: number) => Promise<SocketClientRequestReturn[E] | Failure>
 }>
 
-function SocketHandler(socket: Socket, sessionCrypto: SessionCrypto, currentFileHash: Promise<string>, isConnected: () => boolean): RequestMap {
+function SocketHandler(socket: () => Socket, sessionCrypto: () => SessionCrypto, currentFileHash: Promise<string>, isConnected: () => boolean): RequestMap {
 
     async function request(event: SocketClientSideEventsKey, data: any, timeout = 0): Promise<any | Failure> {
         if (!isConnected()) {
             return {};
         }
         let { fileHash, payload } = await new Promise(async (resolve: (result: any) => void) => {
-            socket.emit(event, (await sessionCrypto.signEncryptToBase64(data, event)),
-                async (response: string) => resolve(response ? await sessionCrypto.decryptVerifyFromBase64(response, event) : {}));
+            socket().emit(event, (await sessionCrypto().signEncryptToBase64(data, event)),
+                async (response: string) => resolve(response ? await sessionCrypto().decryptVerifyFromBase64(response, event) : {}));
             if (timeout > 0) {
                 window.setTimeout(() => resolve({}), timeout);
             }
@@ -274,7 +274,7 @@ export class Client {
                         }
                         this.#sessionReference = sessionReference;
                         this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBits, signingKey, serverVerifyingKey);
-                        this.#socketHandler = SocketHandler(this.#socket, this.#sessionCrypto, this.#fileHash, () => this.isConnected);
+                        this.#socketHandler = SocketHandler(() => this.#socket, () => this.#sessionCrypto, this.#fileHash, () => this.isConnected);
                         console.log(`Connected with session reference: ${sessionReference} and socketId: ${this.#socket.id}`);
                         if (this.#username) {
                             this.notifyClientEvent?.(ClientEvent.SignedOut);
