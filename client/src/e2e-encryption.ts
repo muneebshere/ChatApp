@@ -379,7 +379,7 @@ export class X3DHUser {
                 myPublicEphemeralKey: otherPublicEphemeralKey,
                 yourSignedPreKeyVersion: mySignedPreKeyVersion,
                 yourOneTimeKeyIdentifier: myOneTimeKeyIdentifier,
-                initialMessage: { ciphertext, signature } } = initialMessage;
+                initialMessage: initMessage } = initialMessage;
             if (addressedTo !== this.username) {
                 return "Incorrectly Addressed";
             }
@@ -410,7 +410,7 @@ export class X3DHUser {
                             ? [await crypto.deriveSymmetricBits(oneTimeKey.keyPair.privateKey, importedEphemeralKey, 512)]
                             : [];
                 const sharedRoot = Buffer.concat([dh1, dh2, dh3, ...dh4]);
-                const plaintext = await crypto.deriveDecryptVerify(sharedRoot, ciphertext, nullSalt(48), "Message Request", signature, importedVerifyingIdentityKey);
+                const plaintext = await crypto.deriveDecryptVerify(sharedRoot, initMessage, nullSalt(48), "Message Request", importedVerifyingIdentityKey);
                 if (!plaintext) {
                     return "Failed To Decrypt Message";
                 }
@@ -921,7 +921,7 @@ export class ChattingSession {
             sendingChainNumber,
             previousChainNumber,
             nextDHRatchetKey,
-            messageBody: { ciphertext, signature } } = messageHeader;
+            messageBody } = messageHeader;
         if (sessionId !== this.sessionId || addressedTo !== this.#me ) {
             return "Session Id Mismatch";
         }
@@ -937,7 +937,7 @@ export class ChattingSession {
                 if (!messageKeyBits) {
                     return "Receving Ratchet Number Mismatch";
                 }
-                const message: ReceivingMessage = await crypto.deriveDecryptVerify(messageKeyBits, ciphertext, nullSalt(48), "Message Send|Receive", signature, this.#otherVerifyKey);
+                const message: ReceivingMessage = await crypto.deriveDecryptVerify(messageKeyBits, messageBody, nullSalt(48), "Message Send|Receive", this.#otherVerifyKey);
                 let success = false;
                 if (!message) {
                     console.log(error);

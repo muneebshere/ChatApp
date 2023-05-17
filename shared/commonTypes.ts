@@ -77,12 +77,13 @@ export type SignedEncryptedData = EncryptedData & {
 
 export type UserEncryptedData = EncryptedData & { hSalt: Buffer };
 
-export type PasswordEncryptedData = EncryptedData & PasswordDeriveInfo & { hSalt: Buffer };
+export type PasswordEncryptedData = UserEncryptedData & PasswordDeriveInfo;
 
 export type Profile = Readonly<{
     username: string;
     displayName: string;
     profilePicture: string;
+    description: string;
 }>;
 
 export type Contact = Profile & {
@@ -148,85 +149,62 @@ export type ChatData = Readonly<{
 }>;
 
 export type Username = { 
-    username: string 
+    readonly username: string 
 };
 
-export type Failure = {
+export type Failure = Readonly<{
     reason: string;
     details?: any;
-}
+}>;
 
-export type SavedDetails = { 
+export type SavedDetails = Readonly<{ 
     saveToken: string,
     ipRep: string,
     ipRead: string,
     keyBits: Buffer, 
     hSalt: Buffer
-};
+}>;
 
-type SecretData = {
-    serverProof: PasswordEncryptedData,
-    encryptionBase: PasswordEncryptedData
-};
+export type LogInRequest = Username & Readonly<{
+    clientEphemeralPublicHex: string;
+}>;
 
-export type AuthSetupKey = {
-    authKeyData: EncryptedData,
-    dInfo: PasswordDeriveInfo & { hSalt: Buffer }
+export type RegisterNewUserRequest = LogInRequest & Readonly<{
+    verifierSalt: Buffer,
+    verifierPointHex: string,
+    clientIdentityVerifyingKey: Buffer
+}>
+
+export type LogInChallenge = Readonly<{
+    challengeReference: string,
+    verifierSalt: Buffer,
+    verifierEntangledHex: string,
+    serverConfirmationCode: Buffer
+}>
+
+export type RegisterNewUserChallenge = Omit<LogInChallenge, "verifierSalt"> & {
+    readonly serverIdentityVerifyingKey: Buffer
 }
 
-export type AuthSetupKeyData = { 
-    newAuthReference: string,
-    pInfo: PasswordDeriveInfo,
-    hSaltEncrypt: Buffer,
-    hSaltAuth: Buffer
-};
+export type LogInChallengeResponse = Readonly<{
+    challengeReference: string,
+    clientConfirmationCode: Buffer
+}>;
 
-export type AuthInfo = { 
-    serverProof: PasswordEncryptedData,
-    pInfo: PasswordDeriveInfo,
-    encryptionBase: PasswordEncryptedData
-};
+export type RegisterNewUserChallengeResponse = LogInChallengeResponse & {
+    readonly newUserDataSigned: SignedEncryptedData;
+}
 
-export type UserAuthInfo = SecretData & {
-    dInfo: PasswordDeriveInfo & { hSalt: Buffer },
-    originalData: Buffer,
-    signedData: Buffer
-};
-
-export type RegisterNewUserRequest = {
-    newAuthReference: string,
-    newUserData: SignedEncryptedData,
-    newAuthBits: Buffer
-};
-
-export type NewUserData = SecretData & {
-    username: string,
+export type UserData = Readonly<{
+    encryptionBase: PasswordEncryptedData,
+    clientIdentitySigningKey: PasswordEncryptedData,
+    serverIdentityVerifyingKey: PasswordEncryptedData,
     x3dhInfo: UserEncryptedData,
-    userDetails: UserEncryptedData,
-    keyBundles: PublishKeyBundlesRequest
-};
+    profileData: UserEncryptedData
+}>;
 
-export type InitiateAuthenticationResponse = { 
-    currentAuthReference: string,
-    authInfo: AuthInfo,
-    newAuthSetup: AuthSetupKey
-};
-
-export type ConcludeAuthenticationRequest = {
-    currentAuthReference: string,
-    currentAuthBits: Buffer,
-    newAuthReference: string,
-    authChangeData: SignedEncryptedData
-};
-
-export type AuthChangeData = SecretData & {
-    username: string,
-    newAuthBits: Buffer
-};
-
-export type SignInResponse = {
-    userDetails: UserEncryptedData,
-    x3dhInfo: UserEncryptedData
+export type NewUserData = UserData & { 
+    readonly keyBundles: PublishKeyBundlesRequest
 };
 
 export type PublishKeyBundlesRequest = {
@@ -240,11 +218,11 @@ export type RequestKeyBundleResponse = {
 
 enum SocketClientSideEventsEnum {
     UsernameExists, 
-    UserLoginPermitted, 
-    RequestAuthSetupKey, 
-    RegisterNewUser, 
-    InitiateAuthentication, 
-    ConcludeAuthentication,
+    UserLoginPermitted,
+    RegisterNewUser,
+    ConcludeRegisterNewUser,
+    LogIn,
+    ConcludeLogIn,
     SetSavedDetails,
     GetSavedDetails,
     PublishKeyBundles,
@@ -311,10 +289,10 @@ export const SocketServerSideEvents = constructSocketServerSideEvents();
 type SocketClientRequestParametersMap = {
     UsernameExists: Username, 
     UserLoginPermitted: Username, 
-    RequestAuthSetupKey: Username, 
-    RegisterNewUser: RegisterNewUserRequest, 
-    InitiateAuthentication: Username, 
-    ConcludeAuthentication: ConcludeAuthenticationRequest,
+    RegisterNewUser: RegisterNewUserRequest,
+    ConcludeRegisterNewUser: RegisterNewUserChallengeResponse,
+    LogIn: LogInRequest,
+    ConcludeLogIn: LogInChallengeResponse,
     SetSavedDetails: Omit<SavedDetails, "ipRep" | "ipRead">,
     GetSavedDetails: { saveToken: string },
     PublishKeyBundles: PublishKeyBundlesRequest,
@@ -346,10 +324,10 @@ export type SocketClientRequestParameters = {
 type SocketClientRequestReturnMap = {
     UsernameExists: { exists: boolean }, 
     UserLoginPermitted: { tries: number, allowsAt: number }, 
-    RequestAuthSetupKey: AuthSetupKey, 
-    RegisterNewUser: never, 
-    InitiateAuthentication: InitiateAuthenticationResponse, 
-    ConcludeAuthentication: SignInResponse,
+    RegisterNewUser: RegisterNewUserChallenge,
+    ConcludeRegisterNewUser: never,
+    LogIn: LogInChallenge,
+    ConcludeLogIn: UserData,
     SetSavedDetails: never,
     GetSavedDetails: SavedDetails,
     PublishKeyBundles: never,

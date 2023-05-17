@@ -70,7 +70,7 @@ export async function deriveSymmetricBitsKey(privateKey: CryptoKey, publicKey: C
     return await importRaw(await deriveSymmetricBits(privateKey, publicKey, length));
 }
 
-export async function importKey(keyData: Buffer, name: "ECDH" | "ECDSA", type: "public" | "private", extractable: boolean): Promise<CryptoKey> {
+export async function importKey(keyData: BufferSource, name: "ECDH" | "ECDSA", type: "public" | "private", extractable: boolean): Promise<CryptoKey> {
     const isPrivate = type === "private";
     const isSigning = name === "ECDSA"
     const usages: Array<"deriveBits" | "deriveKey" | "sign" | "verify"> =
@@ -180,13 +180,13 @@ export async function deriveSignEncrypt(keyBits: CryptoKey | BufferSource, plain
     return { ciphertext };
 }
 
-export async function deriveDecryptVerify(keyBits: CryptoKey | BufferSource, ciphertext: Buffer, salt: Buffer, purpose: string): Promise<any>
-export async function deriveDecryptVerify(keyBits: CryptoKey | BufferSource, ciphertext: Buffer, salt: Buffer, purpose: string, signature: Buffer, verifyingKey: CryptoKey): Promise<any>
-export async function deriveDecryptVerify(keyBits: CryptoKey | BufferSource, ciphertext: Buffer, salt: Buffer, purpose: string, signature?: Buffer, verifyingKey?: CryptoKey): Promise<any> {
+export async function deriveDecryptVerify(keyBits: CryptoKey | BufferSource, encrypted: EncryptedData, salt: Buffer, purpose: string): Promise<any>
+export async function deriveDecryptVerify(keyBits: CryptoKey | BufferSource, encrypted: SignedEncryptedData, salt: Buffer, purpose: string, verifyingKey: CryptoKey): Promise<any>
+export async function deriveDecryptVerify(keyBits: CryptoKey | BufferSource, encrypted: EncryptedData | SignedEncryptedData, salt: Buffer, purpose: string, verifyingKey?: CryptoKey): Promise<any> {
     try {
-        const plaintext = await decrypt(await deriveAESKey(keyBits, salt, purpose), ciphertext);
-        if (signature) {
-            const verified = await verify(plaintext, signature, verifyingKey);
+        const plaintext = await decrypt(await deriveAESKey(keyBits, salt, purpose), encrypted.ciphertext);
+        if ("signature" in encrypted) {
+            const verified = await verify(plaintext, encrypted.signature, verifyingKey);
             if (!verified) {
                 return null;
             }
@@ -199,13 +199,13 @@ export async function deriveDecryptVerify(keyBits: CryptoKey | BufferSource, cip
     }
 }
 
-export async function deriveWrap(keyBits: CryptoKey | BufferSource, privateKey: CryptoKey, salt: Buffer, description: string): Promise<Buffer> {
-    const { encryptKey, iv } = await deriveAESKey(keyBits, salt, `${description} Wrap|Unwrap`);
+export async function deriveWrap(keyBits: CryptoKey | BufferSource, privateKey: CryptoKey, salt: Buffer, purpose: string): Promise<Buffer> {
+    const { encryptKey, iv } = await deriveAESKey(keyBits, salt, `${purpose} Wrap|Unwrap`);
     return Buffer.from(await subtle.wrapKey("pkcs8", privateKey, encryptKey, aesGCM(iv)));
 }
 
-export async function deriveUnwrap(keyBits: CryptoKey | BufferSource, wrappedKey: Buffer, salt: Buffer, name: "ECDH" | "ECDSA", description: string, extractable: boolean): Promise<CryptoKey> {
-    const decryptedKey = await decrypt(await deriveAESKey(keyBits, salt, `${description} Wrap|Unwrap`), wrappedKey);
+export async function deriveUnwrap(keyBits: CryptoKey | BufferSource, wrappedKey: Buffer, salt: Buffer, name: "ECDH" | "ECDSA", purpose: string, extractable: boolean): Promise<CryptoKey> {
+    const decryptedKey = await decrypt(await deriveAESKey(keyBits, salt, `${purpose} Wrap|Unwrap`), wrappedKey);
     return await importKey(decryptedKey, name, "private", extractable);
 }
 
@@ -221,16 +221,16 @@ export function exposeSignedKey(signedKeyPair: SignedKeyPair): ExposedSignedPubl
     return { exportedPublicKey, signature }
 }
 
-export async function exportSigningKeyPair(keyPair: CryptoKeyPair, keyBits: CryptoKey | BufferSource, salt: Buffer, description: string): Promise<ExportedSigningKeyPair> {
+export async function exportSigningKeyPair(keyPair: CryptoKeyPair, keyBits: CryptoKey | BufferSource, salt: Buffer, purpose: string): Promise<ExportedSigningKeyPair> {
     const { privateKey, publicKey } = keyPair;
     const exportedPublicKey = await exportKey(publicKey);
-    const wrappedPrivateKey = await deriveWrap(keyBits, privateKey, salt, `Signing ${description} Key`);
+    const wrappedPrivateKey = await deriveWrap(keyBits, privateKey, salt, purpose);
     return { exportedPublicKey, wrappedPrivateKey };
 }
 
-export async function exportSignedKeyPair(signedKeyPair: SignedKeyPair, keyBits: CryptoKey | BufferSource, salt: Buffer, description: string): Promise<ExportedSignedKeyPair> {
+export async function exportSignedKeyPair(signedKeyPair: SignedKeyPair, keyBits: CryptoKey | BufferSource, salt: Buffer, purpose: string): Promise<ExportedSignedKeyPair> {
     const { keyPair: { privateKey }, exportedPublicKey, signature } = signedKeyPair;
-    const wrappedPrivateKey = await deriveWrap(keyBits, privateKey, salt, `Signed ${description} Key`);
+    const wrappedPrivateKey = await deriveWrap(keyBits, privateKey, salt, purpose);
     return { exportedPublicKey, wrappedPrivateKey, signature };
 }
 
@@ -243,14 +243,14 @@ export async function verifyKey(signedKey: ExposedSignedPublicKey, verifyingKey:
 
 export async function importSignedKeyPair(exportedKeyPair: ExportedSignedKeyPair, keyBits: CryptoKey | BufferSource, salt: Buffer, description: string): Promise<SignedKeyPair> {
     const { exportedPublicKey, wrappedPrivateKey, signature } = exportedKeyPair; const publicKey = await importKey(exportedPublicKey, "ECDH", "public", true);
-    const privateKey = await deriveUnwrap(keyBits, wrappedPrivateKey, salt, "ECDH", `Signed ${description} Key`, true);
+    const privateKey = await deriveUnwrap(keyBits, wrappedPrivateKey, salt, "ECDH", description, true);
     return { keyPair: { publicKey, privateKey }, exportedPublicKey, signature };
 }
 
 export async function importSigningKeyPair(exportedKeyPair: ExportedSigningKeyPair, keyBits: CryptoKey | BufferSource, salt: Buffer, description: string): Promise<CryptoKeyPair> {
     const { exportedPublicKey, wrappedPrivateKey } = exportedKeyPair;
     const publicKey = await importKey(exportedPublicKey, "ECDSA", "public", true);
-    const privateKey = await deriveUnwrap(keyBits, wrappedPrivateKey, salt, "ECDSA", `Signing ${description} Key`, true);
+    const privateKey = await deriveUnwrap(keyBits, wrappedPrivateKey, salt, "ECDSA", description, true);
     return { publicKey, privateKey };
 }
 
