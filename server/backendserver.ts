@@ -14,7 +14,7 @@ import { Buffer } from "./node_modules/buffer";
 import { SessionCrypto } from "../shared/sessionCrypto";
 import * as crypto from "../shared/cryptoOperator";
 import { serialize } from "../shared/cryptoOperator";
-import { failure, Failure, ErrorStrings, Username, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, PasswordDeriveInfo, randomFunctions, SavedDetails, ChatRequestHeader, KeyBundle, UserEncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, typedEntries, RegisterNewUserRequest, RegisterNewUserChallenge, RegisterNewUserChallengeResponse, NewUserData, LogInRequest, LogInChallenge, UserData, LogInChallengeResponse } from "../shared/commonTypes";
+import { failure, Failure, ErrorStrings, Username, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, PasswordDeriveInfo, randomFunctions, ChatRequestHeader, KeyBundle, UserEncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, typedEntries, RegisterNewUserRequest, RegisterNewUserChallenge, RegisterNewUserChallengeResponse, NewUserData, LogInRequest, LogInChallenge, UserData, LogInChallengeResponse } from "../shared/commonTypes";
 import { MongoHandlerCentral, MongoUserHandler, bufferReplaceForMongo } from "./MongoHandler";
 import * as esrp from "../shared/ellipticSRP";
 
@@ -41,22 +41,34 @@ type ResponseMap = Readonly<{
     [E in SocketClientSideEventsKey]: (arg: SocketClientRequestParameters[E]) => Promise<SocketClientRequestReturn[E] | Failure>
 }>
 
-type ChallengeTemp = Readonly<{ challengeReference: string, confirmCode: (confirmationCode: Buffer) => Promise<boolean>, sharedKeyBits: CryptoKey }>;
+type ChallengeTemp = Readonly<{ challengeReference: string, confirmClient: (confirmationCode: Buffer) => Promise<boolean>, sharedKeyBits: CryptoKey }>;
 
 type RegisterChallengeTemp = ChallengeTemp & Omit<RegisterNewUserRequest, "clientEphemeralPublicHex">;
 
 type LogInChallengeTemp = ChallengeTemp & Username & { userData: UserData, clientVerifyingKey: CryptoKey };
 
+type ServerSavedDetails = Readonly<{
+    username: string, 
+    authKeyBits: Buffer, 
+    coreKeyBits: Buffer,
+    laterConfirmation: Omit<esrp.ServerAuthChallengeLater, "verifierEntangledHex">,
+}>;
+
+type LogInSavedChallengeTemp = Omit<ServerSavedDetails, "authKeyBits"> & {
+    clientVerifyingKey: CryptoKey,
+    userData: Pick<UserData, "profileData" | "x3dhInfo">;
+}
+
 class SocketHandler {
     private readonly responseMap: ResponseMap = {
         [SocketClientSideEvents.UsernameExists]: this.UsernameExists,
         [SocketClientSideEvents.UserLoginPermitted]: this.UserLoginPermitted,
-        [SocketClientSideEvents.RegisterNewUser]: this.RegisterNewUser,
+        [SocketClientSideEvents.InitiateRegisterNewUser]: this.InitiateRegisterNewUser,
         [SocketClientSideEvents.ConcludeRegisterNewUser]: this.ConcludeRegisterNewUser,
-        [SocketClientSideEvents.LogIn]: this.LogIn,
+        [SocketClientSideEvents.InitiateLogIn]: this.InitiateLogIn,
         [SocketClientSideEvents.ConcludeLogIn]: this.ConcludeLogIn,
-        [SocketClientSideEvents.SetSavedDetails]: this.SetSavedDetails,
-        [SocketClientSideEvents.GetSavedDetails]: this.GetSavedDetails,
+        [SocketClientSideEvents.InitiateLogInSaved]: this.InitiateLogInSaved,
+        [SocketClientSideEvents.ConcludeLogInSaved]: this.ConcludeLogInSaved,
         [SocketClientSideEvents.PublishKeyBundles]: this.PublishKeyBundles,
         [SocketClientSideEvents.UpdateX3DHUser]: this.UpdateX3DHUser,
         [SocketClientSideEvents.RequestKeyBundle]: this.RequestKeyBundle,
@@ -85,6 +97,7 @@ class SocketHandler {
     #socketId: string;
     #registerChallengeTemp: RegisterChallengeTemp;
     #logInChallengeTemp: LogInChallengeTemp;
+    #logInSavedTemp: LogInSavedChallengeTemp;
     #switchingSessionCrypto = false
     #username: string;
     #mongoHandler: MongoUserHandler;
@@ -103,19 +116,22 @@ class SocketHandler {
         console.log(`Session ${session.id} begun.`);
     }
 
-    setSaveToken(sessionReference: string, currentIp: string, saveToken: string) {
-        if (sessionReference === this.#sessionReference && currentIp === this.#ipRep && (!this.#saveToken || !saveToken)) {
-            if (!this.#saveToken && saveToken) {
-                this.#saveToken = saveToken;
-            }
-            else if (this.#saveToken && !saveToken) {
-                MongoHandlerCentral.getSavedDetails(saveToken).then(() => {
-                    this.#saveToken = null;
-                })
-            }
-            return true;
+    async savePassword(sessionReference: string, currentIp: string, saveToken: string, coreKeyBitsBase64: string, authKeyBitsBase64: string, serverKeyBitsBase64: string, clientEphemeralPublicHex: string) {
+        if (!this.#username || this.#sessionReference !== sessionReference || this.#ipRep !== currentIp) return {};
+        console.log("Attempting save password");
+        const serverKeyBits = Buffer.from(serverKeyBitsBase64, "base64");
+        const coreKeyBits = Buffer.from(coreKeyBitsBase64, "base64");
+        const authKeyBits = Buffer.from(authKeyBitsBase64, "base64");
+        const { verifierSalt, verifierPointHex } = (await MongoHandlerCentral.getLeanUser(this.#username)) ?? {}; 
+        if (!verifierSalt) return {};
+        const { verifierEntangledHex, ...laterConfirmation } = await esrp.serverSetupAuthChallenge(verifierPointHex, clientEphemeralPublicHex, "later");
+        const serverSavedDetails: ServerSavedDetails = { username: this.#username, authKeyBits, coreKeyBits,laterConfirmation };
+        const savedAuthDetails = await crypto.deriveEncrypt(serverSavedDetails, serverKeyBits, "Saved Auth");
+        if (await MongoHandlerCentral.setSavedAuth(saveToken, this.#ipRep, savedAuthDetails)) {
+            this.#saveToken = saveToken;
+            return { verifierSalt, verifierEntangledHex };
         }
-        return false;
+        else return {};
     }
 
     private deregisterSocket() {
@@ -197,15 +213,6 @@ class SocketHandler {
         }
     }
 
-    private async UserLoginPermitted({ username }: Username): Promise<{ tries: number, allowsAt: number }> {
-        const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username, this.#ipRep);
-        return allowsAt && allowsAt > Date.now() ? { tries, allowsAt } : { tries: null, allowsAt: null };
-    }
-
-    private async UsernameExists({ username }: Username): Promise<{ exists: boolean }> {
-        return { exists: !!(await MongoHandlerCentral.getUser(username)) };
-    }
-
     private awaitSwitchSessionCrypto(sharedKeyBits: CryptoKey, clientVerifyingKey: CryptoKey): Promise<boolean> {
         this.#switchingSessionCrypto = true;
         return new Promise<boolean>((resolve) => {
@@ -234,13 +241,22 @@ class SocketHandler {
         });
     }
 
-    private async RegisterNewUser(request: RegisterNewUserRequest): Promise<RegisterNewUserChallenge | Failure> {
+    private async UserLoginPermitted({ username }: Username): Promise<{ tries: number, allowsAt: number }> {
+        const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username, this.#ipRep);
+        return allowsAt && allowsAt > Date.now() ? { tries, allowsAt } : { tries: null, allowsAt: null };
+    }
+
+    private async UsernameExists({ username }: Username): Promise<{ exists: boolean }> {
+        return { exists: !!(await MongoHandlerCentral.getUser(username)) };
+    }
+
+    private async InitiateRegisterNewUser(request: RegisterNewUserRequest): Promise<RegisterNewUserChallenge | Failure> {
         if (this.#username) return failure(ErrorStrings.InvalidRequest);
         const { username, verifierSalt, clientEphemeralPublicHex, clientIdentityVerifyingKey, verifierPointHex } = request;
         if ((await this.UsernameExists({ username })).exists) return failure(ErrorStrings.IncorrectData);
-        const { confirmCode, sharedKeyBits, serverConfirmationCode, verifierEntangledHex } = await esrp.serverSetupAuthChallenge(verifierPointHex, clientEphemeralPublicHex);
+        const { confirmClient, sharedKeyBits, serverConfirmationCode, verifierEntangledHex } = await esrp.serverSetupAuthChallenge(verifierPointHex, clientEphemeralPublicHex, "now");
         const challengeReference = getRandomString().slice(0, 10);
-        this.#registerChallengeTemp = { challengeReference, username, clientIdentityVerifyingKey, confirmCode, verifierSalt, verifierPointHex, sharedKeyBits };
+        this.#registerChallengeTemp = { challengeReference, username, clientIdentityVerifyingKey, confirmClient, verifierSalt, verifierPointHex, sharedKeyBits };
         this.#logInChallengeTemp = null;
         setTimeout(() => { this.#registerChallengeTemp = null; }, 5000);
         const serverIdentityVerifyingKey = Buffer.from((await identityKeys).verifyingKey, "base64");
@@ -251,9 +267,9 @@ class SocketHandler {
         if (this.#username) return failure(ErrorStrings.InvalidRequest);
         const { challengeReference, clientConfirmationCode, newUserDataSigned } = response;
         if (!this.#registerChallengeTemp || this.#registerChallengeTemp.challengeReference !== challengeReference) return failure(ErrorStrings.InvalidReference);
-        const { username, clientIdentityVerifyingKey, confirmCode, verifierSalt, sharedKeyBits, verifierPointHex } = this.#registerChallengeTemp;
+        const { username, clientIdentityVerifyingKey, confirmClient, verifierSalt, sharedKeyBits, verifierPointHex } = this.#registerChallengeTemp;
         try {
-            if (!(await confirmCode(clientConfirmationCode))) return failure(ErrorStrings.IncorrectData);
+            if (!(await confirmClient(clientConfirmationCode))) return failure(ErrorStrings.IncorrectData);
             const clientVerifyingKey = await crypto.importKey(clientIdentityVerifyingKey, "ECDSA", "public", false);
             const newUserData: NewUserData = await crypto.deriveDecryptVerify(sharedKeyBits, newUserDataSigned, Buffer.alloc(32), "New User Data", clientVerifyingKey);
             if (!newUserData) return failure(ErrorStrings.IncorrectData);
@@ -275,7 +291,7 @@ class SocketHandler {
         }
     }
 
-    private async LogIn(request: LogInRequest): Promise<LogInChallenge | Failure> {
+    private async InitiateLogIn(request: LogInRequest): Promise<LogInChallenge | Failure> {
         if (this.#username) return failure(ErrorStrings.InvalidRequest);
         const { username, clientEphemeralPublicHex } = request;
         const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username, this.#ipRep);
@@ -285,10 +301,10 @@ class SocketHandler {
         const { clientIdentitySigningKey, clientIdentityVerifyingKey, verifierSalt, verifierPointHex, encryptionBase, profileData, x3dhInfo, serverIdentityVerifyingKey } = (await MongoHandlerCentral.getLeanUser(username)) ?? {}; 
         if (!verifierSalt) return failure(ErrorStrings.IncorrectData);
         const clientVerifyingKey = await crypto.importKey(clientIdentityVerifyingKey, "ECDSA", "public", false);
-        const { confirmCode, sharedKeyBits, serverConfirmationCode, verifierEntangledHex } = await esrp.serverSetupAuthChallenge(verifierPointHex, clientEphemeralPublicHex);
+        const { confirmClient, sharedKeyBits, serverConfirmationCode, verifierEntangledHex } = await esrp.serverSetupAuthChallenge(verifierPointHex, clientEphemeralPublicHex, "now");
         const challengeReference = getRandomString().slice(0, 10);
         const userData = { clientIdentitySigningKey, encryptionBase, profileData, serverIdentityVerifyingKey, x3dhInfo };
-        this.#logInChallengeTemp = { challengeReference, confirmCode, sharedKeyBits, username, clientVerifyingKey, userData };
+        this.#logInChallengeTemp = { challengeReference, confirmClient, sharedKeyBits, username, clientVerifyingKey, userData };
         this.#registerChallengeTemp = null;
         setTimeout(() => { this.#logInChallengeTemp = null; }, 5000);
         return { challengeReference, serverConfirmationCode, verifierSalt, verifierEntangledHex };
@@ -298,9 +314,9 @@ class SocketHandler {
         if (this.#username) return failure(ErrorStrings.InvalidRequest);
         const { challengeReference, clientConfirmationCode } = response;
         if (!this.#logInChallengeTemp || this.#logInChallengeTemp.challengeReference !== challengeReference) return failure(ErrorStrings.InvalidReference);
-        const { confirmCode, sharedKeyBits, username, clientVerifyingKey, userData } = this.#logInChallengeTemp;
+        const { confirmClient, sharedKeyBits, username, clientVerifyingKey, userData } = this.#logInChallengeTemp;
         try {
-            if (!(await confirmCode(clientConfirmationCode))) {
+            if (!(await confirmClient(clientConfirmationCode))) {
                 let { tries } = await MongoHandlerCentral.getUserRetries(username, this.#ipRep);
                 tries ??= 0;
                 tries++;
@@ -330,6 +346,45 @@ class SocketHandler {
         }
     }
 
+    private async InitiateLogInSaved({ serverKeyBits }: { serverKeyBits: Buffer }) {
+        if (this.#username || !this.#saveToken) return failure(ErrorStrings.InvalidRequest);
+        const { savedAuthDetails } = await MongoHandlerCentral.getSavedAuth(this.#saveToken, this.#ipRep) ?? {};
+        if (!savedAuthDetails) return failure(ErrorStrings.InvalidReference);
+        const { username, authKeyBits, coreKeyBits, laterConfirmation }: ServerSavedDetails = await crypto.deriveDecrypt(savedAuthDetails, serverKeyBits, "Saved Auth") ?? {};
+        if (!username) return failure(ErrorStrings.IncorrectData);
+        const { clientIdentityVerifyingKey, profileData, x3dhInfo } = (await MongoHandlerCentral.getLeanUser(username)) ?? {}; 
+        const clientVerifyingKey = await crypto.importKey(clientIdentityVerifyingKey, "ECDSA", "public", false);
+        this.#logInSavedTemp = { username, coreKeyBits, laterConfirmation, clientVerifyingKey, userData: { profileData, x3dhInfo } };
+        setTimeout(() => { this.#logInSavedTemp = null; }, 5000);
+        return { authKeyBits };
+    }
+
+    private async ConcludeLogInSaved({ username, clientConfirmationCode }: { username: string, clientConfirmationCode: Buffer }) {
+        if (this.#username) return failure(ErrorStrings.InvalidRequest);
+        if (!this.#logInSavedTemp || this.#logInSavedTemp.username !== username) return failure(ErrorStrings.InvalidReference);
+        const { laterConfirmation, coreKeyBits, userData, clientVerifyingKey } = this.#logInSavedTemp;
+        const { clientConfirmationData, serverConfirmationCode, sharedSecret } = laterConfirmation;
+        try {
+            if (!(await esrp.processConfirmationData(sharedSecret, clientConfirmationCode, clientConfirmationData))) return failure(ErrorStrings.IncorrectData);
+            const sharedKeyBits = await esrp.getSharedKeyBits(sharedSecret);
+            this.awaitSwitchSessionCrypto(sharedKeyBits, clientVerifyingKey).then(async (success) => {
+                if (success) {
+                    this.#username = username;
+                    this.#mongoHandler = await MongoUserHandler.createHandler(username, this.notifyMessage.bind(this));
+                    await MongoHandlerCentral.updateUserRetries(username, this.#ipRep, null, 0);
+                    onlineUsers.set(username, this.#socketId);
+                    console.log(`User ${username} logged in.`);
+                }
+            });
+            return { serverConfirmationCode, coreKeyBits, userData };
+        }
+        catch (err) {
+            logError(err)
+            return failure(ErrorStrings.ProcessFailed, err);
+        }
+
+    }
+
     private async UpdateX3DHUser({ username, x3dhInfo }: { x3dhInfo: UserEncryptedData } & Username): Promise<Failure> {
         if (!this.#username || this.#username !== username) return failure(ErrorStrings.InvalidRequest);
         const user = await MongoHandlerCentral.getUser(username);
@@ -342,22 +397,6 @@ class SocketHandler {
             logError(err);
             return failure(ErrorStrings.ProcessFailed, err);
         }
-    }
-
-    private async SetSavedDetails(request: Omit<SavedDetails, "ipRep" | "ipRead">): Promise<Failure> {
-        if (request.saveToken !== this.#saveToken) return failure(ErrorStrings.IncorrectData);
-        const ipRep = this.#ipRep;
-        const ipRead = parseIpReadable(ipRep);
-        const success = await MongoHandlerCentral.setSavedDetails({ ...request, ipRep, ipRead });
-        return success ? { reason: null } : failure(ErrorStrings.ProcessFailed);
-    }
-
-    private async GetSavedDetails({ saveToken }: { saveToken: string }): Promise<SavedDetails | Failure> {
-        if (saveToken !== this.#saveToken) return failure(ErrorStrings.IncorrectData);
-        this.#saveToken = null;
-        const savedDetails = await MongoHandlerCentral.getSavedDetails(saveToken);
-        if (!savedDetails || savedDetails.ipRep !== this.#ipRep) return failure(savedDetails ? ErrorStrings.ProcessFailed : ErrorStrings.InvalidRequest)
-        return savedDetails;
     }
 
     private validateKeyBundleOwner(keyBundles: PublishKeyBundlesRequest, username: string): boolean {
@@ -808,30 +847,29 @@ const io = new SocketServer(httpsServer, {
     }
 });
 
-app.post("/setSaveToken", (req, res) => {
-    const { saveToken, socketId, sessionReference } = req.body || {};
+app.post("/savePassword", async (req, res) => {
+    const { socketId, sessionReference, coreKeyBitsBase64, authKeyBitsBase64, serverKeyBitsBase64, clientEphemeralPublicHex } = req.body || {};
     const { socket: { remoteAddress } } = req;
     const currentIp = parseIpRepresentation(remoteAddress);
+    const saveToken = getRandomString();
     if (!currentIp) {
         res.status(400).end();
         return;
     }
-    if (saveToken === "0") {
-        if (socketHandlers.get(socketId)?.setSaveToken(sessionReference, currentIp, null)) {
-            res.clearCookie("saveToken").status(200).end();
-        }
-        else {
-            res.status(403).end();
-        }
-        return;
+    const socketHandler = socketHandlers.get(socketId);
+    if (socketHandler) {
+        const { verifierSalt, verifierEntangledHex } = await socketHandler.savePassword(sessionReference, currentIp, saveToken, coreKeyBitsBase64, authKeyBitsBase64, serverKeyBitsBase64, clientEphemeralPublicHex); 
+        if (verifierSalt) {
+            const cookieOptions: CookieOptions = { httpOnly: true, secure: true, maxAge: 10 * 24 * 60 * 60 * 1000, sameSite: "strict", expires: DateTime.now().plus({ days: 10 }).toJSDate() };
+            const verifierSaltBase64 = verifierSalt.toString("base64");
+            res.cookie("saveTokenCookie", { saveToken }, cookieOptions)
+                .json({ verifierSaltBase64, verifierEntangledHex })
+                .status(200)
+                .end();
+            return;
+        }       
     }
-    if (socketHandlers.get(socketId)?.setSaveToken(sessionReference, currentIp, saveToken)) {
-        const cookieOptions: CookieOptions = { httpOnly: true, secure: true, maxAge: 10 * 24 * 60 * 60 * 1000, sameSite: "strict", expires: DateTime.now().plus({ days: 10 }).toJSDate() };
-        res.cookie("saveToken", { saveToken }, cookieOptions).status(200).end();
-    }
-    else {
-        res.status(403).end();
-    }
+    res.status(403).end();
 });
 
 app.get("/verifyingKey", async (req, res) => {
@@ -871,7 +909,7 @@ io.use((socket: Socket, next) => {
 });
 io.on("connection", async (socket) => {
     const fileHashLocal = await jsHash;
-    const { session, cookies: { saveToken: saveTokenCookie }, socket: { remoteAddress } } = socket.request;
+    const { session, cookies: { saveTokenCookie }, socket: { remoteAddress } } = socket.request;
     const currentIp = parseIpRepresentation(remoteAddress);
     const { saveToken } = saveTokenCookie ?? {};
     let { sessionReference, sessionSigned, fileHash } = socket.handshake.auth ?? {};

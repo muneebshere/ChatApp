@@ -157,14 +157,6 @@ export type Failure = Readonly<{
     details?: any;
 }>;
 
-export type SavedDetails = Readonly<{ 
-    saveToken: string,
-    ipRep: string,
-    ipRead: string,
-    keyBits: Buffer, 
-    hSalt: Buffer
-}>;
-
 export type LogInRequest = Username & Readonly<{
     clientEphemeralPublicHex: string;
 }>;
@@ -219,12 +211,12 @@ export type RequestKeyBundleResponse = {
 enum SocketClientSideEventsEnum {
     UsernameExists, 
     UserLoginPermitted,
-    RegisterNewUser,
+    InitiateRegisterNewUser,
     ConcludeRegisterNewUser,
-    LogIn,
+    InitiateLogIn,
     ConcludeLogIn,
-    SetSavedDetails,
-    GetSavedDetails,
+    InitiateLogInSaved,
+    ConcludeLogInSaved,
     PublishKeyBundles,
     UpdateX3DHUser,
     RequestKeyBundle,
@@ -289,12 +281,12 @@ export const SocketServerSideEvents = constructSocketServerSideEvents();
 type SocketClientRequestParametersMap = {
     UsernameExists: Username, 
     UserLoginPermitted: Username, 
-    RegisterNewUser: RegisterNewUserRequest,
+    InitiateRegisterNewUser: RegisterNewUserRequest,
     ConcludeRegisterNewUser: RegisterNewUserChallengeResponse,
-    LogIn: LogInRequest,
+    InitiateLogIn: LogInRequest,
     ConcludeLogIn: LogInChallengeResponse,
-    SetSavedDetails: Omit<SavedDetails, "ipRep" | "ipRead">,
-    GetSavedDetails: { saveToken: string },
+    InitiateLogInSaved: { serverKeyBits: Buffer },
+    ConcludeLogInSaved: { username: string, clientConfirmationCode: Buffer },
     PublishKeyBundles: PublishKeyBundlesRequest,
     UpdateX3DHUser: { x3dhInfo: UserEncryptedData } & Username,
     RequestKeyBundle: Username,
@@ -324,12 +316,12 @@ export type SocketClientRequestParameters = {
 type SocketClientRequestReturnMap = {
     UsernameExists: { exists: boolean }, 
     UserLoginPermitted: { tries: number, allowsAt: number }, 
-    RegisterNewUser: RegisterNewUserChallenge,
+    InitiateRegisterNewUser: RegisterNewUserChallenge,
     ConcludeRegisterNewUser: never,
-    LogIn: LogInChallenge,
+    InitiateLogIn: LogInChallenge,
     ConcludeLogIn: UserData,
-    SetSavedDetails: never,
-    GetSavedDetails: SavedDetails,
+    InitiateLogInSaved: { authKeyBits: Buffer },
+    ConcludeLogInSaved: { serverConfirmationCode: Buffer, coreKeyBits: Buffer, userData: Pick<UserData, "profileData" | "x3dhInfo"> },
     PublishKeyBundles: never,
     UpdateX3DHUser: never,
     RequestKeyBundle: RequestKeyBundleResponse,

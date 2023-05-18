@@ -4,7 +4,7 @@ import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
 import { Buffer } from "./node_modules/buffer/";
 import { Buffer as NodeBuffer } from "node:buffer";
-import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PasswordEncryptedData, PublishKeyBundlesRequest, SavedDetails, StoredMessage, RegisterNewUserRequest, NewUserData } from "../shared/commonTypes";
+import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PasswordEncryptedData, PublishKeyBundlesRequest, StoredMessage, RegisterNewUserRequest, NewUserData, UserEncryptedData } from "../shared/commonTypes";
 import * as crypto from "../shared/cryptoOperator";
 import { parseIpReadable } from "./backendserver";
 
@@ -229,7 +229,7 @@ export class MongoHandlerCentral {
         }
     }), "server_data");
 
-    private static readonly SavedDetails = mongoose.model("SavedDetails", new Schema({
+    private static readonly SavedAuth = mongoose.model("SavedAuth", new Schema({
         saveToken: {
             type: Schema.Types.String,
             required: true,
@@ -237,22 +237,13 @@ export class MongoHandlerCentral {
             unique: true
         },
         ...ipSchema,
-        keyBits: {
-            type: Schema.Types.Buffer,
-            required: true,
-            immutable: true
-        },
-        hSalt: {
-            type: Schema.Types.Buffer,
-            required: true,
-            immutable: true
-        },
+        savedAuthDetails: userEncryptedData,
         createdAt: {
             type: Schema.Types.Date,
             default: new Date(),
             expires: 10 * 24 * 60 * 60
         }
-    }), "saved_details");
+    }), "saved_auth");
 
     private static readonly User = mongoose.model("User_", new Schema({
         username: {
@@ -322,8 +313,17 @@ export class MongoHandlerCentral {
             required: true,
             default: null
         },
-        ...ipSchema
-    }).index({ username: 1, ipRep: 1 }, { unique: true }), "user_retries");
+        ipRep: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true,
+        },
+        ipRead: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true,
+        }
+    }).index({ username: 1, ipRep: 1, ipRead: 1 }, { unique: true }), "user_retries");
 
     private static readonly ChatRequestDeposit = mongoose.model("ChatRequestDeposit", chatRequestHeaderSchema.index({ addressedTo: "hashed" }).index({ addressedTo: 1, sessionId: 1 }, { unique: true }), "chat_request_deposit");
 
@@ -379,11 +379,13 @@ export class MongoHandlerCentral {
         return user;
     }
 
-    static async setSavedDetails(details: SavedDetails) {
+    static async setSavedAuth(saveToken: string, ipRep: string, savedAuthDetails: UserEncryptedData) {
         try {
-            const { saveToken } = details;
-            await this.SavedDetails.findOneAndDelete({ saveToken });
-            return !!(await this.SavedDetails.create(bufferReplaceForMongo(details)));
+            if ((await this.SavedAuth.findOne({ ipRep }))) {
+                return false;
+            }
+            const ipRead = parseIpReadable(ipRep);
+            return !!(await this.SavedAuth.create(bufferReplaceForMongo({ saveToken, ipRep, ipRead, savedAuthDetails })));
         }
         catch (err) {
             logError(err);
@@ -391,10 +393,8 @@ export class MongoHandlerCentral {
         }
     }
 
-    static async getSavedDetails(saveToken: string): Promise<SavedDetails> {
-        const details = bufferReplaceFromLean(await this.SavedDetails.findOne({ saveToken }).lean());
-        await this.SavedDetails.deleteOne({ saveToken });
-        return details;
+    static async getSavedAuth(saveToken: string, ipRep: string) {
+        return bufferReplaceFromLean(await this.SavedAuth.findOne({ saveToken, ipRep }).lean());
     }
 
     static async getUserRetries(username: string, ipRep: string): Promise<{ tries: number, allowsAt?: number }> {

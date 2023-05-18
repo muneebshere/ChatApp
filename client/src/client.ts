@@ -7,8 +7,9 @@ import { stringify } from "safe-stable-stringify";
 import { SessionCrypto } from "../../shared/sessionCrypto";
 import { ChattingSession, SendingMessage, ViewChatRequest, X3DHUser } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
+import { serialize, deserialize } from "../../shared/cryptoOperator";
 import * as esrp from "../../shared/ellipticSRP";
-import { ErrorStrings, Failure, Username, UserEncryptedData, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, randomFunctions, failure, SavedDetails, PasswordEncryptedData, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, DeliveryInfo, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, RegisterNewUserChallenge, NewUserData, Profile, RegisterNewUserChallengeResponse, LogInRequest, LogInChallenge, LogInChallengeResponse, UserData } from "../../shared/commonTypes";
+import { ErrorStrings, Failure, Username, UserEncryptedData, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, randomFunctions, failure, PasswordEncryptedData, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, DeliveryInfo, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, RegisterNewUserChallenge, NewUserData, Profile, RegisterNewUserChallengeResponse, LogInRequest, LogInChallenge, LogInChallengeResponse, UserData } from "../../shared/commonTypes";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;
@@ -54,7 +55,16 @@ type ClientChatInterface = Readonly<{
 type ClientChatRequestInterface = Readonly<{
     rejectRequest: (otherUser: string, sessionId: string, oneTimeKeyId: string) => Promise<boolean>,
     respondToRequest: (request: ChatRequestHeader, respondingAt: number) => Promise<boolean>
-}>
+}>;
+
+type SavedAuthData = Readonly<{
+    username: string,
+    laterConfirmation: esrp.ClientAuthChallengeLaterResult;
+}>;
+
+type SavedCoreData = Readonly<{
+
+}>;
 
 type RequestMap = Readonly<{
     [E in SocketClientSideEventsKey]: (arg: SocketClientRequestParameters[E], timeout?: number) => Promise<SocketClientRequestReturn[E] | Failure>
@@ -365,9 +375,8 @@ export class Client {
         return result;
     }
 
-    async constructNewUser(profile: Profile, passwordString: string, clientIdentitySigningKey: PasswordEncryptedData, serverIdentityVerifyingKey: PasswordEncryptedData): Promise<NewUserData> {
+    async constructNewUser(profile: Profile, passwordString: string, encryptionBaseVector: Buffer, clientIdentitySigningKey: PasswordEncryptedData, serverIdentityVerifyingKey: PasswordEncryptedData): Promise<NewUserData> {
         const { username } = profile;
-        const encryptionBaseVector = getRandomVector(64);
         this.#encryptionBaseVector = await crypto.importRaw(encryptionBaseVector);
         const encryptionBase = await this.passwordEncrypt(passwordString, { encryptionBaseVector }, "Encryption Base");
         const x3dhUser = await X3DHUser.new(username, this.#encryptionBaseVector);
@@ -382,7 +391,7 @@ export class Client {
         return { profileData, encryptionBase, x3dhInfo, keyBundles, clientIdentitySigningKey, serverIdentityVerifyingKey };
     }
 
-    async signUp(profile: Profile, password: string) {
+    async signUp(profile: Profile, password: string, savePassword: boolean) {
         if (!this.isConnected) return failure(ErrorStrings.NoConnectivity);
         this.notifyClientEvent?.(ClientEvent.CreatingNewUser);
         try {
@@ -392,8 +401,8 @@ export class Client {
             const { clientEphemeralPublicHex, processAuthChallenge } = await esrp.clientSetupAuthProcess(passwordString);
             const [identityMasterKeyBits, pInfo] = await crypto.deriveMasterKeyBits(passwordString);
             const hSalt = crypto.getRandomVector(32);
-            const signingKeypair = await crypto.generateKeyPair("ECDSA");
-            const { exportedPublicKey: clientIdentityVerifyingKey, wrappedPrivateKey: ciphertext } = await crypto.exportSigningKeyPair(signingKeypair, identityMasterKeyBits, hSalt, "Client Identity Signing Key");
+            const identitySigningKeypair = await crypto.generateKeyPair("ECDSA");
+            const { exportedPublicKey: clientIdentityVerifyingKey, wrappedPrivateKey: ciphertext } = await crypto.exportSigningKeyPair(identitySigningKeypair, identityMasterKeyBits, hSalt, "Client Identity Signing Key");
             const clientIdentitySigningKey: PasswordEncryptedData = { ciphertext, hSalt, ...pInfo };
             const registerNewUserRequest: RegisterNewUserRequest = {
                 username,
@@ -402,51 +411,52 @@ export class Client {
                 clientEphemeralPublicHex,
                 clientIdentityVerifyingKey                
             };
-            const resultInit = await this.#socketHandler.RegisterNewUser(registerNewUserRequest);
+            const resultInit = await this.#socketHandler.InitiateRegisterNewUser(registerNewUserRequest);
             if ("reason" in resultInit) {
                 this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
                 logError(resultInit);
                 return resultInit;
             }
             const { challengeReference, serverConfirmationCode, serverIdentityVerifyingKey, verifierEntangledHex } = resultInit;
-            const { clientConfirmationCode, sharedKeyBits, confirmServer } = await processAuthChallenge(verifierSalt, verifierEntangledHex, serverConfirmationCode);
-            const serverIdentityVerifying = await this.passwordEncrypt(passwordString, { serverIdentityVerifyingKey }, "Server Verifying Key");
-            const newUserData = await this.constructNewUser(profile, passwordString, clientIdentitySigningKey, serverIdentityVerifying);
-            const newUserDataSigned = await crypto.deriveSignEncrypt(sharedKeyBits, newUserData, Buffer.alloc(32), "New User Data", signingKeypair.privateKey);
+            const { clientConfirmationCode, sharedKeyBits, confirmServer } = await processAuthChallenge(verifierSalt, verifierEntangledHex, "now");
+            const serverVerifyingKey = await this.passwordEncrypt(passwordString, { serverIdentityVerifyingKey }, "Server Verifying Key");
+            const encryptionBaseVector = getRandomVector(64);
+            const newUserData = await this.constructNewUser(profile, passwordString, encryptionBaseVector, clientIdentitySigningKey, serverVerifyingKey);
+            const newUserDataSigned = await crypto.deriveSignEncrypt(sharedKeyBits, newUserData, Buffer.alloc(32), "New User Data", identitySigningKeypair.privateKey);
             const concludeRegisterNewUser: RegisterNewUserChallengeResponse = { challengeReference, clientConfirmationCode, newUserDataSigned };
             const resultConc = await this.#socketHandler.ConcludeRegisterNewUser(concludeRegisterNewUser);
-            if (!resultConc?.reason) {
-                this.#sessionCrypto = new SessionCrypto(this.#sessionReference, sharedKeyBits, signingKeypair.privateKey, await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false));
-                const switched = await new Promise<boolean>((resolve) => {
-                    this.#socket.emit("SwitchSessionCrypto", this.#sessionReference, (response: boolean) => resolve(response));
-                    setTimeout(() => resolve(false), 2000);
-                });
-                if (switched) {
-                    if (!confirmServer()) {
-                        this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
-                        logError(new Error("Server confirmation code incorrect."))
-                        return failure(ErrorStrings.ProcessFailed);
-                    }
-                    this.#username = username;
-                    this.#profile = profile;
-                    this.notifyClientEvent?.(ClientEvent.CreatedNewUser);
-                    this.notifyClientEvent?.(ClientEvent.SignedIn);
-                    return { reason: null };
-                }
-                else {
-                    this.#sessionCrypto = null;
-                    this.#encryptionBaseVector = null;
-                    this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
-                    return failure(ErrorStrings.ProcessFailed);
-                }
-            }
-            else {
+            if (resultConc?.reason) {
                 this.#encryptionBaseVector = null;
                 this.#x3dhUser = null;
                 this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
                 logError(resultConc);
                 return resultConc;
             }
+            if (!(await confirmServer(serverConfirmationCode))) {
+                this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
+                logError(new Error("Server confirmation code incorrect."))
+                return failure(ErrorStrings.ProcessFailed);
+            }
+            this.#sessionCrypto = new SessionCrypto(this.#sessionReference, sharedKeyBits, identitySigningKeypair.privateKey, await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false));
+            const switched = await new Promise<boolean>((resolve) => {
+                this.#socket.emit("SwitchSessionCrypto", this.#sessionReference, (response: boolean) => resolve(response));
+                setTimeout(() => resolve(false), 2000);
+            });
+            if (!switched) {
+                this.#sessionCrypto = null;
+                this.#encryptionBaseVector = null;
+                this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
+                return failure(ErrorStrings.ProcessFailed);
+            }
+            this.#username = username;
+            this.#profile = profile;
+            this.notifyClientEvent?.(ClientEvent.CreatedNewUser);
+            this.notifyClientEvent?.(ClientEvent.SignedIn);
+            if (savePassword) {
+                const exportedIdentitySigningKey = await crypto.exportKey(identitySigningKeypair.privateKey);
+                await this.savePassword(username, passwordString, encryptionBaseVector, exportedIdentitySigningKey, serverIdentityVerifyingKey);
+            }
+            return { reason: null };
         }
         catch (err) {
             logError(err);
@@ -455,21 +465,21 @@ export class Client {
         }
     }
 
-    async logIn(username: string, password: string) {
+    async logIn(username: string, password: string, savePassword: boolean) {
         if (!this.isConnected) return failure(ErrorStrings.NoConnectivity);
         if (this.username) return failure(ErrorStrings.InvalidRequest);
         try {
             const passwordString = `${username}#${password}`;
             const { clientEphemeralPublicHex, processAuthChallenge } = await esrp.clientSetupAuthProcess(passwordString);
             const logInRequest: LogInRequest = { username, clientEphemeralPublicHex };
-            const resultInit = await this.#socketHandler.LogIn(logInRequest);
+            const resultInit = await this.#socketHandler.InitiateLogIn(logInRequest);
             if ("reason" in resultInit) {
                 this.notifyClientEvent?.(ClientEvent.FailedSignIn);
                 logError(resultInit);
                 return resultInit;
             }
             const { challengeReference, serverConfirmationCode, verifierEntangledHex, verifierSalt } = resultInit;
-            const { clientConfirmationCode, sharedKeyBits, confirmServer } = await processAuthChallenge(verifierSalt, verifierEntangledHex, serverConfirmationCode);
+            const { clientConfirmationCode, sharedKeyBits, confirmServer } = await processAuthChallenge(verifierSalt, verifierEntangledHex, "now");
             const logInChallengeResponse: LogInChallengeResponse = { challengeReference, clientConfirmationCode };
             const resultConc = await this.#socketHandler.ConcludeLogIn(logInChallengeResponse);
             if ("reason" in resultConc) {
@@ -493,20 +503,95 @@ export class Client {
                 this.notifyClientEvent?.(ClientEvent.FailedSignIn);
                 return failure(ErrorStrings.ProcessFailed);
             }
+            if (!(await confirmServer(serverConfirmationCode))) {
+                this.#sessionCrypto = null;
+                this.#encryptionBaseVector = null;
+                this.notifyClientEvent?.(ClientEvent.FailedSignIn);
+                logError(new Error("Server confirmation code incorrect."));
+                return failure(ErrorStrings.ProcessFailed);
+            }
             this.#encryptionBaseVector = encryptionBaseVector;
             this.#sessionCrypto = new SessionCrypto(this.#sessionReference, sharedKeyBits, clientIdentitySigningKey, serverVerifyingKey);
             const switched = await new Promise<boolean>((resolve) => {
                 this.#socket.emit("SwitchSessionCrypto", this.#sessionReference, (response: boolean) => resolve(response));
                 setTimeout(() => resolve(false), 2000);
             });
+            if (!switched) {
+                this.#sessionCrypto = null;
+                this.#encryptionBaseVector = null;
+                this.notifyClientEvent?.(ClientEvent.FailedSignIn);
+                return failure(ErrorStrings.ProcessFailed);
+            }
+            this.#username = username;
+            this.#profile = profile;
+            this.#x3dhUser = x3dhUser;
+            if (savePassword) {
+                const exportedIdentitySigningKey = await crypto.exportKey(await crypto.deriveUnwrap(identityMasterKeyBits, ciphertext, hSalt, "ECDSA", "Client Identity Signing Key", true));
+                await this.savePassword(username, passwordString, encryptionBaseVector, exportedIdentitySigningKey, serverIdentityVerifyingKey);
+            }
+            await this.loadUser();
+            this.notifyClientEvent?.(ClientEvent.SignedIn);
+            return { reason: null };
+        }
+        catch (err) {
+            logError(err);
+            this.notifyClientEvent?.(ClientEvent.FailedSignIn);
+            return failure(ErrorStrings.ProcessFailed);
+        }
+    }
+
+    async logInSaved() {
+        if (!this.isConnected) return failure(ErrorStrings.NoConnectivity);
+        if (this.username) return failure(ErrorStrings.InvalidRequest);
+        try {
+            const { serverKeyBits, authData, coreData } = deserialize(Buffer.from(window.localStorage.getItem("SavedAuth") || "", "base64"));
+            if (!serverKeyBits) {
+                this.notifyClientEvent?.(ClientEvent.FailedSignIn);
+                logError("Saved details not found");
+                return failure(ErrorStrings.ProcessFailed);
+            };
+            const resultInit = await this.#socketHandler.InitiateLogInSaved({ serverKeyBits });
+            if ("reason" in resultInit) {
+                this.notifyClientEvent?.(ClientEvent.FailedSignIn);
+                logError(resultInit);
+                return resultInit;
+            }
+            const { authKeyBits } = resultInit;
+            const { username, laterConfirmation }: SavedAuthData = await crypto.deriveDecrypt(authData, authKeyBits, "Auth Data");
+            const { sharedSecret, clientConfirmationCode, serverConfirmationData } = laterConfirmation;
+            const sharedKeyBits = await esrp.getSharedKeyBits(sharedSecret);
+            const resultConc = await this.#socketHandler.ConcludeLogInSaved({ username, clientConfirmationCode });
+            if ("reason" in resultConc) {
+                this.notifyClientEvent?.(ClientEvent.FailedSignIn);
+                logError(resultConc);
+                return resultConc;
+            }
+            const { coreKeyBits, serverConfirmationCode, userData: { x3dhInfo, profileData } } = resultConc;
+            if (!(await esrp.processConfirmationData(sharedSecret, serverConfirmationCode, serverConfirmationData))) {
+                this.notifyClientEvent?.(ClientEvent.FailedSignIn);
+                logError(new Error("Server confirmation code incorrect."));
+                return failure(ErrorStrings.ProcessFailed);
+            }
+            const { encryptionBaseVector, clientIdentitySigningKey, serverIdentityVerifyingKey } = await crypto.deriveDecrypt(coreData, coreKeyBits, "Core Data");
+            if (!encryptionBaseVector || !serverIdentityVerifyingKey || !clientIdentitySigningKey) {
+                this.notifyClientEvent?.(ClientEvent.FailedSignIn);
+                return failure(ErrorStrings.ProcessFailed);
+            }
+            const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
+            const clientSigningKey = await crypto.importKey(clientIdentitySigningKey, "ECDSA", "private", false);
+            this.#encryptionBaseVector = await crypto.importRaw(encryptionBaseVector);
+            const x3dhUser = await X3DHUser.importUser(x3dhInfo, encryptionBaseVector);
+            const profile: Profile = await crypto.deriveDecrypt(profileData, encryptionBaseVector, "User Profile");
+            if (!profile || !x3dhUser) {
+                this.notifyClientEvent?.(ClientEvent.FailedSignIn);
+                return failure(ErrorStrings.ProcessFailed);
+            }
+            this.#sessionCrypto = new SessionCrypto(this.#sessionReference, sharedKeyBits, clientSigningKey, serverVerifyingKey);
+            const switched = await new Promise<boolean>((resolve) => {
+                this.#socket.emit("SwitchSessionCrypto", this.#sessionReference, (response: boolean) => resolve(response));
+                setTimeout(() => resolve(false), 2000);
+            });
             if (switched) {
-                if (!confirmServer()) {
-                    this.#sessionCrypto = null;
-                    this.#encryptionBaseVector = null;
-                    this.notifyClientEvent?.(ClientEvent.FailedSignIn);
-                    logError(new Error("Server confirmation code incorrect."));
-                    return failure(ErrorStrings.ProcessFailed);
-                }
                 this.#username = username;
                 this.#profile = profile;
                 this.#x3dhUser = x3dhUser;
@@ -613,40 +698,28 @@ export class Client {
         return await crypto.deriveDecryptVerify(masterKeyBits, { ciphertext }, hSalt, purpose);
     }
 
-    private async createSavedDetails(username: string, password: string) {
-        const saveToken = getRandomString();
-        const keyBits = getRandomVector(32);
-        const hSalt = getRandomVector(48);
-        const { ciphertext } = await crypto.deriveSignEncrypt(keyBits, { username, password }, hSalt, "Cookie Saved Details");
-        const cookieSavedDetails = ciphertext.toString("base64");
-        const savedDetails: Omit<SavedDetails, "ipRep" | "ipRead"> = { saveToken, keyBits, hSalt };
-        return { cookieSavedDetails, savedDetails };
-    }
-
-    private async extractSavedDetails(cookieSavedDetails: string, savedDetails: SavedDetails): Promise<[string, string]> {
-        const { hSalt, keyBits } = savedDetails;
-        const encrypted = { ciphertext: fromBase64(cookieSavedDetails) }
-        const { username, password } = await crypto.deriveDecryptVerify(keyBits, encrypted, hSalt, "Cookie Saved Details");
-        return [username, password];
-    }
-
-    private async savePassword(savePassword: boolean, username: string, password: string) {
-        if (savePassword) {
-            const { cookieSavedDetails, savedDetails } = await this.createSavedDetails(username, password);
-            const { saveToken } = savedDetails;
-            const socketId = this.#socket.id;
-            const sessionReference = this.#sessionReference;
-            const response = await this.axInstance.post("/setSaveToken", { saveToken, socketId, sessionReference });
-            if (response.status === 200) {
-                const { reason } = await this.#socketHandler.SetSavedDetails(savedDetails);
-                if (!reason) {
-                    window.localStorage.setItem("SavedDetails", stringify({ saveToken, cookieSavedDetails }));
-                }
-                else {
-                    await this.clearCookie();
-                }
-            }
+    private async savePassword(username: string, passwordString: string, encryptionBaseVector: Buffer, clientIdentitySigningKey: Buffer, serverIdentityVerifyingKey: Buffer) {
+        const coreKeyBits = getRandomVector(32);
+        const authKeyBits = getRandomVector(32);
+        const serverKeyBits = getRandomVector(32);
+        const coreKeyBitsBase64 = coreKeyBits.toString("base64");
+        const authKeyBitsBase64 = authKeyBits.toString("base64");
+        const serverKeyBitsBase64 = serverKeyBits.toString("base64");
+        const coreData = await crypto.deriveEncrypt({ encryptionBaseVector, clientIdentitySigningKey, serverIdentityVerifyingKey }, coreKeyBits, "Core Data");
+        const { clientEphemeralPublicHex, processAuthChallenge } = await esrp.clientSetupAuthProcess(passwordString);
+        const socketId = this.#socket.id;
+        const sessionReference = this.#sessionReference;
+        const response = await this.axInstance.post("/savePassword", { socketId, sessionReference, coreKeyBitsBase64, authKeyBitsBase64, serverKeyBitsBase64, clientEphemeralPublicHex });
+        if (response?.status === 200) {
+            const { verifierSaltBase64, verifierEntangledHex } = response.data;
+            const verifierSalt = Buffer.from(verifierSaltBase64, "base64");
+            const laterConfirmation = await processAuthChallenge(verifierSalt, verifierEntangledHex, "later");
+            const authData = await crypto.deriveEncrypt({ username, laterConfirmation }, authKeyBits, "Auth Data");
+            const savedAuth = serialize({ serverKeyBits, authData, coreData }).toString("base64");
+            window.localStorage.setItem("SavedAuth", savedAuth);
+            return true;
         }
+        else return false;
     }
 
     private async clearCookie() {
