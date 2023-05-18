@@ -122,7 +122,7 @@ function App() {
   }
 
   return (
-    <Container maxWidth={false} disableGutters={true} sx={{ height: `${visualHeight}px`, width: belowXL ? "90vw" : "100vw", overflow: "clip", display: "flex", flexDirection: "column" }}>
+    <Container maxWidth={false} disableGutters={true} sx={{ height: "100vh", width: belowXL ? "90vw" : "100vw", overflow: "clip", display: "flex", flexDirection: "column" }}>
       {(!connected && !signedIn) &&
         <React.Fragment>
           <Spacer units={2} />

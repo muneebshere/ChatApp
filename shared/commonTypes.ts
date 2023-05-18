@@ -254,30 +254,6 @@ function constructSocketClientSideEvents() {
 
 export const SocketClientSideEvents = constructSocketClientSideEvents();
 
-enum SocketServerSideEventsEnum {
-    CompleteHandshake,
-    MessageReceived,
-    ChatRequestReceived,
-    RoomRequested,
-    RoomEstablished,
-}
-
-export type SocketServerSideEventsKey = Exclude<keyof typeof SocketServerSideEventsEnum, number>
-
-type SocketServerSideEventsMap = {
-    [E in SocketServerSideEventsKey]: E
-}
-
-function constructSocketServerSideEvents() {
-    const enums: any = {}
-    for (let e in SocketServerSideEventsEnum) {
-        if (Number.isNaN(parseInt(e))) enums[e] = e;
-    }
-    return enums as SocketServerSideEventsMap;
-}
-
-export const SocketServerSideEvents = constructSocketServerSideEvents();
-
 type SocketClientRequestParametersMap = {
     UsernameExists: Username, 
     UserLoginPermitted: Username, 
@@ -346,6 +322,32 @@ type SocketClientRequestReturnMap = {
 export type SocketClientRequestReturn = {
     [E in SocketClientSideEventsKey]: SocketClientRequestReturnMap[E];
 }
+
+enum SocketServerSideEventsEnum {
+    CompleteHandshake,
+    MessageReceived,
+    ChatRequestReceived,
+    RoomRequested,
+    ClientRoomReady,
+    ServerRoomReady
+}
+
+export type SocketServerSideEventsKey = Exclude<keyof typeof SocketServerSideEventsEnum, number>
+
+type SocketServerSideEventsMap = {
+    [E in SocketServerSideEventsKey]: E
+}
+
+function constructSocketServerSideEvents() {
+    const enums: any = {}
+    for (let e in SocketServerSideEventsEnum) {
+        if (Number.isNaN(parseInt(e))) enums[e] = e;
+    }
+    return enums as SocketServerSideEventsMap;
+}
+
+export const SocketServerSideEvents = constructSocketServerSideEvents();
+
 
 export enum ErrorStrings {
     NoConnectivity = "NoConnectivity",

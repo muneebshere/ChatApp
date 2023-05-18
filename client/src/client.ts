@@ -613,7 +613,7 @@ export class Client {
         }
     }
 
-    async loadUser() {    
+    async loadUser() {
         for (const { sessionId, timestamp, otherUser, firstMessage } of this.#x3dhUser.pendingChatRequests) {
             const awaited: AwaitedRequest = { sessionId, otherUser, lastActivity: timestamp, message: { messageId: "i", content: firstMessage, timestamp, sentByMe: true, delivery: { delivered: false, seen: false } }, type: "AwaitedRequest" };
             this.addChat(awaited);
@@ -720,13 +720,6 @@ export class Client {
             return true;
         }
         else return false;
-    }
-
-    private async clearCookie() {
-        const socketId = this.#socket.id;
-        const sessionReference = this.#sessionReference;
-        const response = await this.axInstance.post("/setSaveToken", { saveToken: "0", socketId, sessionReference });
-        return response.status === 200;
     }
 
     private async loadChats() {
@@ -859,20 +852,44 @@ export class Client {
         }
     }
 
+    private awaitServerRoomReady(otherUsername: string) {
+        return new Promise<boolean>((resolve) => {
+            const response = (withUser: string) => {
+                if (withUser === otherUsername) {
+                    this.#socket.off(SocketServerSideEvents.ServerRoomReady, response);
+                    resolve(true);
+                }
+            };
+            this.#socket.on(SocketServerSideEvents.ServerRoomReady, response);
+            setTimeout(() => {
+                this.#socket.off(SocketServerSideEvents.ServerRoomReady, response);
+                resolve(false);
+            }, 1000);
+        });
+    }
+
     private async roomRequested({ username }: Username) {
         if (username === this.#username) return failure(ErrorStrings.InvalidRequest);
         const chat = this.chatUsernamesList.get(username);
         if (!chat || chat.type !== "Chat") return failure(ErrorStrings.InvalidRequest);
-        chat.establishRoom(this.#sessionCrypto, this.#socket);
+        this.awaitServerRoomReady(username).then((ready) => {
+            if (ready) {
+                chat.establishRoom(this.#sessionCrypto, this.#socket);
+            }
+        })
         return { reason: null };
     }
 
     private async requestRoom(chat: Chat) {
+        const waitReady = this.awaitServerRoomReady(chat.otherUser);
         const response = await this.#socketHandler.RequestRoom({ username: chat.otherUser });
         if (response.reason) {
             return response;
         }
-        const confirmed = await chat.establishRoom(this.#sessionCrypto, this.#socket);
+
+        const confirmed = await waitReady.then(async (ready) => {
+            return ready ? await chat.establishRoom(this.#sessionCrypto, this.#socket) : false;
+        });
         if (!confirmed) return failure(ErrorStrings.ProcessFailed);
         return { reason: null };
     }
@@ -992,10 +1009,10 @@ export class Chat {
         if (this.disposed) {
             return false;
         }
-        socket.emit(SocketServerSideEvents.RoomEstablished, this.otherUser);
         const confirmed = await new Promise((resolve) => {
-            socket.once(this.otherUser, (confirmation: string) => resolve(confirmation === "confirmed"))
-            window.setTimeout(() => resolve(false), 20000);
+            socket.once(this.otherUser, (confirmation: string) => resolve(confirmation === "confirmed"));
+            socket.emit(SocketServerSideEvents.ClientRoomReady, this.otherUser);
+            window.setTimeout(() => resolve(false), 1000);
         })
         if (!confirmed) {
             socket.off(this.otherUser);
@@ -1064,11 +1081,12 @@ export class Chat {
     private async dispatch(header: MessageHeader, sendWithoutRoom: boolean) {
         let tries = 0;
         let success = false;
+        const dispatchEvent = `${this.me} -> ${this.otherUser}`;
         if (this.hasRoom) {
             while (!success && tries <= 10) {
                 tries++;
-                success = await new Promise<boolean>((resolve) => {
-                    this.#socket.emit(`${this.me} -> ${this.otherUser}`, this.#sessionCrypto.signEncryptToBase64(header, `${this.me} -> ${this.otherUser}`), (response: boolean) => resolve(response));
+                success = await new Promise<boolean>(async (resolve) => {
+                    this.#socket.emit(dispatchEvent, await this.#sessionCrypto.signEncryptToBase64(header, dispatchEvent), (response: boolean) => resolve(response));
                 });
             }
         }

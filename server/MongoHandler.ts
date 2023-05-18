@@ -593,11 +593,10 @@ export class MongoUserHandler {
 
     async storeMessage(message: StoredMessage) {
         try {
-            const { sessionId } = message;
-            await this.Message.deleteOne({ sessionId });
+            const { sessionId, messageId } = message;
+            await this.Message.deleteOne({ sessionId, messageId });
             const newMessage = new this.Message(bufferReplaceForMongo(message));
             if (newMessage === await newMessage.save()) {
-                const { sessionId, messageId } = message;
                 await this.UnprocessedMessage.deleteOne({ sessionId, messageId });
                 return true;
             }

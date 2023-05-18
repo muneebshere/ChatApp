@@ -98,6 +98,7 @@ class SocketHandler {
     #registerChallengeTemp: RegisterChallengeTemp;
     #logInChallengeTemp: LogInChallengeTemp;
     #logInSavedTemp: LogInSavedChallengeTemp;
+    #openToRoomTemp: Username;
     #switchingSessionCrypto = false
     #username: string;
     #mongoHandler: MongoUserHandler;
@@ -473,29 +474,37 @@ class SocketHandler {
         if (!this.#username || this.#username === username) return failure(ErrorStrings.InvalidRequest);
         const otherSocketHandler = socketHandlers.get(onlineUsers.get(username));
         if (!otherSocketHandler) return failure(ErrorStrings.ProcessFailed);
-        const halfRoom = halfCreateRoom([this.#username, this.#socket, this.#sessionCrypto]);
-        const dispose = await otherSocketHandler.requestRoom(this.#username, halfRoom);
-        if ("reason" in dispose) {
-            return dispose;
+        const response  = await otherSocketHandler.requestRoom(this.#username);
+        if (!response?.reason) {
+            const halfRoom = halfCreateRoom([this.#username, this.#socket, this.#sessionCrypto]);
+            otherSocketHandler.establishRoom(this.#username, halfRoom).then((dispose) => {
+                if (dispose) {
+                    this.#disposeRooms.push(dispose);
+                }
+            });
         }
-        this.#disposeRooms.push(dispose);
-        return { reason: null };
+        return response;
     }
 
-    private async requestRoom(username: string, halfRoom: (roomUser2: RoomUser) => Promise<() => void>): Promise<(() => void) | Failure> {
+    private async requestRoom(username: string): Promise<Failure> {
         if (!this.#username || this.#username === username) return failure(ErrorStrings.InvalidRequest);
         const response: Failure = await this.request(SocketServerSideEvents.RoomRequested, { username });
-        if ("reason" in response) {
-            return response;
+        if (!response?.reason) {
+            this.#openToRoomTemp = { username };
+            setTimeout(() => { this.#openToRoomTemp = null; }, 5000);
         }
-        const dispose = await halfRoom([this.#username, this.#socket, this.#sessionCrypto]);
-        if (dispose) {
-            this.#disposeRooms.push(dispose);
+        return response;
+    }
+
+    private async establishRoom(username: string, halfRoom: (roomUser2: RoomUser) => Promise<() => void>): Promise<(() => void)> 
+    {
+        if (!this.#openToRoomTemp || this.#openToRoomTemp.username !== username) return null;
+        return halfRoom([this.#username, this.#socket, this.#sessionCrypto]).then((dispose) => {
+            if (dispose) {
+                this.#disposeRooms.push(dispose);
+            }
             return dispose;
-        }
-        else {
-            return null;
-        }
+        });
     }
 
     private async SendChatRequest(chatRequest: ChatRequestHeader): Promise<Failure> {
@@ -619,17 +628,20 @@ type RoomUser = [string, Socket, SessionCrypto];
 
 async function createRoom([username1, socket1, sessionCrypto1]: RoomUser, [username2, socket2, sessionCrypto2]: RoomUser, messageTimeoutMs = 20000): Promise<() => void> {
 
-    function configureSocket(socketRecv: Socket, socketForw: Socket, sessionCrypto: SessionCrypto, socketEvent: string) {
+    function configureSocket(socketRecv: Socket, cryptoRecv: SessionCrypto, socketForw: Socket, cryptoForw: SessionCrypto, socketEvent: string) {
+        const decrypt = (data: string) => cryptoRecv.decryptVerifyFromBase64(data, socketEvent);
+        const encrypt = (data: any) => cryptoForw.signEncryptToBase64(data, socketEvent);
+        const repackage = async (data: string) => await encrypt(await decrypt(data))
         const forward: EmitHandler =
             messageTimeoutMs > 0
-                ? (data, respond) => {
+                ? async (data, respond) => {
                     const timeout = setTimeout(() => respond(false), messageTimeoutMs);
-                    socketForw.emit(socketEvent, serialize(sessionCrypto.decryptVerifyFromBase64(data, socketEvent)).toString("base64"), (response: boolean) => {
+                    socketForw.emit(socketEvent, await repackage(data), (response: boolean) => {
                         clearTimeout(timeout);
                         respond(response);
                     });
                 }
-                : (data, respond) => socketForw.emit(socketEvent, data, respond);
+                : async (data, respond) => socketForw.emit(socketEvent, await repackage(data), respond);
         socketRecv.on(socketEvent, forward);
         return forward;
     }
@@ -637,8 +649,8 @@ async function createRoom([username1, socket1, sessionCrypto1]: RoomUser, [usern
     function constructRoom() {
         const socket1Event = `${username1} -> ${username2}`;
         const socket2Event = `${username2} -> ${username1}`;
-        const forward1 = configureSocket(socket1, socket2, sessionCrypto1, socket1Event);
-        const forward2 = configureSocket(socket2, socket1, sessionCrypto2, socket2Event);
+        const forward1 = configureSocket(socket1, sessionCrypto1, socket2, sessionCrypto2, socket1Event);
+        const forward2 = configureSocket(socket2, sessionCrypto2, socket1, sessionCrypto1, socket2Event);
         return () => {
             socket1?.emit(socket2Event, "disconnected");
             socket2?.emit(socket1Event, "disconnected");
@@ -647,30 +659,34 @@ async function createRoom([username1, socket1, sessionCrypto1]: RoomUser, [usern
         }
     }
 
-    function awaitEstablished(socket: Socket, otherUsername: string) {
+    function awaitClientRoomReady(socket: Socket, otherUsername: string) {
         return new Promise<boolean>((resolve) => {
             const response = (withUser: string) => {
                 if (withUser === otherUsername) {
-                    socket.off(SocketServerSideEvents.RoomEstablished, response);
+                    socket.off(SocketServerSideEvents.ClientRoomReady, response);
                     resolve(true);
                 }
             };
-            socket.on(SocketServerSideEvents.RoomEstablished, response);
+            socket.on(SocketServerSideEvents.ClientRoomReady, response);
             setTimeout(() => {
-                socket.off(SocketServerSideEvents.RoomEstablished, response);
+                socket.off(SocketServerSideEvents.ClientRoomReady, response);
                 resolve(false);
-            }, 20000);
+            }, 1000);
         });
     }
 
-    const established1 = await awaitEstablished(socket1, username1);
-    const established2 = await awaitEstablished(socket2, username1);
+    const established1 = awaitClientRoomReady(socket1, username2);
+    const established2 = awaitClientRoomReady(socket2, username1);
+
+    socket1.emit(SocketServerSideEvents.ServerRoomReady, username2);
+    socket2.emit(SocketServerSideEvents.ServerRoomReady, username1);
+
     return Promise.all([established1, established2]).then(([est1, est2]) => {
         if (est1 && est2) {
-            const room = constructRoom();
+            const dispose = constructRoom();
             socket1.emit(username2, "confirmed");
             socket2.emit(username1, "confirmed");
-            return room;
+            return dispose;
         }
         else {
             return null;
