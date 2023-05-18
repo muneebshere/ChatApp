@@ -1,3 +1,4 @@
+import _ from "lodash";
 import { Buffer } from "./node_modules/buffer/";
 import { isBrowser, isNode, isWebWorker } from "./node_modules/browser-or-node";
 
@@ -76,46 +77,37 @@ export type SignedEncryptedData = EncryptedData & {
 
 export type UserEncryptedData = EncryptedData & { hSalt: Buffer };
 
-export type PasswordEncryptedData = EncryptedData & PasswordDeriveInfo & { hSalt: Buffer };
+export type PasswordEncryptedData = UserEncryptedData & PasswordDeriveInfo;
 
 export type Profile = Readonly<{
     username: string;
     displayName: string;
     profilePicture: string;
+    description: string;
 }>;
 
 export type Contact = Profile & {
     readonly contactName?: string;
 }
 
-export type MessageBody = Readonly<{
-    sender: string;
-    recipient: string;
-    messageId: string;
-    replyingTo?: string;
-    timestamp: number;
-    content: string;
-}>;
-
 export type ReplyingToInfo = Readonly<{ id: string, replyToOwn: boolean, displayText: string }>;
 
-export type PlainMessage = Readonly<{
-    sentByMe: boolean;
+export type DeliveryInfo = Readonly<{
+    readonly delivered?: number | false;
+    readonly seen?: number | false;
+}>
+
+export type MessageDeliveryInfo = ({ readonly sentByMe: false } | {
+    readonly sentByMe: true;
+    delivery?: DeliveryInfo
+})
+
+export type DisplayMessage = Readonly<{
     messageId: string;
     replyingTo?: ReplyingToInfo;
     timestamp: number;
     content: string;
-}>;
-
-export type DeliveryInfo = ({ readonly sentByMe: false } | {
-    readonly sentByMe: true;
-    delivery?: {
-        readonly delivered?: number | false;
-        readonly seen?: number | false;
-    }
-})
-
-export type DisplayMessage = Omit<PlainMessage, "sentByMe"> & DeliveryInfo
+}> & MessageDeliveryInfo;
 
 export type MessageHeader = Readonly<{
     addressedTo: string;
@@ -147,8 +139,6 @@ export type StoredMessage = Readonly<{
     messageId: string;
     timestamp: number;
     content: UserEncryptedData;
-    delivered?: number | false;
-    seen?: number | false;
 }>;
 
 export type ChatData = Readonly<{
@@ -158,99 +148,55 @@ export type ChatData = Readonly<{
   exportedChattingSession: UserEncryptedData
 }>;
 
-export type MessageEvent = Readonly<{
-    addressedTo: string;
-    sessionId: string;
-    messageId: string;
-    timestamp: number;
-    event: "delivered" | "seen";
-}>;
-
 export type Username = { 
-    username: string 
+    readonly username: string 
 };
 
-export type Failure = {
+export type Failure = Readonly<{
     reason: string;
     details?: any;
+}>;
+
+export type LogInRequest = Username & Readonly<{
+    clientEphemeralPublicHex: string;
+}>;
+
+export type RegisterNewUserRequest = LogInRequest & Readonly<{
+    verifierSalt: Buffer,
+    verifierPointHex: string,
+    clientIdentityVerifyingKey: Buffer
+}>
+
+export type LogInChallenge = Readonly<{
+    challengeReference: string,
+    verifierSalt: Buffer,
+    verifierEntangledHex: string,
+    serverConfirmationCode: Buffer
+}>
+
+export type RegisterNewUserChallenge = Omit<LogInChallenge, "verifierSalt"> & {
+    readonly serverIdentityVerifyingKey: Buffer
 }
 
-export type SavedDetails = { 
-    url: string,
-    saveToken: string,
-    keyBits: Buffer, 
-    hSalt: Buffer
-};
+export type LogInChallengeResponse = Readonly<{
+    challengeReference: string,
+    clientConfirmationCode: Buffer
+}>;
 
-type SecretData = {
-    serverProof: PasswordEncryptedData,
-    encryptionBase: PasswordEncryptedData
-};
-
-export type EstablishData = {
-    sessionReference: string,
-    publicKey: Buffer,
-    verifyingKey: Buffer
+export type RegisterNewUserChallengeResponse = LogInChallengeResponse & {
+    readonly newUserDataSigned: SignedEncryptedData;
 }
 
-export type AuthSetupKey = {
-    authKeyData: EncryptedData,
-    dInfo: PasswordDeriveInfo & { hSalt: Buffer }
-}
-
-export type AuthSetupKeyData = { 
-    newAuthReference: string,
-    pInfo: PasswordDeriveInfo,
-    hSaltEncrypt: Buffer,
-    hSaltAuth: Buffer
-};
-
-export type AuthInfo = { 
-    serverProof: PasswordEncryptedData,
-    pInfo: PasswordDeriveInfo,
-    encryptionBase: PasswordEncryptedData
-};
-
-export type UserAuthInfo = SecretData & {
-    dInfo: PasswordDeriveInfo & { hSalt: Buffer },
-    originalData: Buffer,
-    signedData: Buffer
-};
-
-export type RegisterNewUserRequest = {
-    newAuthReference: string,
-    newUserData: SignedEncryptedData,
-    newAuthBits: Buffer
-};
-
-export type NewUserData = SecretData & {
-    username: string,
+export type UserData = Readonly<{
+    encryptionBase: PasswordEncryptedData,
+    clientIdentitySigningKey: PasswordEncryptedData,
+    serverIdentityVerifyingKey: PasswordEncryptedData,
     x3dhInfo: UserEncryptedData,
-    userDetails: UserEncryptedData,
-    keyBundles: PublishKeyBundlesRequest
-};
+    profileData: UserEncryptedData
+}>;
 
-export type InitiateAuthenticationResponse = { 
-    currentAuthReference: string,
-    authInfo: AuthInfo,
-    newAuthSetup: AuthSetupKey
-};
-
-export type ConcludeAuthenticationRequest = {
-    currentAuthReference: string,
-    currentAuthBits: Buffer,
-    newAuthReference: string,
-    authChangeData: SignedEncryptedData
-};
-
-export type AuthChangeData = SecretData & {
-    username: string,
-    newAuthBits: Buffer
-};
-
-export type SignInResponse = {
-    userDetails: UserEncryptedData,
-    x3dhInfo: UserEncryptedData
+export type NewUserData = UserData & { 
+    readonly keyBundles: PublishKeyBundlesRequest
 };
 
 export type PublishKeyBundlesRequest = {
@@ -262,50 +208,143 @@ export type RequestKeyBundleResponse = {
     keyBundle: KeyBundle;
 };
 
-export enum SocketEvents {
-    CompleteHandshake = "complete-handshake",
-    UsernameExists = "username-exists",
-    UserLoginPermitted = "user-login-permitted",
-    RequestAuthSetupKey = "request-auth-setup-key",
+enum SocketClientSideEventsEnum {
+    UsernameExists, 
+    UserLoginPermitted,
+    InitiateRegisterNewUser,
+    ConcludeRegisterNewUser,
+    InitiateLogIn,
+    ConcludeLogIn,
+    InitiateLogInSaved,
+    ConcludeLogInSaved,
+    PublishKeyBundles,
+    UpdateX3DHUser,
+    RequestKeyBundle,
+    GetAllChats,
+    GetAllRequests,
+    GetUnprocessedMessages,
+    GetMessagesByNumber,
+    GetMessagesUptoTimestamp,
+    GetMessagesUptoId,
+    GetMessageById,
+    StoreMessage,
+    CreateChat,
+    UpdateChat,
+    SendChatRequest,
+    SendMessage,
+    DeleteChatRequest,
+    LogOut,
+    RequestRoom,
+    TerminateCurrentSession
+}
 
-    RegisterNewUser = "register-new-user",
-    InitiateAuthentication = "initiate-authentication",
-    ConcludeAuthentication = "conclude-authentication",
+export type SocketClientSideEventsKey = Exclude<keyof typeof SocketClientSideEventsEnum, number>
 
-    SetSavedDetails = "set-saved-details",
-    GetSavedDetails = "get-saved-details",
+type SocketClientSideEventsMap = {
+    [E in SocketClientSideEventsKey]: E
+}
 
-    PublishKeyBundles = "publish-key-bundles",
-    UpdateX3DHUser = "update-x3dhuser",
-    RequestKeyBundle = "request-key-bundle",
-    
-    SendChatRequest = "send-chat-request",
-    SendMessage = "send-message",
-    SendMessageEvent = "send-message-event",
-    DeleteChatRequest = "delete-chat-request",
+function constructSocketClientSideEvents() {
+    const enums: any = {}
+    for (let e in SocketClientSideEventsEnum) {
+        if (Number.isNaN(parseInt(e))) enums[e] = e;
+    }
+    return enums as SocketClientSideEventsMap;
+}
 
-    MessageReceived = "message-received",
-    ChatRequestReceived = "chat-request-received",
-    MessageEventLogged = "message-event-logged",
+export const SocketClientSideEvents = constructSocketClientSideEvents();
 
-    GetAllChats = "get-all-chats",
-    GetAllRequests = "get-all-requests",
-    GetUnprocessedMessages = "get-unprocessed-messages",
-    GetMessagesByNumber = "get-messages-by-number",
-    GetMessagesUptoTimestamp = "get-messages-upto-timestamp",
-    GetMessagesUptoId = "get-messages-upto-id",
-    GetMessageById = "get-message-by-id",
+enum SocketServerSideEventsEnum {
+    CompleteHandshake,
+    MessageReceived,
+    ChatRequestReceived,
+    RoomRequested,
+    RoomEstablished,
+}
 
-    StoreMessage = "store-message",
-    UpdateMessage = "update-message",
-    CreateChat = "create-chat",
-    UpdateChat = "update-chat",
+export type SocketServerSideEventsKey = Exclude<keyof typeof SocketServerSideEventsEnum, number>
 
-    RequestRoom = "request-room",
-    RoomEstablished = "room-established",
-    
-    TerminateCurrentSession = "terminate-current-session",
-    LogOut = "log-out"
+type SocketServerSideEventsMap = {
+    [E in SocketServerSideEventsKey]: E
+}
+
+function constructSocketServerSideEvents() {
+    const enums: any = {}
+    for (let e in SocketServerSideEventsEnum) {
+        if (Number.isNaN(parseInt(e))) enums[e] = e;
+    }
+    return enums as SocketServerSideEventsMap;
+}
+
+export const SocketServerSideEvents = constructSocketServerSideEvents();
+
+type SocketClientRequestParametersMap = {
+    UsernameExists: Username, 
+    UserLoginPermitted: Username, 
+    InitiateRegisterNewUser: RegisterNewUserRequest,
+    ConcludeRegisterNewUser: RegisterNewUserChallengeResponse,
+    InitiateLogIn: LogInRequest,
+    ConcludeLogIn: LogInChallengeResponse,
+    InitiateLogInSaved: { serverKeyBits: Buffer },
+    ConcludeLogInSaved: { username: string, clientConfirmationCode: Buffer },
+    PublishKeyBundles: PublishKeyBundlesRequest,
+    UpdateX3DHUser: { x3dhInfo: UserEncryptedData } & Username,
+    RequestKeyBundle: Username,
+    GetAllChats: [],
+    GetAllRequests: [],
+    GetUnprocessedMessages: { sessionId: string },
+    GetMessagesByNumber: { sessionId: string, limit: number, olderThan?: number },
+    GetMessagesUptoTimestamp: { sessionId: string, newerThan: number, olderThan?: number },
+    GetMessagesUptoId: { sessionId: string, messageId: string, olderThan?: number },
+    GetMessageById: { sessionId: string, messageId: string },
+    StoreMessage: StoredMessage,
+    CreateChat: ChatData,
+    UpdateChat: ChatData,
+    SendChatRequest: { sessionId: string },
+    SendMessage: MessageHeader,
+    DeleteChatRequest: { sessionId: string },
+    LogOut: Username,
+    RequestRoom: Username,
+    TerminateCurrentSession: []
+}
+
+export type SocketClientRequestParameters = {
+    [E in SocketClientSideEventsKey]: SocketClientRequestParametersMap[E];
+}
+
+
+type SocketClientRequestReturnMap = {
+    UsernameExists: { exists: boolean }, 
+    UserLoginPermitted: { tries: number, allowsAt: number }, 
+    InitiateRegisterNewUser: RegisterNewUserChallenge,
+    ConcludeRegisterNewUser: never,
+    InitiateLogIn: LogInChallenge,
+    ConcludeLogIn: UserData,
+    InitiateLogInSaved: { authKeyBits: Buffer },
+    ConcludeLogInSaved: { serverConfirmationCode: Buffer, coreKeyBits: Buffer, userData: Pick<UserData, "profileData" | "x3dhInfo"> },
+    PublishKeyBundles: never,
+    UpdateX3DHUser: never,
+    RequestKeyBundle: RequestKeyBundleResponse,
+    GetAllChats: ChatData[],
+    GetAllRequests: ChatRequestHeader[],
+    GetUnprocessedMessages: MessageHeader[],
+    GetMessagesByNumber: StoredMessage[],
+    GetMessagesUptoTimestamp: StoredMessage[],
+    GetMessagesUptoId: StoredMessage[],
+    GetMessageById: StoredMessage,
+    StoreMessage: never,
+    CreateChat: never,
+    UpdateChat: never,
+    SendChatRequest: never,
+    SendMessage: never,
+    DeleteChatRequest: never,
+    LogOut: never,
+    RequestRoom: never,
+    TerminateCurrentSession: never
+}
+
+export type SocketClientRequestReturn = {
+    [E in SocketClientSideEventsKey]: SocketClientRequestReturnMap[E];
 }
 
 export enum ErrorStrings {
@@ -317,4 +356,12 @@ export enum ErrorStrings {
     IncorrectData = "IncorrectData",
     IncorrectPassword = "IncorrectPassword",
     TooManyWrongTries = "TooManyWrongTries"
+}
+
+export type Entry<T> = { 
+    [K in keyof T]: [K, T[K]] 
+}[keyof T]
+
+export function typedEntries<T extends {}>(object: T): ReadonlyArray<Entry<T>> {
+  return Object.entries(object) as unknown as ReadonlyArray<Entry<T>>; 
 }

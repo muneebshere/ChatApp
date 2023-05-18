@@ -29,7 +29,7 @@ createRoot(document.getElementById("root")).render(<Root/>);
 function Root() {
   return (
     <CssVarsProvider>
-      <App/>
+      <App />
     </CssVarsProvider>)
 }
 
@@ -43,32 +43,40 @@ function App() {
   const [displayName, setDisplayName] = useState("");
   const [currentTab, setCurrentTab] = useState(0);
   const [visualHeight, setVisualHeight] = useState(window.visualViewport.height);
-  
+
   const notifyStatus = (status: ClientEvent) => {
     match(status)
-      .with(ClientEvent.Disconnected, 
-            ClientEvent.FailedToConnect, () => setConnected(false))
-      .with(ClientEvent.Connecting, 
-            ClientEvent.Reconnecting, () => {
-              setConnected(false);
-              setRetrying(true);
-            })
-      .with(ClientEvent.Connected, () => client.userLogIn().then(({ reason }) => {
-          reason || setSignedIn(true);
-          setConnected(true);
-        }))
-      .with(ClientEvent.SigningIn, 
-            ClientEvent.FailedSignIn, 
-            ClientEvent.ReAuthenticating, 
-            ClientEvent.FailedReAuthentication, 
-            ClientEvent.CreatingNewUser, 
-            ClientEvent.FailedCreateNewUser, 
-            ClientEvent.CreatedNewUser, 
-            ClientEvent.SigningOut, () => {})
-      .with(ClientEvent.SignedIn, () => {
-        setSignedIn(true);
-        setDisplayName(client.displayName);
+      .with(ClientEvent.Disconnected,
+        ClientEvent.FailedToConnect, () => setConnected(false))
+      .with(ClientEvent.Connecting,
+        ClientEvent.Reconnecting, () => {
+          setConnected(false);
+          setRetrying(true);
+        })
+      .with(ClientEvent.Connected, () => {
+        if (window.localStorage.getItem("SavedAuth")) {
+          client.logInSaved().then(({ reason }) => {
+            setConnected(true);
+            if (!reason) {
+              setSignedIn(true);
+            }
+          })
+        }
+        else setConnected(true);
       })
+      .with(ClientEvent.SigningIn,
+        ClientEvent.FailedSignIn,
+        ClientEvent.ReAuthenticating,
+        ClientEvent.FailedReAuthentication,
+        ClientEvent.CreatingNewUser,
+        ClientEvent.FailedCreateNewUser,
+        ClientEvent.CreatedNewUser,
+        ClientEvent.SigningOut, () => { })
+      .with(ClientEvent.SignedIn,
+        ClientEvent.CreatedNewUser, () => {
+          setSignedIn(true);
+          setDisplayName(client.profile.displayName);
+        })
       .with(ClientEvent.SignedOut, () => {
         setSignedIn(false);
         setDisplayName("");
@@ -77,10 +85,10 @@ function App() {
         setConnected(false);
         setRetrying(false);
       })
-      .otherwise(() => {});
+      .otherwise(() => { });
   }
 
-  useEffect(() => { 
+  useEffect(() => {
     const terminate = () => client.terminateCurrentSession();
     client.subscribeStatusChange(notifyStatus);
     window.addEventListener("beforeunload", terminate, { capture: true, once: true });
@@ -105,32 +113,32 @@ function App() {
   }
 
   function logIn({ username, password, savePassword }: SubmitResponse) {
-    return client.userLogIn(username, password, savePassword);
+    return client.logIn(username, password, savePassword);
   }
 
   function signUp({ displayName, username, password, savePassword }: SubmitResponse) {
     displayName ||= username;
-    return client.registerNewUser(username, password, displayName, "", savePassword);
+    return client.signUp({ username, displayName, profilePicture: "", description: "" }, password, savePassword);
   }
-  
+
   return (
-  <Container maxWidth={false} disableGutters={true} sx={{ height: `${visualHeight}px`, width: belowXL ? "90vw" : "100vw", overflow: "clip",   display: "flex", flexDirection: "column" }}>
-    {(!connected && !signedIn) &&
-    <React.Fragment>
-      <Spacer units={2}/>
-      <div style={{ display: "flex", justifyContent: "center" }}>
-        <CircularProgress size="lg" variant="soft"/>
-      </div>
-    </React.Fragment>}
-    {connected && !signedIn &&
-      <LogInContext.Provider value={{ logInData, logInDispatch }}>
-        <SignUpContext.Provider value={{ signUpData, signUpDispatch }}>
-          <LogInSignUp currentTab={currentTab} setCurrentTab={setCurrentTab}/>
-        </SignUpContext.Provider>
-      </LogInContext.Provider>
-    }
-    {signedIn &&
-    <Main client={client} connected={connected} retrying={retrying} displayName={displayName}/>
-    }
-  </Container>);
+    <Container maxWidth={false} disableGutters={true} sx={{ height: `${visualHeight}px`, width: belowXL ? "90vw" : "100vw", overflow: "clip", display: "flex", flexDirection: "column" }}>
+      {(!connected && !signedIn) &&
+        <React.Fragment>
+          <Spacer units={2} />
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <CircularProgress size="lg" variant="soft" />
+          </div>
+        </React.Fragment>}
+      {connected && !signedIn &&
+        <LogInContext.Provider value={{ logInData, logInDispatch }}>
+          <SignUpContext.Provider value={{ signUpData, signUpDispatch }}>
+            <LogInSignUp currentTab={currentTab} setCurrentTab={setCurrentTab} />
+          </SignUpContext.Provider>
+        </LogInContext.Provider>
+      }
+      {signedIn &&
+        <Main client={client} connected={connected} retrying={retrying} displayName={displayName} />
+      }
+    </Container>);
 }

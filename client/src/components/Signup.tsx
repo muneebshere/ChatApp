@@ -81,7 +81,10 @@ export default function SignUpForm() {
   const setWarned = (warned: boolean) => signUpDispatch(signUpAction("warned", warned));
   const canSubmit = !submitted && !usernameError && validatePassword(password) && (showPassword || password === repeatPassword);
 
-  validateUsername(username).then((error) => setUsernameError(error));
+  useEffect(() => {
+    validateUsername(username).then((error) => setUsernameError(error));
+  }, [username]);
+
 
   async function validateUsername(username: string): Promise<string> {
     if (username.match(/^[a-z][a-z0-9_]{2,14}$/) === null) {

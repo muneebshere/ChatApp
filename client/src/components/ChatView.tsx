@@ -373,6 +373,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   const { messages, contactDetails: { displayName } } = chat;
   const [, triggerRerender] = useState(2);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const messageRef = useRef(message);
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollbar = () => scrollRef.current;
@@ -381,7 +382,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   const underbar = useScrollOnResize(scrollbar, orientationState.lastOrientation, setIsScrolledDown);
   const [msgBarHeight, onHeightUpdate] = useUpdateHeight(scrollbar);
   const adjustBar = useAdjustbar(scrollbar, underbar, msgBarHeight);
-  const [replyingToHeight, replyToId, setReplyTo, setTextareaRef, replyToElement] = useReplyingTo(displayName, setHighlight, belowXL);
+  const [replyingToHeight, replyId, setReplyTo, setTextareaRef, replyToElement] = useReplyingTo(displayName, setHighlight, belowXL);
   const [updateCurrentElement, registerMessageRef] = useScrollRestore(scrollbar, lastScrolledTo, setLastScrolledTo, orientationState);
   const [width, ] = useSize(scrollRef);
   const toggleScroll = (scrollOn: boolean) => { 
@@ -408,7 +409,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
     chat.subscribe("chatview", () => triggerRerender((rerender) => 10 / rerender));
     return () => {
       chat.unsubscribe("chatview");
-      setMessage(textareaRef.current.value);
+      setMessage(messageRef.current);
     }
   },[])
 
@@ -422,7 +423,9 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   }, []);
 
   const sendMessage = () => {
-    chat.sendMessage(textareaRef.current.value, Date.now(), replyToId).then((success) => {
+    const content = messageRef.current;
+    const timestamp = Date.now();
+    chat.sendMessage({ content, timestamp, replyId}).then((success) => {
       scrollbar().scrollTo({ top: scrollbar().scrollHeight, behavior: "instant" });
     });
     textareaRef.current.value = "";
@@ -475,6 +478,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
             }}
             placeholder="Type a message"
             defaultValue={message}
+            onChange={(e) => messageRef.current = e.target.value }
             onHeightUpdate={onHeightUpdate}
             onSubmit={sendMessage}
             minRows={1}

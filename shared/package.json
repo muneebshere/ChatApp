@@ -5,8 +5,8 @@
   "author": "Muneeb Shere",
   "license": "The Unlicense",
   "devDependencies": {
-    "@types/lodash": "^4.14.191",
-    "@types/node": "^18.11.18",
+    "@types/lodash": "^4.14.194",
+    "@types/node": "^20.1.2",
     "tslib": "^2.5.0"
   },
   "dependencies": {

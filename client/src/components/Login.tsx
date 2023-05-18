@@ -1,6 +1,6 @@
 import _ from "lodash";
 import { match } from "ts-pattern";
-import React, { useRef, useEffect, useContext, createContext, Dispatch, useState } from "react";
+import React, { useRef, useEffect, useContext, createContext, Dispatch, useState, useCallback } from "react";
 import { FormControl, FormLabel, Stack, Button, CircularProgress, Alert } from "@mui/joy";
 import { SubmitResponse } from "../App";
 import { DisableSelectTypography, StyledJoySwitch } from "./CommonElementStyles";
@@ -17,7 +17,6 @@ type LogInData = {
   readonly savePassword: boolean;
   readonly tryAgainIn: number;
   readonly tryCount: number;
-  readonly tryAgain: number;
   readonly failed: boolean;
   readonly submitted: boolean;
   readonly warned: boolean;
@@ -51,7 +50,6 @@ export const defaultLogInData: Omit<LogInData, "usernameExists" | "submit" | "us
   savePassword: false,
   tryAgainIn: 0,
   tryCount: 0,
-  tryAgain: 0,
   submitted: false,
   failed: false,
   warned: false
@@ -68,7 +66,6 @@ export const defaultLogInDataReducer: LogInDataReducer = (data, action) => {
     .with("showPassword", () => ({ ...data, showPassword: value as boolean }))
     .with("tryAgainIn", () => ({ ...data, tryAgainIn: value as number }))
     .with("tryCount", () => ({ ...data, tryCount: value as number }))
-    .with("tryAgain", () => ({ ...data, tryAgain: value as number }))
     .with("failed", () => ({ ...data, failed: value as boolean }))
     .with("submitted", () => ({ ...data, submitted: value as boolean }))
     .with("warned", () => ({ ...data, warned: value as boolean }))
@@ -78,7 +75,7 @@ export const defaultLogInDataReducer: LogInDataReducer = (data, action) => {
 export const LogInContext = createContext<LogInContextType>(null);
 
 export default function LogInForm() {
-  const { logInData: { username, usernameEntered, password, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, tryAgain, failed, submitted, warned, usernameExists, userLoginPermitted, submit },  logInDispatch } = useContext(LogInContext);
+  const { logInData: { username, usernameEntered, password, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, failed, submitted, warned, usernameExists, userLoginPermitted, submit },  logInDispatch } = useContext(LogInContext);
   const [usernameValid, setUsernameValid] = useState(false);
   const setUsername = (username: string) => logInDispatch(logInAction("username", username));
   const setUsernameEntered = (usernameEntered: boolean) => logInDispatch(logInAction("usernameEntered", usernameEntered));
@@ -90,33 +87,33 @@ export default function LogInForm() {
   const setSubmitted = (submitted: boolean) => logInDispatch(logInAction("submitted", submitted));
   const setWarned = (warned: boolean) => logInDispatch(logInAction("warned", warned));
   const setTryAgainIn = (tryAgainIn: number) => logInDispatch(logInAction("tryAgainIn", tryAgainIn));
-  const setTryAgainRef = (tryAgain: number) => logInDispatch(logInAction("tryAgain", tryAgain));
   const setTryCount = (tryCount: number) => logInDispatch(logInAction("tryCount", tryCount));
-  const tryAgainRef = useRef(0);
-  tryAgainRef.current ??= tryAgain;
-  const canSubmit = !submitted && password && validatePassword(password) || tryAgainIn <= 0
+  const canSubmit = !submitted && password && validatePassword(password) || tryAgainIn <= 0;
+  const timerRef = useRef<number>(null);
+  const decrementTimer = useCallback(() => setTryAgainIn(tryAgainIn - 1000), [tryAgainIn]);
 
-  usernameExists(username).then((exists) => setUsernameValid(exists)).catch(() => {});
+  useEffect(() => {
+    usernameExists(username).then((exists) => setUsernameValid(exists)).catch(() => {});
+  }, [username]);
 
   useEffect(() => {
     if (tryAgainIn > 0) {
-      tryAgainRef.current = tryAgainIn;
-      setTryAgainRef(tryAgainIn);
-      const timer = window.setTimeout(() => setTryAgainIn(tryAgainRef.current - 1000), 1000);
-      return () => window.clearTimeout(timer);
+      timerRef.current = window.setInterval(decrementTimer, 1000);
+      return () => window.clearTimeout(timerRef.current);
     }
+    else if (timerRef.current) window.clearInterval(timerRef.current);
   }, [tryAgainIn]);
 
   function onUsernameEntered() {
-    userLoginPermitted(username).then((({ tries, allowsAt }) => {
-      if (tries) {
+    if (!!usernameValid) {
+      setUsernameEntered(true);
+      userLoginPermitted(username).then((({ tries, allowsAt }) => {
         if (tries && allowsAt) {
           setTryCount(tries);
           setTryAgainIn(allowsAt - Date.now());
         }
-      }
-      setUsernameEntered(true);
-    }));
+      }));
+    }
   }
 
   function validatePassword(password: string) {
@@ -133,6 +130,7 @@ export default function LogInForm() {
         setLastIncorrectPasswords([...lastIncorrectPasswords, [username, password]]);
       }
       else if (reason === ErrorStrings.TooManyWrongTries) {
+        setLastIncorrectPasswords([...lastIncorrectPasswords, [username, password]]);
         const { tries, allowsAt } = details ?? {};
         if (allowsAt && allowsAt > Date.now()) {
           setTryCount(tries);
@@ -142,6 +140,10 @@ export default function LogInForm() {
       else {
         setFailed(true);
       }
+    }
+    else {
+      setTryCount(0);
+      setTryAgainIn(0);
     }
     setSubmitted(false);
   }
@@ -161,11 +163,7 @@ export default function LogInForm() {
             valid={usernameValid}
             forceInvalid={!!username}
             errorMessage="No such user."
-            onEnter={ () => {
-              if (!!usernameValid) {
-                setUsernameEntered(true);
-              }
-            } }/>
+            onEnter={onUsernameEntered}/>
           <Button variant="solid"
             onClick={onUsernameEntered} 
             disabled={ !usernameValid }>
@@ -183,7 +181,7 @@ export default function LogInForm() {
             value={password}
             preventSpaces
             setValue={setPassword}
-            valid={!!password && tryAgain <= 0 && validatePassword(password)}
+            valid={!!password && tryAgainIn <= 0 && validatePassword(password)}
             disabled={submitted || tryAgainIn > 0}
             forceInvalid={!validatePassword(password) || tryAgainIn > 0}
             errorMessage={ tryAgainIn <= 0 ? (!password ? "Please provide password" : "Incorrect password.") : `Incorrect password entered ${tryCount} times. Try again in ${ (tryAgainIn / 1000).toFixed(0) }s.`}
@@ -214,7 +212,7 @@ export default function LogInForm() {
               onClick={submitLocal}
               disabled={!canSubmit}>
               <Stack direction="row" spacing={2}>
-                <DisableSelectTypography fontWeight="sm" textColor={ !password || submitted || tryAgainIn > 0 ? "black" : "white" }>
+                <DisableSelectTypography fontWeight="sm" textColor={ !canSubmit ? "black" : "white" }>
                   { submitted ? "Logging in..." :"Login" }
                 </DisableSelectTypography>
                 {submitted &&
