@@ -21,13 +21,14 @@ function formatDate(date: string): string {
   return dt.toFormat("dd/LL/y");
 }
 
-function labelFirsts(messages: DisplayMessage[]): Omit<ViewMessage, "highlight" | "setHighlight">[] {
-  const result: Omit<ViewMessage, "highlight" | "setHighlight">[] = [];
+function labelFirsts(messages: DisplayMessage[]): ViewMessage[] {
+  const result: ViewMessage[] = [];
   let lastByMe : boolean = null;
-  for (const { messageId, sentByMe, ...rest } of messages) { 
+  for (const message of messages) { 
+    const { status: { sentByMe } } = message;
     const first = lastByMe !== sentByMe;
     lastByMe = sentByMe;
-    result.push({ messageId, sentByMe, first, ...rest });
+    result.push({ ...message, first });
   }
   return result;
 }

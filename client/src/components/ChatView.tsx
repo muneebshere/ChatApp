@@ -324,12 +324,13 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   }, []);
 
   const sendMessage = () => {
-    const content = messageRef.current;
-    if (!content) return;
+    const text = messageRef.current;
+    if (!text.trim()) return;
     const timestamp = Date.now();
-    chat.sendMessage({ content, timestamp, replyId}).then((success) => {
+    chat.sendMessage({ text, timestamp, replyId}).then((success) => {
       scrollbar().scrollTo({ top: scrollbar().scrollHeight, behavior: "instant" });
     });
+    setReplyTo(null);
     textareaRef.current.value = "";
   }
 

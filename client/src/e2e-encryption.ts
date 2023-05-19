@@ -16,11 +16,14 @@ type MessageBody = Readonly<{
 
 type MessageContent = Readonly<{
     replyingTo?: string;
-    content: string;
+    text: string;
 }>;
 
 type MessageEvent = Readonly<{
-    event: "delivered" | "seen" | "typing" | "stopped-typing";
+    reportingAbout: string;
+    event: "delivered" | "seen";
+} | {
+    event: "typing" | "stopped-typing";
 }>;
 
 export type SendingMessage = (MessageContent | MessageEvent) & Omit<MessageBody, "sender">;
@@ -28,35 +31,39 @@ export type SendingMessage = (MessageContent | MessageEvent) & Omit<MessageBody,
 type ReceivingMessage = MessageBody & (MessageContent | MessageEvent);
 
 type ChatRequestBody = Readonly<{ 
+    messageId: string;
     myKeySignature: string;
     yourKeySignature: string;
     yourUsername: string;
     myDHRatchetInititalizer: ExposedSignedPublicKey;
     timestamp: number;
-    firstMessage: string;
+    text: string;
     profile: Profile;
 }>;
 
 type ChatRequestInWaiting = Readonly<{
     timestamp: number;
     sessionId: string;
+    messageId: string;
     otherUser: string;
     recipientVerifyKey: CryptoKey;
     sharedRoot: Buffer;
     myPrivateDHRatchetInitializer: CryptoKey;
-    firstMessage: string;
+    text: string;
 }>;
 
 export type ViewPendingRequest = Readonly<{
     timestamp: number;
     sessionId: string;
+    messageId: string;
     otherUser: string;
-    firstMessage: string;
+    text: string;
 }>;
 
 type ChatRequestProcessResult = Readonly<{ 
     profile: Profile,
-    firstMessage: string, 
+    messageId: string,
+    text: string, 
     timestamp: number, 
     sharedRoot: Buffer, 
     importedVerifyingIdentityKey: CryptoKey, 
@@ -65,19 +72,15 @@ type ChatRequestProcessResult = Readonly<{
 }>;
 
 export type ViewChatRequest = Readonly<{ 
-    firstMessage: string, 
+    messageId: string,
+    text: string, 
     timestamp: number,
     profile: Profile;
 }>;
 
-type ExportedChatRequestInWaiting = Readonly<{
-    timestamp: number;
-    sessionId: string;
-    otherUser: string;
+type ExportedChatRequestInWaiting = Omit<ChatRequestInWaiting, "recipientVerifyKey" | "myPrivateDHRatchetInitializer"> & Readonly<{
     recipientVerifyKey: Buffer;
-    sharedRoot: Buffer;
     myPrivateDHRatchetInitializer: Buffer;
-    firstMessage: string;
 }>;
 
 type ExportedX3DHUser = Readonly<{
@@ -139,7 +142,7 @@ export class X3DHUser {
     }
 
     public get pendingChatRequests(): ViewPendingRequest[] {
-        return Array.from(this.#waitingChatRequests.values()).map(({ timestamp, otherUser, firstMessage, sessionId }) => ({ timestamp, otherUser, firstMessage, sessionId }));
+        return Array.from(this.#waitingChatRequests.values()).map(({ messageId, timestamp, otherUser, text, sessionId }) => ({ messageId, timestamp, otherUser, text, sessionId }));
     }
 
     private constructor(username: string,
@@ -176,15 +179,16 @@ export class X3DHUser {
         const keyLastReplaced = this.#keyLastReplaced;
         const preKeyVersion = this.#preKeyVersion;
         const exportedRequests = new Map<string, ExportedChatRequestInWaiting>();
-        for (const [sessionId, { timestamp, otherUser, firstMessage, sharedRoot, myPrivateDHRatchetInitializer, recipientVerifyKey }] of this.#waitingChatRequests) {
+        for (const [sessionId, { messageId, timestamp, otherUser, text, sharedRoot, myPrivateDHRatchetInitializer, recipientVerifyKey }] of this.#waitingChatRequests) {
             exportedRequests.set(sessionId, {
+                messageId,
                 timestamp,
                 sessionId,
                 otherUser,
                 recipientVerifyKey: await crypto.exportKey(recipientVerifyKey),
                 sharedRoot,
                 myPrivateDHRatchetInitializer: await crypto.exportKey(myPrivateDHRatchetInitializer),
-                firstMessage
+                text,
             });
         }
         const waitingChatRequests = await crypto.deriveEncrypt(exportedRequests, this.#encryptionBaseVector, "Waiting Message Requests");
@@ -236,15 +240,16 @@ export class X3DHUser {
             user.#identitySigningKey = user.#identitySigningKeyPair.privateKey;
             user.#currentOneTimeKeys = signedOneTimeKeys;
             const exportedWaitingChatRequests: Map<string, ExportedChatRequestInWaiting> = await crypto.deriveDecrypt(waitingChatRequests, encryptionBaseVector, "Waiting Message Requests");
-            for (const [sessionId, { timestamp, otherUser, firstMessage, sharedRoot, myPrivateDHRatchetInitializer, recipientVerifyKey }] of exportedWaitingChatRequests) {
+            for (const [sessionId, { messageId, timestamp, otherUser, text, sharedRoot, myPrivateDHRatchetInitializer, recipientVerifyKey }] of exportedWaitingChatRequests) {
                 user.#waitingChatRequests.set(sessionId, {
+                    messageId,
                     timestamp,
                     sessionId,
                     otherUser,
                     recipientVerifyKey: await crypto.importKey(recipientVerifyKey, "ECDSA", "public", true),
                     sharedRoot,
                     myPrivateDHRatchetInitializer: await crypto.importKey(myPrivateDHRatchetInitializer, "ECDH", "private", true),
-                    firstMessage
+                    text
                 });
             }
             user.#keyLastReplaced = keyLastReplaced;
@@ -287,7 +292,7 @@ export class X3DHUser {
         return { defaultKeyBundle, oneTimeKeyBundles };
     }
 
-    async generateChatRequest(keyBundle: KeyBundle, firstMessage: string, timestamp: number, profileDetails: Omit<Profile, "username">, sendChatRequest: (request: ChatRequestHeader) => Promise<boolean>) : Promise<[ViewPendingRequest, UserEncryptedData] | "Invalid Identity Signature" | "Invalid PreKey Signature" | "Invalid OneTimeKey Signature" | "Sending Request Failed"> {
+    async generateChatRequest(keyBundle: KeyBundle, messageId: string, text: string, timestamp: number, profileDetails: Omit<Profile, "username">, sendChatRequest: (request: ChatRequestHeader) => Promise<boolean>) : Promise<[ViewPendingRequest, UserEncryptedData] | "Invalid Identity Signature" | "Invalid PreKey Signature" | "Invalid OneTimeKey Signature" | "Sending Request Failed"> {
         const {
             identifier,
             preKeyVersion,
@@ -327,14 +332,15 @@ export class X3DHUser {
         const yourKeySignature = otherDHIdentityKey.signature.toString("base64");
         const dhRatchetInitializer = await crypto.generateSignedKeyPair(this.#identitySigningKey);
         const myDHRatchetInititalizer = crypto.exposeSignedKey(dhRatchetInitializer);
-        const profile = { ...profileDetails, username: this.username }
+        const profile = { ...profileDetails, username: this.username };
         const initialData: ChatRequestBody = {
+            messageId,
             myKeySignature, 
             yourKeySignature,
             yourUsername, 
             myDHRatchetInititalizer,
             timestamp,
-            firstMessage,
+            text,
             profile
          };
         const initialCiphertext = await crypto.deriveSignEncrypt(sharedRoot, initialData, nullSalt(48), "Message Request", this.#identitySigningKey);
@@ -343,6 +349,7 @@ export class X3DHUser {
         const sessionId = sharedRoot.toString("base64").slice(0, 15);
         const request: ChatRequestHeader = {
             sessionId,
+            messageId,
             timestamp,
             addressedTo: yourUsername,
             myVerifyingIdentityKey: myPublicSigningIdentityKey,
@@ -354,7 +361,8 @@ export class X3DHUser {
         const pendingRequest: ViewPendingRequest = {
             timestamp, 
             sessionId, 
-            firstMessage,
+            messageId,
+            text,
             otherUser: yourUsername };
         const waitingRequest: ChatRequestInWaiting = {
             ...pendingRequest,
@@ -419,7 +427,8 @@ export class X3DHUser {
                     yourKeySignature: myKeySignature,
                     yourUsername: myUsername, 
                     timestamp,
-                    firstMessage,
+                    messageId,
+                    text,
                     profile,
                     myDHRatchetInititalizer: dhRatchetInitializer } = message;
                 const importedDHInitializer = await crypto.verifyKey(dhRatchetInitializer, importedVerifyingIdentityKey);
@@ -431,9 +440,10 @@ export class X3DHUser {
                     return "Problem With Decrypted Message";
                 }
                 return {
+                    messageId,
                     profile,
                     timestamp, 
-                    firstMessage, 
+                    text, 
                     importedVerifyingIdentityKey, 
                     sharedRoot,
                     importedDHInitializer,
@@ -455,8 +465,8 @@ export class X3DHUser {
         : Promise<ViewChatRequest | "Incorrectly Addressed" | "PreKey Version Mismatch" | "OneTimeKey Not Found" | "Invalid Identity Signature" | "Invalid Ephemeral Signature" | "Failed To Decrypt Message" | "Problem With Decrypted Message" | "Unknown Error"> {
             const chatRequestResult = await this.processChatRequest(initialMessage);
             if (typeof chatRequestResult === "string") return chatRequestResult;
-            const { profile, firstMessage, timestamp } =  chatRequestResult;
-            return { profile, firstMessage, timestamp };
+            const { messageId, profile, text, timestamp } =  chatRequestResult;
+            return { messageId, profile, text, timestamp };
     }
 
     async acceptChatRequest(initialMessage: ChatRequestHeader, timestamp: number, profileDetails: Omit<Profile, "username">, sendResponse: (responseHeader: MessageHeader) => Promise<boolean>)
@@ -472,8 +482,9 @@ export class X3DHUser {
                 sharedRoot,
                 this.maxSkip,
                 importedDHInitializer);
-            const content = serialize({ ...profileDetails, username: this.username }).toString("base64");
-            const exportedChattingSession = await chattingSession.sendMessage({ content, timestamp, messageId: "0" }, sendResponse);
+            const text = serialize({ ...profileDetails, username: this.username }).toString("base64");
+            const messageId = getRandomString(15, "hex");
+            const exportedChattingSession = await chattingSession.sendMessage({ text, timestamp, messageId }, sendResponse);
             if (myOneTimeKeyIdentifier && typeof exportedChattingSession !== "string") {
                 // this.#currentOneTimeKeys.delete(myOneTimeKeyIdentifier);
                 return exportedChattingSession;
@@ -506,8 +517,8 @@ export class X3DHUser {
             myDHRatchetInitializer);
         let response: { profile: Profile, respondedAt: number } = null;
         const exportedChattingSession = await chattingSession.receiveMessage(responseHeader, async (messageBody) => {
-            const { timestamp: respondedAt, content } = messageBody as (MessageBody & MessageContent);
-            const profile: Profile = deserialize(Buffer.from(content, "base64"));
+            const { timestamp: respondedAt, text } = messageBody as (MessageBody & MessageContent);
+            const profile: Profile = deserialize(Buffer.from(text, "base64"));
             if (!profile || typeof profile.displayName !== "string" || typeof profile.username !== "string" || typeof profile.profilePicture !== "string") {
                 console.log("Request response violated protocol.");
                 return false;

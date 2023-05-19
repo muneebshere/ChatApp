@@ -47,6 +47,10 @@ const chatRequestHeaderSchema = new Schema({
         required: true,
         unique: true,
     },
+    messageId: {
+        type: Schema.Types.String,
+        required: true
+    },
     timestamp: {
         type: Schema.Types.Number,
         required: true
@@ -155,8 +159,6 @@ const ipSchema = {
 }
 
 export class MongoHandlerCentral {
-    private static readonly timeouts = new Map<string, NodeJS.Timeout>();
-    private static readonly waitDelete = new Map<string, Promise<any>>();
 
     private static readonly userHandlers = new Map<string, MongoUserHandler>();
 
@@ -594,18 +596,17 @@ export class MongoUserHandler {
     async storeMessage(message: StoredMessage) {
         try {
             const { sessionId, messageId } = message;
-            await this.Message.deleteOne({ sessionId, messageId });
-            const newMessage = new this.Message(bufferReplaceForMongo(message));
-            if (newMessage === await newMessage.save()) {
-                await this.UnprocessedMessage.deleteOne({ sessionId, messageId });
-                return true;
-            }
-            return false;
+            const upsert = await this.Message.updateOne({ sessionId, messageId }, bufferReplaceForMongo(message), { upsert: true });
+            return (upsert.modifiedCount + upsert.upsertedCount) === 1;
         }
         catch (err) {
             logError(err);
             return false;
         }
+    }
+
+    async messageProcessed(sessionId: string, messageId: string) {
+        return (await this.UnprocessedMessage.deleteOne({ sessionId, messageId })).deletedCount === 1;
     }
 
     async createChat(chat: ChatData) {
@@ -613,8 +614,6 @@ export class MongoUserHandler {
             const newChat = new this.Chat(bufferReplaceForMongo(chat));
             if (newChat === await newChat.save()) {
                 const { sessionId } = chat;
-                await this.ChatRequest.deleteOne({ sessionId });
-                await this.UnprocessedMessage.deleteOne({ sessionId, messageId: "0" });
                 return true;
             }
             return false;
@@ -625,7 +624,7 @@ export class MongoUserHandler {
         }
     }
 
-    async updateChat({ sessionId, ...chat }: ChatData) {
+    async updateChat({ sessionId, ...chat }: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>) {
         try {
             return !!(await this.Chat.findOneAndUpdate({ sessionId }, bufferReplaceForMongo(chat)).exec());
         }

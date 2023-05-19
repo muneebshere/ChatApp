@@ -80,6 +80,7 @@ class SocketHandler {
         [SocketClientSideEvents.GetMessagesUptoId]: this.GetMessagesUptoId,
         [SocketClientSideEvents.GetMessageById]: this.GetMessageById,
         [SocketClientSideEvents.StoreMessage]: this.StoreMessage,
+        [SocketClientSideEvents.MessageProcessed]: this.MessageProcessed,
         [SocketClientSideEvents.CreateChat]: this.CreateChat,
         [SocketClientSideEvents.UpdateChat]: this.UpdateChat,
         [SocketClientSideEvents.SendChatRequest]: this.SendChatRequest,
@@ -567,13 +568,19 @@ class SocketHandler {
         return { reason: null };
     }
 
+    private async MessageProcessed({ sessionId, messageId }: { sessionId: string, messageId: string }): Promise<Failure> {
+        if (!this.#username) return failure(ErrorStrings.InvalidRequest);
+        if (!(await this.#mongoHandler.messageProcessed(sessionId, messageId))) return failure(ErrorStrings.ProcessFailed);
+        return { reason: null };
+    }
+
     private async CreateChat(chat: ChatData) {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.createChat(chat))) return failure(ErrorStrings.ProcessFailed);
         return { reason: null };
     }
 
-    private async UpdateChat(chat: ChatData) {
+    private async UpdateChat(chat: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>) {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.updateChat(chat))) return failure(ErrorStrings.ProcessFailed);
         return { reason: null };

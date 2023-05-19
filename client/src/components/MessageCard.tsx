@@ -17,7 +17,7 @@ import SvgMessageCard from "./SvgMessageCard";
 import "katex/dist/katex.min.css";
 import { ReplyingToMemo } from "./ReplyingTo";
 import { StyledReactMarkdownVariable } from "./CommonElementStyles";
-import { MessageDeliveryInfo, DisplayMessage, ReplyingToInfo } from "../../../shared/commonTypes";
+import { MessageStatus, DisplayMessage, ReplyingToInfo } from "../../../shared/commonTypes";
 import { ElementRects } from "@floating-ui/react";
 import useSwipeDrag from "./Hooks/useSwipeDrag";
 import { SxProps } from "@mui/material";
@@ -43,14 +43,14 @@ export const MessageCardContext = createContext<MessageCardContextData>(null);
 
 const StyledReactMarkdownBody = StyledReactMarkdownVariable(22);
 
-function StatusButton(deliveryInfo: MessageDeliveryInfo) {
-  if (!deliveryInfo.sentByMe) return null;
-  const { delivery } = deliveryInfo;
-  if (!delivery) {
+function StatusButton(status: MessageStatus) {
+  if (!status.sentByMe) return null;
+  const { delivery } = status;
+  if (delivery === null) {
     return <HourglassTop sx={{ color: "gold", rotate: "-90deg", fontSize: "1rem" }}/>;
   }
   else {
-    const { delivered, seen } = delivery;
+    const { delivered, seen } = delivery
     const statusIcon = 
     delivered 
       ? (<DoneAllSharp sx={{ color: seen ? "blue" : "gray", fontSize: "1rem", cursor: "pointer" }}/>) 
@@ -99,8 +99,8 @@ function formatTooltipDate(timestamp: number) {
 }
 
 function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData) {
-  const { highlight, setHighlight, setReplyTo, registerMessageRef, chatWith, messageId, content, timestamp, replyingTo, first, toggleScroll, ...deliveryInfo } = message;
-  const { sentByMe } = deliveryInfo;
+  const { highlight, setHighlight, setReplyTo, registerMessageRef, chatWith, messageId, text, timestamp, replyingTo, first, toggleScroll, status } = message;
+  const { sentByMe } = status;
   const [darken, setDarken] = useState(false);
   const scrollRef = useRef<HTMLDivElementScroll>(null);
   const bodyRef = useRef<HTMLSpanElement>(null);
@@ -110,7 +110,7 @@ function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData)
     const crossAxis = (-floatingRef.current?.getBoundingClientRect()?.width || 0) + rects.reference.width;
     return { crossAxis }
   }
-  const replyingData = useMemo(() => ({ id: messageId, replyToOwn: sentByMe, displayText: content }), []);
+  const replyingData = useMemo(() => ({ id: messageId, replyToOwn: sentByMe, displayText: text }), []);
   const onClick: React.MouseEventHandler<HTMLDivElement> = (event) => {
     if (event.detail >= 2) {
       setReplyTo(replyingData);
@@ -164,7 +164,7 @@ function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData)
               <DisableSelectTypography ref={bodyRef} component="span" sx={{ width: "fit-content", maxWidth: "max-content" }}>
                 <StyledReactMarkdownBody 
                   className="react-markdown" 
-                  children={content} 
+                  children={text} 
                   remarkPlugins={[remarkGfm, remarkMath, twemoji]}
                   rehypePlugins={[rehypeKatex, rehypeRaw]}/>
               </DisableSelectTypography>
@@ -195,7 +195,7 @@ function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData)
                     </div>
                   </TooltipContent>
                 </Tooltip>
-                <StatusButton {...deliveryInfo}/>
+                <StatusButton {...status}/>
               </Stack>
             </Stack>
           </SvgMessageCard>
@@ -208,8 +208,7 @@ function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData)
 const MessageCardMemo = memo(MessageCardWithHighlight, 
   (prev, next) => 
     prev.chatWith === next.chatWith
-    && prev.messageId === next.messageId 
-    && (!prev.sentByMe || !next.sentByMe || !(prev.delivery || next.delivery) || isEqual(prev.delivery, next.delivery))
+    && prev.messageId === next.messageId
     && (next.highlight === next.messageId) === (prev.highlight === prev.messageId));
 
 export default function MessageCard(message: ViewMessage) {

@@ -96,22 +96,40 @@ export type Contact = Profile & {
 
 export type ReplyingToInfo = Readonly<{ id: string, replyToOwn: boolean, displayText: string }>;
 
-export type DeliveryInfo = Readonly<{
-    readonly delivered?: number | false;
-    readonly seen?: number | false;
-}>
-
-export type MessageDeliveryInfo = ({ readonly sentByMe: false } | {
-    readonly sentByMe: true;
-    delivery?: DeliveryInfo
-})
-
-export type DisplayMessage = Readonly<{
+type MessageData =Readonly<{
     messageId: string;
     replyingTo?: ReplyingToInfo;
     timestamp: number;
-    content: string;
-}> & MessageDeliveryInfo;
+    text: string;
+}>;
+
+type DeliveryInfo = Readonly<({
+    delivered: false;
+    seen: false;
+} | {
+    delivered: number;
+    seen: number | false;
+})>;
+
+export type MessageStatus = ({ readonly sentByMe: false } | {
+    readonly sentByMe: true;
+    delivery?: DeliveryInfo
+});
+
+export type DisplayMessageByMe = MessageData & {
+    status: {
+        readonly sentByMe: true;
+        delivery?: DeliveryInfo
+    };
+}
+
+export type DisplayMessageToMe = MessageData & {
+    status: {
+        readonly sentByMe: false;
+    };
+}
+
+export type DisplayMessage = DisplayMessageByMe | DisplayMessageToMe;
 
 export type MessageHeader = Readonly<{
     addressedTo: string;
@@ -128,6 +146,7 @@ export type MessageHeader = Readonly<{
 
 export type ChatRequestHeader = Readonly<{
     sessionId: string;
+    messageId: string;
     timestamp: number;
     addressedTo: string;
     myVerifyingIdentityKey: Buffer;
@@ -236,6 +255,7 @@ enum SocketClientSideEventsEnum {
     UpdateChat,
     SendChatRequest,
     SendMessage,
+    MessageProcessed,
     DeleteChatRequest,
     LogOut,
     RequestRoom,
@@ -279,9 +299,10 @@ type SocketClientRequestParametersMap = {
     GetMessageById: { sessionId: string, messageId: string },
     StoreMessage: StoredMessage,
     CreateChat: ChatData,
-    UpdateChat: ChatData,
+    UpdateChat: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>,
     SendChatRequest: { sessionId: string },
     SendMessage: MessageHeader,
+    MessageProcessed: { sessionId: string, messageId: string },
     DeleteChatRequest: { sessionId: string },
     LogOut: Username,
     RequestRoom: Username,
@@ -317,6 +338,7 @@ type SocketClientRequestReturnMap = {
     UpdateChat: never,
     SendChatRequest: never,
     SendMessage: never,
+    MessageProcessed: never,
     DeleteChatRequest: never,
     LogOut: never,
     RequestRoom: never,
