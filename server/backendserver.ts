@@ -256,7 +256,7 @@ class SocketHandler {
         const { username, verifierSalt, clientEphemeralPublicHex, clientIdentityVerifyingKey, verifierPointHex } = request;
         if ((await this.UsernameExists({ username })).exists) return failure(ErrorStrings.IncorrectData);
         const { confirmClient, sharedKeyBits, serverConfirmationCode, verifierEntangledHex } = await esrp.serverSetupAuthChallenge(verifierPointHex, clientEphemeralPublicHex, "now");
-        const challengeReference = getRandomString().slice(0, 10);
+        const challengeReference = getRandomString(15, "base64");
         this.#registerChallengeTemp = { challengeReference, username, clientIdentityVerifyingKey, confirmClient, verifierSalt, verifierPointHex, sharedKeyBits };
         this.#logInChallengeTemp = null;
         setTimeout(() => { this.#registerChallengeTemp = null; }, 5000);
@@ -303,7 +303,7 @@ class SocketHandler {
         if (!verifierSalt) return failure(ErrorStrings.IncorrectData);
         const clientVerifyingKey = await crypto.importKey(clientIdentityVerifyingKey, "ECDSA", "public", false);
         const { confirmClient, sharedKeyBits, serverConfirmationCode, verifierEntangledHex } = await esrp.serverSetupAuthChallenge(verifierPointHex, clientEphemeralPublicHex, "now");
-        const challengeReference = getRandomString().slice(0, 10);
+        const challengeReference = getRandomString(15, "base64");
         const userData = { clientIdentitySigningKey, encryptionBase, profileData, serverIdentityVerifyingKey, x3dhInfo };
         this.#logInChallengeTemp = { challengeReference, confirmClient, sharedKeyBits, username, clientVerifyingKey, userData };
         this.#registerChallengeTemp = null;
@@ -827,10 +827,10 @@ const httpsOptions: ServerOptions = {
 }
 const cookie: SessionCookieOptions = { httpOnly: true, sameSite: "strict", secure: false }
 const sessionOptions: SessionOptions = {
-    secret: getRandomString(),
+    secret: getRandomString(20, "base64"),
     cookie,
     genid(req) {
-        return `${getRandomString()}-${req.socket.remoteAddress}`;
+        return `${getRandomString(10, "base64")}-${req.socket.remoteAddress}`;
     },
     name: "chatapp.session.id",
     resave: true,
@@ -867,7 +867,7 @@ app.post("/savePassword", async (req, res) => {
     const { socketId, sessionReference, coreKeyBitsBase64, authKeyBitsBase64, serverKeyBitsBase64, clientEphemeralPublicHex } = req.body || {};
     const { socket: { remoteAddress } } = req;
     const currentIp = parseIpRepresentation(remoteAddress);
-    const saveToken = getRandomString();
+    const saveToken = getRandomString(15, "base64");
     if (!currentIp) {
         res.status(400).end();
         return;

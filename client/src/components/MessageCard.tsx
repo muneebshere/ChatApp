@@ -140,7 +140,7 @@ function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData)
   useLayoutEffect(() => {
     const bodyElement = bodyRef.current.querySelector("div.react-markdown > p:last-child");
     const { height, width } = statusRef.current.getBoundingClientRect();
-    bodyElement.insertAdjacentHTML("beforeend", `<div style="float: right; shape-outside: margin-box; width: ${width}px; height: ${height}px; min-width: ${width}px; min-height: ${height}px; margin: 12px 0px 0px 12px;">&nbsp;</div>`);
+    bodyElement?.insertAdjacentHTML("beforeend", `<div style="float: right; shape-outside: margin-box; width: ${width}px; height: ${height}px; min-width: ${width}px; min-height: ${height}px; margin: 12px 0px 0px 12px;">&nbsp;</div>`);
   });
 
   const repliedMessage = useMemo(() => {

@@ -13,79 +13,6 @@ import { ChatRequestView } from "./ChatRequestView";
 import { flushSync } from "react-dom";
 import { AwaitedRequestView } from "./AwaitedRequestView";
 
-const minKeyboard = 300;
-export const barHeight = () => document.querySelector("#viewportHeight").clientHeight - window.innerHeight;
-export const keyboardHeight = () => document.querySelector("#viewportHeight").clientHeight - window.visualViewport.height;
-export const isKeyboardOpen = () => keyboardHeight() > minKeyboard;
-export const orientation = () => window.screen.orientation.type;
-
-function useOrientationState(): OrientationState {
-  const orientationRef = useRef(orientation());
-  const orientationState = useMemo<OrientationState>(() => ({
-    lastOrientation: () => orientationRef.current,
-    setNewOrientation: () => {
-      orientationRef.current = orientation();
-    }
-  }), []);
-
-  return orientationState;
-}
-
-function useUnderbar(lastOrientation: () => OrientationType) {
-  const lastKeyboardOpenRef = useRef(false);
-  const [underbar, setUnderbar] = useState(barHeight());
-  const [first, setFirst] = useState(true);
-  const { ref: titleRef } = useInView({ 
-    threshold: 0.9, 
-    initialInView: true, 
-    onChange: (inView, { isIntersecting, intersectionRatio }) => {
-      const currentBar = barHeight();
-      if (currentBar > 1e-2 && !lastKeyboardOpenRef.current && !first) {
-        setUnderbar(inView && isIntersecting && intersectionRatio >= 0.5 ? currentBar : 0);
-      }
-      else { 
-        setFirst(false);
-      }
-    } 
-  });
-
-  useEffect(() => { 
-    titleRef(document.querySelector("#titleBar")); 
-    return () => titleRef(null);
-  }, []);
-  
-  function onResize() {
-    if (orientation() !== lastOrientation()) {
-      return;
-    }
-    flushSync(() => {
-      const lastKeyboardOpen = lastKeyboardOpenRef.current;
-      const currentBar = barHeight();
-      const keyboardOpen = isKeyboardOpen();
-      if (keyboardOpen && !lastKeyboardOpen) {
-        setUnderbar(0);
-      }
-      else if (!keyboardOpen && currentBar > 1e-2) {
-        setUnderbar(currentBar);
-      }
-      else {
-        setUnderbar(0);
-      }
-      lastKeyboardOpenRef.current = keyboardOpen;
-    })
-  }
-
-  useLayoutEffect(() => {
-    window.addEventListener("resize", onResize);
-
-    return () => {
-      window.removeEventListener("resize", onResize);
-    }
-  }, []);
-
-  return underbar;
-}
-
 type MainProps = { 
   connected: boolean, 
   retrying: boolean, 
@@ -98,8 +25,6 @@ export default function Main({ connected, retrying, displayName, client }: MainP
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const typedMessages = useRef(new Map<string, string>());
   const lastScrollPositions = useRef(new Map<string, ScrollState>());
-  const orientationState = useOrientationState();
-  const underbar = useUnderbar(orientationState.lastOrientation);
   const [, triggerRerender] = useState(2);
   
   useEffect(() => {
@@ -126,7 +51,6 @@ export default function Main({ connected, retrying, displayName, client }: MainP
     if (chat?.type === "Chat") {
       return (<ChatViewMemo 
         key={currentChatWith ?? ""}
-        orientationState={orientationState}
         chat={chat}
         message={typedMessages.current.get(currentChatWith) || ""}
         setMessage={(message: string) => {
@@ -172,7 +96,6 @@ export default function Main({ connected, retrying, displayName, client }: MainP
         {getView(currentChatWith)}
       </Grid>}
     </Grid>
-    <div style={{ height: underbar, width: "100%", backgroundColor: "white", marginBottom: 8 }}/>
   </Grid>)
 }
 

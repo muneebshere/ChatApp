@@ -559,7 +559,7 @@ export class X3DHUser {
         }
         for (let k = 0; k < (this.#maxOneTimeKeys - currentKeys); k++) {
             const createdAt = Date.now();
-            const identifier = `${getRandomString()}-${createdAt}`;
+            const identifier = `${getRandomString(10, "base64")}-${createdAt}`;
             const key = await crypto.generateSignedKeyPair(this.#identitySigningKey);
             this.#currentOneTimeKeys.set(identifier, key);
         }

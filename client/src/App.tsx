@@ -24,6 +24,10 @@ const { hostname, protocol } = window.location;
 const client = new Client(`${protocol}//${hostname}:${PORT}`);
 client.establishSession();
 
+if ("virtualKeyboard" in navigator) {
+  (navigator.virtualKeyboard as any).overlaysContent = true;
+}
+
 createRoot(document.getElementById("root")).render(<Root/>);
 
 function Root() {
@@ -90,10 +94,13 @@ function App() {
 
   useEffect(() => {
     const terminate = () => client.terminateCurrentSession();
+    const updateHeight = () => setVisualHeight(window.visualViewport.height - (navigator as any).virtualKeyboard.boundingRect.height);
     client.subscribeStatusChange(notifyStatus);
     window.addEventListener("beforeunload", terminate, { capture: true, once: true });
+    window.visualViewport.addEventListener("resize", updateHeight);
     return () => {
       window.removeEventListener("beforeunload", terminate);
+      window.visualViewport.removeEventListener("resize", updateHeight);
     }
   }, []);
 
@@ -122,7 +129,7 @@ function App() {
   }
 
   return (
-    <Container maxWidth={false} disableGutters={true} sx={{ height: "100vh", width: belowXL ? "90vw" : "100vw", overflow: "clip", display: "flex", flexDirection: "column" }}>
+    <Container maxWidth={false} disableGutters={true} sx={{ position: "relative", top: 0, height: `${visualHeight}px`, width: belowXL ? "90vw" : "100vw", overflow: "clip", display: "flex", flexDirection: "column"}}>
       {(!connected && !signedIn) &&
         <React.Fragment>
           <Spacer units={2} />

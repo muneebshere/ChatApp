@@ -239,7 +239,7 @@ export class Client {
             this.connecting = true;
             const { privateKey, publicKey } = await crypto.generateKeyPair("ECDH");
             const { privateKey: signingKey, publicKey: verifyingKey } = await crypto.generateKeyPair("ECDSA");
-            const sessionReference = this.#sessionReference ?? getRandomString();
+            const sessionReference = this.#sessionReference ?? getRandomString(15, "base64");
             const publicDHKey = (await crypto.exportKey(publicKey)).toString("base64");
             const publicVerifyingKey = (await crypto.exportKey(verifyingKey)).toString("base64");
             const { sessionId, serverPublicKey, verifyingKey: serverVerifying } = (await this.axInstance.post("/registerKeys", { sessionReference, publicDHKey, publicVerifyingKey }).catch(() => null))?.data || {};
@@ -1033,7 +1033,7 @@ export class Chat {
             return false;
         }
         const { content, timestamp, replyId } = messageContent;
-        const messageId = getRandomString().slice(0, 10);
+        const messageId = getRandomString(15, "hex");
         const sendingMessage = { messageId, content, timestamp, replyingTo: replyId };
         const sentByMe = true;
         const replyingTo = await this.populateReplyingTo(replyId);

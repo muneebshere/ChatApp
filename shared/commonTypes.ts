@@ -16,12 +16,16 @@ export function randomFunctions() {
     if (crypto === null) {
         throw "No crypto in this environment";
     }
-    const getRandomVector = (bytes: number): Buffer => {
+    function getRandomVector(bytes: number): Buffer {
         let rv = new Uint8Array(bytes);
         crypto.getRandomValues(rv);
         return Buffer.from(rv);
       }
-    const getRandomString = () => getRandomVector(20).toString("base64").slice(0, 20);
+    function getRandomString(chars: number, base: "base64" | "hex") {
+        const bitsPerChar = base === "hex" ? 4 : 6;
+        const bytes = Math.ceil((chars * bitsPerChar) / 8);
+        return getRandomVector(bytes).toString(base).slice(0, chars);
+    }
     return { getRandomVector, getRandomString };
 }
 
