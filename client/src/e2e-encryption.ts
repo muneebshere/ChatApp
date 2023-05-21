@@ -1,8 +1,8 @@
 import { Buffer } from "./node_modules/buffer";
 import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
-import { ExposedSignedPublicKey, SignedKeyPair, ExportedSignedKeyPair, ExportedSigningKeyPair, KeyBundle, MessageHeader, ChatRequestHeader, randomFunctions, UserEncryptedData, Profile } from "../../shared/commonTypes";
-import { SessionCrypto } from "../../shared/sessionCrypto";
+import { ExposedSignedPublicKey, SignedKeyPair, ExportedSignedKeyPair, ExportedSigningKeyPair, KeyBundle, MessageHeader, ChatRequestHeader, randomFunctions, UserEncryptedData, Profile, getPromise } from "../../shared/commonTypes";
+import { Queue } from "async-await-queue";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 
@@ -470,7 +470,7 @@ export class X3DHUser {
     }
 
     async acceptChatRequest(initialMessage: ChatRequestHeader, timestamp: number, profileDetails: Omit<Profile, "username">, sendResponse: (responseHeader: MessageHeader) => Promise<boolean>)
-        : Promise<UserEncryptedData | "Incorrectly Addressed" | "PreKey Version Mismatch" | "OneTimeKey Not Found" | "Invalid Identity Signature" | "Invalid Ephemeral Signature" | "Failed To Decrypt Message" | "Problem With Decrypted Message" | "Unknown Error" | "Couldn't Send Message" | "Concurrent Process Attempted"> {
+        : Promise<UserEncryptedData | "Incorrectly Addressed" | "PreKey Version Mismatch" | "OneTimeKey Not Found" | "Invalid Identity Signature" | "Invalid Ephemeral Signature" | "Failed To Decrypt Message" | "Problem With Decrypted Message" | "Unknown Error" | "Couldn't Send Message"> {
             const chatRequestResult = await this.processChatRequest(initialMessage);
             if (typeof chatRequestResult === "string") return chatRequestResult;
             const { profile, importedDHInitializer, importedVerifyingIdentityKey, myOneTimeKeyIdentifier, sharedRoot } =  chatRequestResult;
@@ -491,7 +491,7 @@ export class X3DHUser {
             }
     }
 
-    async receiveChatRequestResponse(responseHeader: MessageHeader): Promise<[{ profile: Profile, respondedAt: number }, UserEncryptedData] | "Session Id Mismatch" | "Unverified Next Ratchet Key" | "Receving Ratchet Number Mismatch" | "Failed To Decrypt" | "Message Invalid" | "Failed To Commit Message" | "No Such Pending Request" | "Unverified Key" | "Concurrent Process Attempted"> {
+    async receiveChatRequestResponse(responseHeader: MessageHeader): Promise<[{ profile: Profile, respondedAt: number }, UserEncryptedData] | "Session Id Mismatch" | "Unverified Next Ratchet Key" | "Receving Ratchet Number Mismatch" | "Failed To Decrypt" | "Message Invalid" | "Failed To Commit Message" | "No Such Pending Request" | "Unverified Key"> {
         const { sessionId, nextDHRatchetKey } = responseHeader;
         const waitingDetails = this.#waitingChatRequests.get(sessionId);
         if (!waitingDetails) {
@@ -601,7 +601,7 @@ export class ChattingSession {
     #receivingChainNumber = 0;
     #previousSendingChainNumber = 0;
     #skippedKeys = new Map<[number, number], Buffer>();
-    private processing = false;
+    private queue = new Queue(1, 10);
     private lastActivityTimestamp: number;
 
     public get lastActivity() {
@@ -772,11 +772,11 @@ export class ChattingSession {
         await this.advanceSecondHalfDHRatchet(nextDHPublicKey);
     }
 
-    private async ratchetToCurrentReceived<T>(nextDHPublicKey: CryptoKey, 
+    private async ratchetToCurrentReceived<Error>(nextDHPublicKey: CryptoKey, 
         sendingRatchetNumber: number, 
         sendingChainNumber: number, 
         previousChainNumber: number,
-        operation: (output: Buffer) => Promise<T | undefined>): Promise<T | "Concurrent Process Attempted" | undefined> {
+        operation: (output: Buffer) => Promise<Error | undefined>): Promise<Error | undefined> {
             return await this.advanceReversibly(async () => {
                 let output: Buffer = null;
                 const skippedKeys = new Map<[number, number], Buffer>();
@@ -845,13 +845,9 @@ export class ChattingSession {
         return { nextChainKey, messageKeyBits }
     }
 
-    private async advanceReversibly<T>(advance: () => Promise<T | undefined>): Promise<T | "Concurrent Process Attempted" | undefined> {
-        if (this.processing) {
-            console.log("Concurrent processing not allowed");
-            return "Concurrent Process Attempted"
-        };
-        this.processing = true;
-        console.log("Beginning process.");
+    private async advanceReversibly<Error>(advance: () => Promise<Error | undefined>): Promise<Error | undefined> {
+        const token = Symbol();
+        await this.queue.wait(token);
         const currentRootKey = this.#currentRootKey;
         const currentDHRatchetKey = this.#currentDHRatchetKey;
         const currentDHPublishKey = this.#currentDHPublishKey;
@@ -875,7 +871,7 @@ export class ChattingSession {
             this.#receivingChainNumber = receivingChainNumber;
             this.#previousSendingChainNumber = previousSendingChainNumber;
         }
-        this.processing = false;
+        this.queue.end(token);
         return error;
     }
 
@@ -885,7 +881,7 @@ export class ChattingSession {
             && body.sender === this.#otherUser
     }
 
-    async sendMessage(sendingMessage: SendingMessage, send: (messageHeader: MessageHeader) => Promise<boolean>): Promise<UserEncryptedData | "Couldn't Send Message" | "Concurrent Process Attempted"> {
+    async sendMessage(sendingMessage: SendingMessage, send: (messageHeader: MessageHeader) => Promise<boolean>): Promise<UserEncryptedData | "Couldn't Send Message"> {
         const error = await this.advanceReversibly(async () => {
             const messageKeyBits = await this.advanceSymmetricRatchet("Sending");
             const sender = this.#me;
@@ -924,7 +920,7 @@ export class ChattingSession {
         return error ? error : this.exportSession();
     }
 
-    async receiveMessage(messageHeader: MessageHeader, receive: (message: ReceivingMessage) => Promise<boolean>): Promise<UserEncryptedData | "Session Id Mismatch" | "Unverified Next Ratchet Key" | "Receving Ratchet Number Mismatch" | "Failed To Decrypt" | "Message Invalid" | "Failed To Commit Message" | "Concurrent Process Attempted"> {
+    async receiveMessage(messageHeader: MessageHeader, receive: (message: ReceivingMessage) => Promise<boolean>): Promise<UserEncryptedData | "Session Id Mismatch" | "Unverified Next Ratchet Key" | "Receving Ratchet Number Mismatch" | "Failed To Decrypt" | "Message Invalid" | "Failed To Commit Message"> {
         const {
             addressedTo,
             sessionId,

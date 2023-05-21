@@ -1,7 +1,7 @@
 import _ from "lodash";
 import isEqual from "react-fast-compare";
 import React, { createContext, memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useUpdateEffect } from "usehooks-ts";
+import { useEffectOnce, useUpdateEffect } from "usehooks-ts";
 import { Grid, Stack } from "@mui/joy";
 import { DoneSharp, DoneAllSharp, HourglassTop } from "@mui/icons-material";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip";
@@ -17,10 +17,11 @@ import SvgMessageCard from "./SvgMessageCard";
 import "katex/dist/katex.min.css";
 import { ReplyingToMemo } from "./ReplyingTo";
 import { StyledReactMarkdownVariable } from "./CommonElementStyles";
-import { MessageStatus, DisplayMessage, ReplyingToInfo } from "../../../shared/commonTypes";
+import { DisplayMessage, ReplyingToInfo, DeliveryInfo } from "../../../shared/commonTypes";
 import { ElementRects } from "@floating-ui/react";
 import useSwipeDrag from "./Hooks/useSwipeDrag";
 import { SxProps } from "@mui/material";
+import { ChatMessage } from "../client";
 
 interface HTMLDivElementScroll extends HTMLDivElement {
   scrollIntoViewIfNeeded(centerIfNeeded?: boolean): void;
@@ -35,18 +36,12 @@ export type MessageCardContextData = Readonly<{
   toggleScroll?: (scrollOn: boolean) => void;
 }>;
 
-export type ViewMessage = Readonly<DisplayMessage & { 
-  first: boolean;
-}>;
-
 export const MessageCardContext = createContext<MessageCardContextData>(null);
 
 const StyledReactMarkdownBody = StyledReactMarkdownVariable(22);
 
-function StatusButton(status: MessageStatus) {
-  if (!status.sentByMe) return null;
-  const { delivery } = status;
-  if (delivery === null) {
+function StatusButton(delivery: DeliveryInfo) {
+  if (!delivery) {
     return <HourglassTop sx={{ color: "gold", rotate: "-90deg", fontSize: "1rem" }}/>;
   }
   else {
@@ -98,14 +93,17 @@ function formatTooltipDate(timestamp: number) {
   return `${date.toFormat("d LLLL ")}'${date.toFormat("yy")}, ${date.toFormat("h:mm a")}`;
 }
 
-function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData) {
-  const { highlight, setHighlight, setReplyTo, registerMessageRef, chatWith, messageId, text, timestamp, replyingTo, first, toggleScroll, status } = message;
-  const { sentByMe } = status;
+function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & MessageCardContextData) {
+  const { highlight, setHighlight, setReplyTo, registerMessageRef, chatWith, toggleScroll, chatMessage } = message;
+  const { messageId, text, timestamp, replyingTo, sentByMe } = chatMessage.displayMessage;
   const [darken, setDarken] = useState(false);
+  const [isFirstOfType, setIsFirstOfType] = useState(chatMessage.isFirstOfType);
+  const [delivery, setDelivery] = useState(chatMessage.displayMessage.delivery);
   const scrollRef = useRef<HTMLDivElementScroll>(null);
   const bodyRef = useRef<HTMLSpanElement>(null);
   const statusRef = useRef<HTMLDivElement>(null);
   const floatingRef = useRef<HTMLDivElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
   const offsetFunc = (rects: ElementRects) => {
     const crossAxis = (-floatingRef.current?.getBoundingClientRect()?.width || 0) + rects.reference.width;
     return { crossAxis }
@@ -123,6 +121,18 @@ function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData)
   };
   const action = useCallback(() => setReplyTo(replyingData), []);
   const handlers = useSwipeDrag(scrollRef, 100, 70, action, toggleScroll);
+
+  useEffectOnce(() => {
+    chatMessage.subscribe((event) => {
+      if (event === "first") {
+        setIsFirstOfType(chatMessage.isFirstOfType);
+      }
+      else {
+        setDelivery(chatMessage.displayMessage.delivery);
+      }
+    });
+    return () => chatMessage.unsubscribe();
+  })
 
   useUpdateEffect(() => {
     if (highlight === messageId) { 
@@ -143,6 +153,21 @@ function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData)
     bodyElement?.insertAdjacentHTML("beforeend", `<div style="float: right; shape-outside: margin-box; width: ${width}px; height: ${height}px; min-width: ${width}px; min-height: ${height}px; margin: 12px 0px 0px 12px;">&nbsp;</div>`);
   });
 
+  useLayoutEffect(() => {
+    const seenListener = (ev: any) => {
+      chatMessage.signalEvent("seen", ev.detail.timestamp);
+      ev.target.removeEventListener("seen" as any, seenListener);
+    };
+    const messageRef = sheetRef.current;
+    if (messageRef) {
+      if (!sentByMe) {
+        messageRef.addEventListener("seen" as any, seenListener);
+      }
+      registerMessageRef(messageRef);
+    }
+    return () => !sentByMe && sheetRef.current?.removeEventListener("seen" as any, seenListener);
+  }, []);
+
   const repliedMessage = useMemo(() => {
     const props = replyingTo ? { chatWith, sentByMe, setHighlight, ...replyingTo } : null;
     return replyingTo
@@ -156,8 +181,8 @@ function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData)
   return (
     <Grid container sx={{ display: "flex", flexGrow: 1, justifyContent: side, height: "fit-content", maxWidth: "100%" }} onClick={onClick} ref={scrollRef} {...handlers}>
       <Grid xs={10} sm={8} lg={7} sx={{ display: "flex", flexGrow: 0, justifyContent: side, height: "fit-content" }}>
-        <StyledSheet sx={{ width: "100%", display: "flex", flexGrow: 1, justifyContent: side, alignContent: "flex-start", padding: 0, margin: 0 }} ref={registerMessageRef} id={`m${messageId}`}>
-          <SvgMessageCard background={messageColor} first={first} sentByMe={sentByMe} shadowColor="#adb5bd" darken={darken} darkenFinished={() => setDarken(false) }>
+        <StyledSheet sx={{ width: "100%", display: "flex", flexGrow: 1, justifyContent: side, alignContent: "flex-start", padding: 0, margin: 0 }} ref={sheetRef} id={`m${messageId}` } data-seen={!sentByMe && delivery?.seen}>
+          <SvgMessageCard background={messageColor} first={isFirstOfType} sentByMe={sentByMe} shadowColor="#adb5bd" darken={darken} darkenFinished={() => setDarken(false) }>
             <Stack direction="column"
               sx={{ maxWidth: "max-content", width: "fit-content", padding: 1.5, paddingBottom: 0.5, alignContent: "flex-start", textAlign: "start" }}>
                 {repliedMessage && repliedMessage}
@@ -195,7 +220,9 @@ function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData)
                     </div>
                   </TooltipContent>
                 </Tooltip>
-                <StatusButton {...status}/>
+                {sentByMe &&
+                  <StatusButton {...delivery}/>
+                }
               </Stack>
             </Stack>
           </SvgMessageCard>
@@ -208,10 +235,10 @@ function MessageCardWithHighlight(message: ViewMessage & MessageCardContextData)
 const MessageCardMemo = memo(MessageCardWithHighlight, 
   (prev, next) => 
     prev.chatWith === next.chatWith
-    && prev.messageId === next.messageId
-    && (next.highlight === next.messageId) === (prev.highlight === prev.messageId));
+    && prev.chatMessage === next.chatMessage
+    && (next.highlight === next.chatMessage.messageId) === (prev.highlight === prev.chatMessage.messageId));
 
-export default function MessageCard(message: ViewMessage) {
+export default function MessageCard(message: { chatMessage: ChatMessage }) {
   const context = useContext(MessageCardContext);
   const params = { ...message, ...context };
   return (<MessageCardMemo { ...params }/>)

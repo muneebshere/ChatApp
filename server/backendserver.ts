@@ -2,6 +2,7 @@ import _ from "lodash";
 import { DateTime } from "luxon";
 import { config } from "./node_modules/dotenv";
 import { ServerOptions, createServer } from "node:https";
+import { stringify } from "safe-stable-stringify";
 import fs, { promises as fsPromises } from "node:fs";
 import session, { Session, CookieOptions as SessionCookieOptions, SessionOptions } from "express-session";
 import cookieParser from "cookie-parser";
@@ -182,7 +183,7 @@ class SocketHandler {
 
     private async request(event: string, data: any, timeout = 0): Promise<any> {
         return await new Promise(async (resolve: (result: any) => void) => {
-            this.#socket.emit(event, await this.#sessionCrypto.signEncryptToBase64(data, event),
+            this.#socket?.emit(event, await this.#sessionCrypto.signEncryptToBase64(data, event),
                 async (response: string) => resolve(response ? await this.#sessionCrypto.decryptVerifyFromBase64(response, event) : {}));
             if (timeout > 0) {
                 setTimeout(() => resolve({}), timeout);
@@ -219,7 +220,7 @@ class SocketHandler {
         this.#switchingSessionCrypto = true;
         return new Promise<boolean>((resolve) => {
             const stop = () => {
-                this.#socket.off("SwitchSessionCrypto", switchSessionCrypto);
+                this.#socket?.off("SwitchSessionCrypto", switchSessionCrypto);
                 this.#switchingSessionCrypto = false;
                 resolve(false);
                 this.TerminateCurrentSession();
@@ -767,13 +768,13 @@ function isDoc(docObj: any): boolean {
 
 function logError(err: any): void {
     const message = err.message;
-    const stack = err.stack;
-    if (message || stack) {
-        console.log(`${message}${stack}`);
+    if (message) {
+        console.log(`${message}`);
     }
     else {
-        console.log(`${err}`);
+        console.log(`${stringify(err)}`);
     }
+    console.trace();
 }
 
 function fromBase64(data: string) {

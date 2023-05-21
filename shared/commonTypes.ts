@@ -33,6 +33,14 @@ export function failure(reason: ErrorStrings, details: any = null): Failure {
     return details ? { reason, details } : { reason };
 }
 
+export function getPromise<T>(): [Promise<T>, (result: T) => void] {
+    let resolve: (result: T) => void;
+    const promise = new Promise<T>((res) => {
+        resolve = res;
+    });
+    return [promise, resolve];
+}
+
 export type ExposedSignedPublicKey = Readonly<{
     exportedPublicKey: Buffer;
     signature: Buffer; 
@@ -96,14 +104,7 @@ export type Contact = Profile & {
 
 export type ReplyingToInfo = Readonly<{ id: string, replyToOwn: boolean, displayText: string }>;
 
-type MessageData =Readonly<{
-    messageId: string;
-    replyingTo?: ReplyingToInfo;
-    timestamp: number;
-    text: string;
-}>;
-
-type DeliveryInfo = Readonly<({
+export type DeliveryInfo = Readonly<({
     delivered: false;
     seen: false;
 } | {
@@ -111,25 +112,14 @@ type DeliveryInfo = Readonly<({
     seen: number | false;
 })>;
 
-export type MessageStatus = ({ readonly sentByMe: false } | {
-    readonly sentByMe: true;
-    delivery?: DeliveryInfo
-});
-
-export type DisplayMessageByMe = MessageData & {
-    status: {
-        readonly sentByMe: true;
-        delivery?: DeliveryInfo
-    };
-}
-
-export type DisplayMessageToMe = MessageData & {
-    status: {
-        readonly sentByMe: false;
-    };
-}
-
-export type DisplayMessage = DisplayMessageByMe | DisplayMessageToMe;
+export type DisplayMessage =Readonly<{
+    messageId: string;
+    replyingTo?: ReplyingToInfo;
+    timestamp: number;
+    text: string;
+    sentByMe: boolean;
+    delivery?: DeliveryInfo;
+}>;
 
 export type MessageHeader = Readonly<{
     addressedTo: string;
@@ -166,7 +156,7 @@ export type StoredMessage = Readonly<{
 
 export type ChatData = Readonly<{
   sessionId: string,
-  lastActivity: number,
+  lastActive: number,
   chatDetails: UserEncryptedData,
   exportedChattingSession: UserEncryptedData
 }>;

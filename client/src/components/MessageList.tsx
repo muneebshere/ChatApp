@@ -1,17 +1,15 @@
 import _ from "lodash";
 import isEqual from "react-fast-compare";
-import React, { memo, useRef } from "react";
+import React, { memo, useRef, useState } from "react";
 import { Card, List, ListItem, ListSubheader } from "@mui/joy";
 import { DateTime } from "luxon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip";
-import MessageCard, { ViewMessage } from "./MessageCard";
+import MessageCard from "./MessageCard";
 import { DisplayMessage } from "../../../shared/commonTypes";
 import { ElementRects } from "@floating-ui/react";
 import { DisableSelectTypography } from "./CommonElementStyles";
-
-type MessageListProps = {
-  messages: DisplayMessage[];
-}
+import { ChatMessage, ChatMessageList } from "../client";
+import { useEffectOnce } from "usehooks-ts";
 
 function formatDate(date: string): string {
   const dt = DateTime.fromISO(date);
@@ -19,18 +17,6 @@ function formatDate(date: string): string {
   if (diff < 4) return dt.toRelativeCalendar();
   if (diff < 7) return dt.weekdayLong;
   return dt.toFormat("dd/LL/y");
-}
-
-function labelFirsts(messages: DisplayMessage[]): ViewMessage[] {
-  const result: ViewMessage[] = [];
-  let lastByMe : boolean = null;
-  for (const message of messages) { 
-    const { status: { sentByMe } } = message;
-    const first = lastByMe !== sentByMe;
-    lastByMe = sentByMe;
-    result.push({ ...message, first });
-  }
-  return result;
 }
 
 export function DayCard({ date }: { date: string }) {
@@ -67,19 +53,25 @@ export function DayCard({ date }: { date: string }) {
     </Tooltip>)
 }
 
-const MessageSubList = function({ date, messages }: { date: string, messages: DisplayMessage[] }) {
-
-  const convertedMessages = labelFirsts(messages);
+const MessageSubList = function({ chatMessageList }: { chatMessageList: ChatMessageList }) {
+  const [chatMessages, setChatMessages] = useState(chatMessageList.messageList);
+  
+  useEffectOnce(() => {
+    chatMessageList.subscribe(() => {
+      setChatMessages(chatMessageList.messageList);
+    });
+    return () => chatMessageList.unsubscribe();
+  })
 
   return (
-    <ListItem nested key={date} sx={{ display: "grid" }}>
+    <ListItem nested key={chatMessageList.date} sx={{ display: "grid" }}>
       <ListSubheader sticky sx={{ display: "flex", justifyContent: "center", backgroundColor: "transparent", width: "fit-content", justifySelf: "center" }}>
-        <DayCard date={date}/>
+        <DayCard date={chatMessageList.date}/>
       </ListSubheader>
       <List component="ol" sx={{ "--List-gap": 5 }}>
-        {convertedMessages.map((message) => (
-          <ListItem key={message.timestamp} sx={{ display: "flex", flexDirection: "row" }}>
-            <MessageCard {...message}/>
+        {chatMessages.map((chatMessage) => (
+          <ListItem key={chatMessage.messageId} sx={{ display: "flex", flexDirection: "row" }}>
+            <MessageCard chatMessage={chatMessage}/>
           </ListItem>
         ))}
       </List>
@@ -88,23 +80,17 @@ const MessageSubList = function({ date, messages }: { date: string, messages: Di
 }
 
 const MessageSubListMemo = memo(MessageSubList, 
-  (prev, next) => prev.date === next.date && isEqual(prev.messages, next.messages));
+  (prev, next) => prev.chatMessageList === next.chatMessageList);
 
-const MessageList = function({ messages }: MessageListProps) {
-
-  const groupedMessages = _.chain(messages)
-    .orderBy((m) => m.timestamp, "asc")
-    .groupBy((m) => DateTime.fromMillis(m.timestamp).toISODate())
-    .map((messages, date) => ({ date, messages }))
-    .value();
+const MessageList = function({ chatMessageLists }: { chatMessageLists: ChatMessageList[] }) {
 
   return (
     <List>
-      {groupedMessages.map(({ date, messages }) => (
-        <MessageSubListMemo key={date} date={date} messages={messages}/>
+      {chatMessageLists.map((chatMessageList) => (
+        <MessageSubListMemo key={chatMessageList.date} chatMessageList={chatMessageList}/>
       ))}
     </List>)
 }
 
 export const MessageListMemo = memo(MessageList, 
-  (prev, next) => isEqual(prev.messages, next.messages));
+  (prev, next) => isEqual(prev.chatMessageLists, next.chatMessageLists));

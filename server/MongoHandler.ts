@@ -135,7 +135,7 @@ const chatSchema = new Schema({
         required: true,
         unique: true
     },
-    lastActivity: {
+    lastActive: {
         type: Schema.Types.Number,
         required: true
     },
@@ -384,7 +384,7 @@ export class MongoHandlerCentral {
     static async setSavedAuth(saveToken: string, ipRep: string, savedAuthDetails: UserEncryptedData) {
         try {
             if ((await this.SavedAuth.findOne({ ipRep }))) {
-                return false;
+                await this.SavedAuth.deleteOne({ ipRep });
             }
             const ipRead = parseIpReadable(ipRep);
             return !!(await this.SavedAuth.create(bufferReplaceForMongo({ saveToken, ipRep, ipRead, savedAuthDetails })));
@@ -486,7 +486,7 @@ export class MongoUserHandler {
         this.ChatRequest = mongoose.model(`${username}ChatRequests`, chatRequestHeaderSchema.index({ timestamp: -1 }).index({ sessionId: 1 }, { unique: true }), `${username}_chat_requests`);
         this.UnprocessedMessage = mongoose.model(`${username}UnprocessedMessages`, messageHeaderSchema.index({ sessionId: "hashed", timestamp: -1 }).index({ sessionId: 1, messageId: 1 }, { unique: true }), `${username}_unprocessed_messages`);
         this.Message = mongoose.model(`${username}Messages`, messageSchema.index({ sessionId: "hashed", timestamp: -1 }).index({ sessionId: 1, messageId: 1 }, { unique: true }), `${username}_messages`);
-        this.Chat = mongoose.model(`${username}Chats`, chatSchema.index({ lastActivity: -1 }), `${username}_chats`);
+        this.Chat = mongoose.model(`${username}Chats`, chatSchema.index({ lastActive: -1 }), `${username}_chats`);
         this.notifyMessage = notifyMessage;
     }
 

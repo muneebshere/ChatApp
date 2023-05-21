@@ -22,9 +22,8 @@ type ChatRequestViewProps = {
 }
 
 export function ChatRequestView({ chatRequest }: ChatRequestViewProps) {
-  const { contactDetails: { displayName }, lastActivity, message, otherUser } = chatRequest;
+  const { contactDetails: { displayName }, lastActive: lastActivity, chatMessage, otherUser } = chatRequest;
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
-  const displayMessage = { ...message, first: true };
 
   return (
     <StyledSheet sx={{ height: "100%", 
@@ -47,7 +46,7 @@ export function ChatRequestView({ chatRequest }: ChatRequestViewProps) {
         <DisableSelectTypography level="body2" sx={{ width: "100%", textAlign: "center", color: "lightgrey" }}>
           You have received a chat request from @{otherUser}. Accept chat request to reply.
         </DisableSelectTypography>
-        <MessageCard { ...displayMessage}/>
+        <MessageCard chatMessage={chatMessage}/>
       </Stack>
       <Stack direction="column" spacing={1.5} sx={{ flexGrow: 1, display: "flex", flexWrap: "wrap", justifyContent: "center", alignContent: "center" }}>
         <Stack direction="row" spacing={2}>

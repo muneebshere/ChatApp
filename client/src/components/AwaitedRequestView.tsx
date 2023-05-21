@@ -22,9 +22,8 @@ type AwaitedRequestViewProps = {
 }
 
 export function AwaitedRequestView({ awaitedRequest }: AwaitedRequestViewProps) {
-  const { lastActivity, message, otherUser } = awaitedRequest;
+  const { lastActive: lastActivity, chatMessage, otherUser } = awaitedRequest;
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
-  const displayMessage = { ...message, first: true };
 
   return (
     <StyledSheet sx={{ height: "100%", 
@@ -47,7 +46,7 @@ export function AwaitedRequestView({ awaitedRequest }: AwaitedRequestViewProps) 
         <DisableSelectTypography level="body2" sx={{ width: "100%", textAlign: "center", color: "lightgrey" }}>
           You sent a chat request to @{otherUser}. Wait for them to respond.
         </DisableSelectTypography>
-        <MessageCard { ...displayMessage}/>
+        <MessageCard chatMessage={chatMessage}/>
       </Stack>
     </StyledSheet>);
 }

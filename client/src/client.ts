@@ -9,7 +9,8 @@ import { ChattingSession, SendingMessage, ViewChatRequest, X3DHUser } from "./e2
 import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
 import * as esrp from "../../shared/ellipticSRP";
-import { ErrorStrings, Failure, Username, UserEncryptedData, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, randomFunctions, failure, PasswordEncryptedData, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, RegisterNewUserChallenge, NewUserData, Profile, RegisterNewUserChallengeResponse, LogInRequest, LogInChallenge, LogInChallengeResponse, UserData, DisplayMessageByMe, MessageStatus  } from "../../shared/commonTypes";
+import { ErrorStrings, Failure, Username, UserEncryptedData, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, randomFunctions, failure, PasswordEncryptedData, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, RegisterNewUserChallenge, NewUserData, Profile, RegisterNewUserChallengeResponse, LogInRequest, LogInChallenge, LogInChallengeResponse, UserData, DeliveryInfo  } from "../../shared/commonTypes";
+import { DateTime } from "luxon";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;
@@ -31,34 +32,6 @@ export enum ClientEvent {
     SignedIn,
     SigningOut,
     SignedOut
-}
-
-export type AwaitedRequest = Readonly<{
-    sessionId: string,
-    otherUser: string,
-    lastActivity: number,
-    message: DisplayMessage,
-    type: "AwaitedRequest"
-}>;
-
-function AwaitedRequest(otherUser: string, sessionId: string, messageId: string, timestamp: number, text: string): AwaitedRequest {
-    return { 
-        sessionId,
-        otherUser, 
-        lastActivity: timestamp, 
-        message: { 
-            messageId, 
-            text, 
-            timestamp, 
-            status: { 
-                sentByMe: true,
-                delivery: {
-                    delivered: false, 
-                    seen: false 
-                } 
-            } 
-        }, 
-        type: "AwaitedRequest" };
 }
 
 type ClientChatInterface = Readonly<{
@@ -121,7 +94,6 @@ function SocketHandler(socket: () => Socket, sessionCrypto: () => SessionCrypto,
     }
     return requestMap as RequestMap;
 }
-
 export class Client {
     private readonly responseMap: Map<SocketServerSideEventsKey, any> = new Map([
         [SocketServerSideEvents.RoomRequested, this.roomRequested] as [SocketServerSideEventsKey, any],
@@ -183,9 +155,6 @@ export class Client {
         this.chatSessionIdsList.set(chat.sessionId, chat);
         this.chatUsernamesList.set(chat.otherUser, chat);
         this.chatList.push(chat.otherUser);
-        if (this.notifyChange && chat.type === "Chat") {
-            chat.subscribe("client", this.notifyChange);
-        }
         this.notifyChange?.();
     }
 
@@ -195,7 +164,7 @@ export class Client {
         this.chatUsernamesList.delete(chat.otherUser);
         _.remove(this.chatList, ([user, _]) => user === chat.otherUser);
         if (chat.type === "Chat") {
-            chat.dispose();
+            chat.disconnectRoom();
         }
         this.notifyChange?.();
     }
@@ -204,21 +173,21 @@ export class Client {
         return this.chatUsernamesList.get(otherUser);
     }
 
-    public getChatDetailsByUser(otherUser: string): { displayName?: string, contactName?: string, profilePicture?: string, lastActivity: number } {
+    public getChatDetailsByUser(otherUser: string): { displayName?: string, contactName?: string, profilePicture?: string, lastActive: number } {
         const chat = this.chatUsernamesList.get(otherUser);
         if (!chat) return null;
-        const { lastActivity } = chat;
+        const { lastActive } = chat;
         if ("contactDetails" in chat) {
             const { contactDetails: { displayName, profilePicture, contactName } } = chat;
-            return { displayName, contactName, profilePicture, lastActivity };
+            return { displayName, contactName, profilePicture, lastActive };
         }
         else {
-            return { displayName: otherUser, lastActivity };
+            return { displayName: otherUser, lastActive };
         }
     }
 
     public get chatsList() {
-        return _.orderBy(this.chatList, [(chat) => this.getChatByUser(chat).lastActivity], ["desc"]);
+        return _.orderBy(this.chatList, [(chat) => this.getChatByUser(chat).lastActive], ["desc"]);
     }
 
     public get username(): string {
@@ -463,7 +432,7 @@ export class Client {
             }
             this.#sessionCrypto = new SessionCrypto(this.#sessionReference, sharedKeyBits, identitySigningKeypair.privateKey, await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false));
             const switched = await new Promise<boolean>((resolve) => {
-                this.#socket.emit("SwitchSessionCrypto", this.#sessionReference, (response: boolean) => resolve(response));
+                this.#socket?.emit("SwitchSessionCrypto", this.#sessionReference, (response: boolean) => resolve(response));
                 setTimeout(() => resolve(false), 2000);
             });
             if (!switched) {
@@ -537,7 +506,7 @@ export class Client {
             this.#encryptionBaseVector = encryptionBaseVector;
             this.#sessionCrypto = new SessionCrypto(this.#sessionReference, sharedKeyBits, clientIdentitySigningKey, serverVerifyingKey);
             const switched = await new Promise<boolean>((resolve) => {
-                this.#socket.emit("SwitchSessionCrypto", this.#sessionReference, (response: boolean) => resolve(response));
+                this.#socket?.emit("SwitchSessionCrypto", this.#sessionReference, (response: boolean) => resolve(response));
                 setTimeout(() => resolve(false), 2000);
             });
             if (!switched) {
@@ -612,7 +581,7 @@ export class Client {
             }
             this.#sessionCrypto = new SessionCrypto(this.#sessionReference, sharedKeyBits, clientSigningKey, serverVerifyingKey);
             const switched = await new Promise<boolean>((resolve) => {
-                this.#socket.emit("SwitchSessionCrypto", this.#sessionReference, (response: boolean) => resolve(response));
+                this.#socket?.emit("SwitchSessionCrypto", this.#sessionReference, (response: boolean) => resolve(response));
                 setTimeout(() => resolve(false), 2000);
             });
             if (switched) {
@@ -803,9 +772,9 @@ export class Client {
             return false;
         }
         const { profile, text, messageId, timestamp } = viewChatRequest;
-        const lastActivity = respondingAt;
+        const lastActive = respondingAt;
         const chatDetails = await crypto.deriveEncrypt(profile, this.#encryptionBaseVector, "ContactDetails");
-        const chatData = { chatDetails, exportedChattingSession, lastActivity, sessionId };
+        const chatData = { chatDetails, exportedChattingSession, lastActive, sessionId };
         await this.#socketHandler.CreateChat(chatData);
         await this.#socketHandler.DeleteChatRequest({ sessionId });
         const newChat = await Chat.instantiate(this.#username, this.#encryptionBaseVector, this.chatInterface(sessionId), chatData, { text, messageId, sentByMe: false, timestamp });
@@ -836,10 +805,10 @@ export class Client {
             logError(response);
             return false;
         }
-        const { message: { messageId, text, timestamp } } = awaitedRequest;
+        const { messageId, text, timestamp } = awaitedRequest.chatMessage.displayMessage;
         const [{ profile, respondedAt }, exportedChattingSession] = response;
         const chatDetails = await crypto.deriveEncrypt(profile, this.#encryptionBaseVector, "ContactDetails");
-        const chatData = { chatDetails, exportedChattingSession, lastActivity: respondedAt, sessionId };
+        const chatData = { chatDetails, exportedChattingSession, lastActive: respondedAt, sessionId };
         const { reason } = await this.#socketHandler.CreateChat(chatData);
         if (reason) {
             logError(reason);
@@ -934,21 +903,81 @@ export class Client {
     }
 }
 
+export type AwaitedRequest = Readonly<{
+    sessionId: string,
+    otherUser: string,
+    lastActive: number,
+    chatMessage: ChatMessage,
+    type: "AwaitedRequest"
+}>
+
 type MessageContent = Readonly<{
     text: string;
     timestamp: number;
     replyId?: string;
-}>
+}>;
+
+function AwaitedRequest(otherUser: string, sessionId: string, messageId: string, timestamp: number, text: string): AwaitedRequest {
+    return { 
+        sessionId,
+        otherUser, 
+        lastActive: timestamp, 
+        chatMessage: new ChatMessage({ 
+            messageId, 
+            text, 
+            timestamp,
+            sentByMe: true,
+            delivery: {
+                delivered: false, 
+                seen: false 
+            } 
+        }, null), 
+        type: "AwaitedRequest" };
+}
+
+export class ChatRequest {
+    readonly type = "ChatRequest";
+    readonly otherUser: string;
+    readonly contactDetails: Readonly<{ displayName: string, contactName?: string, profilePicture: string }>;
+    readonly chatMessage: ChatMessage;
+    readonly lastActive: number;
+    readonly sessionId: string;
+    private readonly chatRequestHeader: ChatRequestHeader;
+    private readonly clientInterface: ClientChatRequestInterface;
+
+    constructor(chatRequestHeader: ChatRequestHeader, clientInterface: ClientChatRequestInterface, viewRequest: ViewChatRequest) {
+        const { text, messageId, timestamp, profile: { username: otherUser, ...contactDetails } } = viewRequest;
+        this.sessionId = chatRequestHeader.sessionId;
+        this.otherUser = otherUser;
+        this.contactDetails = contactDetails;
+        this.chatMessage = new ChatMessage({ messageId, text, timestamp, sentByMe: false }, null);
+        this.lastActive = timestamp;
+        this.chatRequestHeader = chatRequestHeader;
+        this.clientInterface = clientInterface;
+    }
+
+    async rejectRequest() {
+        return await this.clientInterface.rejectRequest(this.otherUser, this.sessionId, this.chatRequestHeader.yourOneTimeKeyIdentifier);
+    }
+    async respondToRequest(respondingAt: number) {
+        return await this.clientInterface.respondToRequest(this.chatRequestHeader, respondingAt);
+    }
+}
+
+type ChatEvent = "room-established" | "room-disconnected" | "typing-change" | "new-received" | "added" | "loading-earlier" | "loaded-earlier" | "received-new"
 
 export class Chat {
     private disposed = false;
     private readonly loadingBatch = 10;
     private loadedUpto = Date.now();
-    private lastActivityTimestamp: number;
-    private typing: boolean;
+    private lastActive_: number;
+    private lastActivity_: DisplayMessage;
+    private otherTyping: boolean;
     private typingTimeout: number;
-    private readonly notifyChange = new Map<string, () => void>();
-    private readonly messagesList: DisplayMessage[] = [];
+    private notify: (event: ChatEvent) => void;
+    private notifyActivity: () => void;
+    private readonly messagesList = new Map<string, ChatMessage>();
+    private readonly chatMessageLists = new Map<string, ChatMessageListInternal>();
     private readonly clientInterface: ClientChatInterface;
     readonly type = "Chat";
     readonly sessionId: string;
@@ -962,46 +991,51 @@ export class Chat {
 
     get hasRoom() { return !!this.#sessionCrypto; }
 
-    get lastActivity() { return this.lastActivityTimestamp; }
+    get lastActive() { return this.lastActive_; }
 
-    get messages() { return Array.from(this.messagesList); }
+    get messages() { 
+        return Array.from(this.chatMessageLists.entries())
+                .sort(([d1,], [d2,]) => DateTime.fromISO(d1).toMillis() - DateTime.fromISO(d2).toMillis())
+                .map(([d, l]) => l.exposeList);
+    }
 
-    get isTyping() { return this.typing; }
+    get isOtherTyping() { return this.otherTyping; }
 
-    private set isTyping(value: boolean) {
+    private set isOtherTyping(value: boolean) {
         window.clearTimeout(this.typingTimeout);
-        if (this.typing !== value) {
-            this.typing = value;
-            this.notify();
+        if (this.otherTyping !== value) {
+            this.otherTyping = value;
+            this.notify?.("typing-change");
         }
         if (value) {
             this.typingTimeout = window.setTimeout(() => {
-                this.typing = false;
-                this.notify();
+                this.isOtherTyping = false;
             }, 3000);
         }
     }
 
-    subscribe(key: string, notifyChange: () => void) {
-        this.notifyChange.set(key, notifyChange);
+    subscribe(notifyAdded: (event: ChatEvent) => void) {
+        this.notify = notifyAdded;
     }
 
-    unsubscribe(key: string) {
-        this.notifyChange.delete(key);
+    unsubscribe() {
+        this.notify = null;
     }
 
-    dispose() {
+    subscribeActivity(notifyActivity: () => void) {
+        this.notifyActivity = notifyActivity;
+    }
+
+    unsubscribeActivity() {
+        this.notifyActivity = null;
+    }
+
+    disconnectRoom() {
         this.#socket?.off(`${this.otherUser} -> ${this.me}`);
         this.#socket = null;
         this.#sessionCrypto = null;
-        this.notifyChange.clear();
         this.disposed = true;
-    }
-
-    private notify() {
-        for (const notify of this.notifyChange.values()) {
-            notify();
-        }
+        this.notify?.("room-disconnected");
     }
 
     private constructor(sessionId: string, me: string, recipientDetails: Contact, encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chattingSession: ChattingSession) {
@@ -1016,19 +1050,15 @@ export class Chat {
     }
 
     static async instantiate(me: string, encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chatData: ChatData, firstMessage?: { messageId: string, text: string, timestamp: number, sentByMe: boolean, deliveredAt?: number }) {
-        const { chatDetails, exportedChattingSession, lastActivity, sessionId } = chatData;
+        const { chatDetails, exportedChattingSession, lastActive, sessionId } = chatData;
         const contactDetails: Contact = await crypto.deriveDecrypt(chatDetails, encryptionBaseVector, "ContactDetails");
         const chattingSession = await ChattingSession.importSession(exportedChattingSession, encryptionBaseVector);
         const chat = new Chat(sessionId, me, contactDetails, encryptionBaseVector, clientInterface, chattingSession);
-        chat.lastActivityTimestamp = lastActivity;
+        chat.lastActive_ = lastActive;
         if (firstMessage) {
             const { messageId, text, timestamp, sentByMe, deliveredAt: deliveredAt } = firstMessage;
             const delivery = { delivered: deliveredAt, seen: deliveredAt };
-            const status: MessageStatus = 
-                sentByMe 
-                    ? { sentByMe, delivery }
-                    : { sentByMe };
-            await chat.encryptStoreMessage({ messageId, text, timestamp, status } as DisplayMessage, false);
+            await chat.encryptStoreMessage({ messageId, text, timestamp, sentByMe, delivery }, false);
         }
         chat.loadNext().then(() => chat.loadUnprocessedMessages());
         return chat;
@@ -1040,7 +1070,7 @@ export class Chat {
         }
         const confirmed = await new Promise((resolve) => {
             socket.once(this.otherUser, (confirmation: string) => resolve(confirmation === "confirmed"));
-            socket.emit(SocketServerSideEvents.ClientRoomReady, this.otherUser);
+            socket?.emit(SocketServerSideEvents.ClientRoomReady, this.otherUser);
             window.setTimeout(() => resolve(false), 1000);
         })
         if (!confirmed) {
@@ -1051,10 +1081,10 @@ export class Chat {
         this.#socket = socket;
         this.#socket.on(`${this.otherUser} -> ${this.me}`, this.receiveMessage.bind(this));
         this.#socket.on("disconnect", () => {
-            this.dispose();
+            this.disconnectRoom();
         })
         this.loadUnprocessedMessages();
-        this.notify();
+        this.notify?.("room-established");
     }
 
     async sendMessage(messageContent: MessageContent) {
@@ -1073,11 +1103,9 @@ export class Chat {
             messageId, 
             text,
             replyingTo,
-            timestamp, 
-            status: { 
-                sentByMe: true,
-                delivery: null
-            } 
+            timestamp,
+            sentByMe: true,
+            delivery: null
         };
         this.addMessageToList(displayMessage);
         const encryptedMessage = crypto.deriveEncrypt(displayMessage, this.#encryptionBaseVector, this.sessionId).then((content) => ({ messageId, timestamp, content }));
@@ -1087,10 +1115,9 @@ export class Chat {
             return false;
         }
         await this.clientInterface.StoreMessage(await encryptedMessage);
-        (displayMessage as DisplayMessageByMe).status.delivery = { delivered: false, seen: false };
-        this.notify();
-        const { lastActivity } = this;
-        await this.clientInterface.UpdateChat({ lastActivity, exportedChattingSession });
+        this.messagesList.get(messageId)?.signalEvent("sent", Date.now());
+        const { lastActive_: lastActive } = this;
+        await this.clientInterface.UpdateChat({ lastActive, exportedChattingSession });
         return true;
     }
 
@@ -1109,13 +1136,21 @@ export class Chat {
             event === "delivered" || event === "seen"
                 ? { messageId, timestamp, event, reportingAbout }
                 : { messageId, timestamp, event };
-        const exportedChattingSession = await this.#chattingSession.sendMessage(sendingMessage, async (header) => await this.dispatch(header, sendWithoutRoom));
+        const exportedChattingSession = await this.#chattingSession.sendMessage(sendingMessage, async (header) => {
+            const success = await this.dispatch(header, sendWithoutRoom);
+            if (success && (event === "delivered" || event === "seen")) {
+                const message = await this.getMessageById(reportingAbout);
+                const delivery = calculateDelivery(message.delivery, event, timestamp);
+                await this.encryptStoreMessage({ ...message, delivery }, false);
+            }
+            return success;
+        });
         if (typeof exportedChattingSession === "string") {
             logError(exportedChattingSession);
             return false;
         }
-        const { lastActivity } = this;
-        await this.clientInterface.UpdateChat({ lastActivity, exportedChattingSession });
+        const { lastActive_: lastActive } = this;
+        await this.clientInterface.UpdateChat({ lastActive, exportedChattingSession });
     }
 
     private async dispatch(header: MessageHeader, sendWithoutRoom: boolean) {
@@ -1126,7 +1161,8 @@ export class Chat {
             while (!success && tries <= 10) {
                 tries++;
                 success = await new Promise<boolean>(async (resolve) => {
-                    this.#socket.emit(dispatchEvent, await this.#sessionCrypto.signEncryptToBase64(header, dispatchEvent), (response: boolean) => resolve(response));
+                    this.#socket?.emit(dispatchEvent, await this.#sessionCrypto.signEncryptToBase64(header, dispatchEvent), (response: boolean) => resolve(response));
+                    window.setTimeout(() => resolve(false), 5000);
                 });
             }
         }
@@ -1183,10 +1219,27 @@ export class Chat {
     }
 
     private addMessageToList(message: DisplayMessage) {
-        this.messagesList.push(message);
-        this.notify();
-        if (message.timestamp < this.loadedUpto) {
-            this.loadedUpto = message.timestamp;
+        const { messageId, timestamp } = message;
+        const date = DateTime.fromMillis(timestamp).toISODate();
+        let chatMessageList = this.chatMessageLists.get(date);
+        if (chatMessageList) {
+            chatMessageList.add(message);
+        }
+        else {
+            chatMessageList = 
+            ChatMessageListInternal.construct(message, (event, timestamp, reportingAbout) => this.sendEvent(event, timestamp, reportingAbout));
+            this.chatMessageLists.set(date, chatMessageList);
+            this.notify?.("added");
+        }
+        this.messagesList.set(messageId, chatMessageList.messageById(messageId));
+        if (timestamp < this.loadedUpto) {
+            this.loadedUpto = timestamp;
+        }
+        else if (timestamp > this.lastActive_) {
+            this.lastActive_ = timestamp;
+            this.lastActivity_ = message;
+            this.notify?.("received-new");
+            this.notifyActivity?.();
         }
     }
 
@@ -1224,69 +1277,42 @@ export class Chat {
     }
 
     private async encryptStoreMessage(message: DisplayMessage, wasUnprocessed: boolean) {
-        const { messageId, timestamp } = message;
+        const { messageId, timestamp, sentByMe } = message;
         const encryptedContent = await crypto.deriveEncrypt(message, this.#encryptionBaseVector, this.sessionId);
         const encryptedMessage = { messageId, timestamp, content: encryptedContent };
         await this.clientInterface.StoreMessage(encryptedMessage);
-        if (wasUnprocessed) {
+        if (wasUnprocessed || sentByMe) {
             await this.clientInterface.MessageProcessed({ messageId });
         }
     }
 
     private async processEncryptedMessage(encryptedMessage: MessageHeader): Promise<boolean> {
+        const { messageId } = encryptedMessage;
         const exportedChattingSession = await this.#chattingSession.receiveMessage(encryptedMessage, async (messageBody) => {
-            const { sender, messageId, timestamp } = messageBody;
+            const { sender, timestamp } = messageBody;
             if (sender !== this.otherUser) {
                 return false;
             }
-            let displayMessage: DisplayMessage = null;
+            let displayMessage: DisplayMessage;
             if ("event" in messageBody) {
                 if (messageBody.event !== "delivered" && messageBody.event !== "seen") {
                     if ((Date.now() - timestamp) < 5000) {
-                        this.isTyping = messageBody.event === "typing";
+                        this.isOtherTyping = messageBody.event === "typing";
                     }
                     return true;
                 }
                 const { event, reportingAbout } = messageBody;
-                const setDelivery = (message: DisplayMessageByMe) => {
-                    const { delivered, seen } = message.status.delivery;
-                    if (!delivered) {
-                        if (event === "delivered") {
-                            message.status.delivery = {
-                                delivered: timestamp,
-                                seen
-                            };
-                        }
-                        else {
-                            message.status.delivery = {
-                                delivered: timestamp,
-                                seen: timestamp
-                            };
-                        }
+                const chatMessage = this.messagesList.get(reportingAbout);
+                if (chatMessage) {
+                    chatMessage.signalEvent(event, timestamp);
+                    displayMessage = chatMessage.displayMessage;
+                }
+                else {
+                    const storedMessage = await this.getMessageById(messageId);
+                    if (storedMessage) {
+                        const delivery = calculateDelivery(storedMessage.delivery, event, timestamp);
+                        displayMessage = { ...storedMessage, delivery };
                     }
-                    else if (!seen) {
-                        if (event === "seen") {
-                            message.status.delivery = {
-                                delivered,
-                                seen: timestamp
-                            };
-                        }
-                    }
-                };
-                this.messagesList.forEach((message) => {
-                    const { messageId } = message;
-                    if (messageId === reportingAbout && message.status.sentByMe) {
-                        setDelivery(message as DisplayMessageByMe);
-                        displayMessage = message;
-                        this.notify();
-                    }
-                })
-                if (!displayMessage) {
-                    const message = await this.getMessageById(messageId, true);
-                    if (message.status.sentByMe) {
-                        setDelivery(message as DisplayMessageByMe);
-                    }
-                    displayMessage = message;
                 }
             }
             else {
@@ -1296,37 +1322,35 @@ export class Chat {
                     logError("Failed to come up with replied-to message.");
                     return false;
                 }
-                displayMessage = { messageId, timestamp, text, replyingTo, status: { sentByMe: false } };
+                displayMessage = { messageId, timestamp, text, replyingTo, sentByMe: false };
                 this.addMessageToList(displayMessage);
             }
-            await this.encryptStoreMessage(displayMessage, "text" in messageBody);
+            await this.encryptStoreMessage(displayMessage, true);
             return true;
         });
         if (typeof exportedChattingSession === "string") {
+            if (exportedChattingSession === "Receving Ratchet Number Mismatch") {
+                await this.clientInterface.MessageProcessed({ messageId });
+            }
             logError(exportedChattingSession);
             return false;
         };
-        const { lastActivity } = this;
-        await this.clientInterface.UpdateChat({ lastActivity, exportedChattingSession });
+        const { lastActive_: lastActive } = this;
+        await this.clientInterface.UpdateChat({ lastActive, exportedChattingSession });
         return true;
     }
 
     private async populateReplyingTo(id: string): Promise<ReplyingToInfo> {
         if (!id) return null;
         const repliedTo = await this.getMessageById(id);
-        const replyToOwn = repliedTo.status.sentByMe;
+        const replyToOwn = repliedTo.sentByMe;
         const displayText = truncateText(repliedTo.text);
         return { id, replyToOwn, displayText };
     }
 
-    private async getMessageById(messageId: string, skipList = false): Promise<DisplayMessage> {
+    private async getMessageById(messageId: string): Promise<DisplayMessage> {
         if (!messageId) return null;
-        if (!skipList) {
-            const message = this.messagesList.find((m) => m.messageId === messageId);
-            if (message) {
-                return message;
-            }
-        }
+        if (this.messagesList.has(messageId)) return this.messagesList.get(messageId).displayMessage;
         const fetched = await this.clientInterface.GetMessageById({ messageId });
         if ("reason" in fetched) {
             logError(fetched);
@@ -1348,48 +1372,193 @@ export class Chat {
     }
 }
 
-export class ChatRequest {
-    readonly type = "ChatRequest";
-    readonly otherUser: string;
-    readonly contactDetails: Readonly<{ displayName: string, contactName?: string, profilePicture: string }>;
-    readonly message: DisplayMessage;
-    readonly lastActivity: number;
-    readonly sessionId: string;
-    private readonly chatRequestHeader: ChatRequestHeader;
-    private readonly clientInterface: ClientChatRequestInterface;
+class ChatMessageListInternal {
+    readonly date: string;
+    private indexedMessages = new Map<string, ChatMessage>();
+    private messages: ChatMessage[] = [];
+    private notifyAdded: () => void;
+    private sendEvent: (event: "delivered" | "seen", timestamp: number, reportingAbout: string) => void;
+    private earliest: number;
+    private latest: number;
+    private exposedList: ChatMessageList;
 
-    constructor(chatRequestHeader: ChatRequestHeader, clientInterface: ClientChatRequestInterface, viewRequest: ViewChatRequest) {
-        const { text, messageId, timestamp, profile: { username: otherUser, ...contactDetails } } = viewRequest;
-        this.sessionId = chatRequestHeader.sessionId;
-        this.otherUser = otherUser;
-        this.contactDetails = contactDetails;
-        this.message = { messageId, text, timestamp, status: { sentByMe: false } };
-        this.lastActivity = timestamp;
-        this.chatRequestHeader = chatRequestHeader;
-        this.clientInterface = clientInterface;
+    static construct(message: DisplayMessage, sendEvent: (event: "delivered" | "seen", timestamp: number, reportingAbout: string) => void) {
+        const internalList = new ChatMessageListInternal(message, sendEvent);
+        internalList.exposedList = new ChatMessageList(internalList);
+        return internalList;
     }
 
-    async rejectRequest() {
-        return await this.clientInterface.rejectRequest(this.otherUser, this.sessionId, this.chatRequestHeader.yourOneTimeKeyIdentifier);
+    private constructor(message: DisplayMessage, sendEvent: (event: "delivered" | "seen", timestamp: number, reportingAbout: string) => void) {
+        const { timestamp } = message;
+        this.date = DateTime.fromMillis(timestamp).toISODate();
+        this.sendEvent = sendEvent;
+        this.latest = timestamp;
+        this.earliest = this.latest + 1;
+        this.add(message);
     }
-    async respondToRequest(respondingAt: number) {
-        return await this.clientInterface.respondToRequest(this.chatRequestHeader, respondingAt);
+
+    public get messageList() {
+        return [...this.messages];
+    }
+
+    public get exposeList() {
+        return this.exposedList;
+    }
+
+    messageById(messageId: string) {
+        return this.indexedMessages.get(messageId);
+    }
+
+    subscribe(notifyAdded: () => void) {
+        this.notifyAdded = notifyAdded;
+    }
+
+    unsubscribe() {
+        this.notifyAdded = null;
+    }
+
+    add(displayMessage: DisplayMessage) {
+        const { messageId, timestamp, sentByMe } = displayMessage;
+        let message: ChatMessage;
+        const sendEvent = 
+            sentByMe 
+                ? null
+                : (event: "delivered" | "seen", timestamp: number) => this.sendEvent(event, timestamp, messageId);
+        if (timestamp < this.earliest) {            
+            message = new ChatMessage(displayMessage, null, sendEvent);
+            const previous = this.messages[0];
+            this.messages.unshift(message);
+            previous?.updateFirst(sentByMe !== previous.displayMessage.sentByMe);
+            this.earliest = timestamp;
+        }
+        else if (timestamp > this.latest) {
+            const lastSentByMe = this.messages.slice(-1)[0].displayMessage.sentByMe;
+            message = new ChatMessage(displayMessage, sentByMe !== lastSentByMe, sendEvent);
+            this.messages.push(message);
+            this.latest = timestamp;
+        }
+        if (message) {
+            this.indexedMessages.set(messageId, message);
+            this.notifyAdded?.();
+        }
+        else logError(new Error("New message cannot be added in the middle."));
     }
 }
 
-function sleep(timeInMillis: number) {
-    return new Promise((resolve, _) => { window.setTimeout(() => resolve(null), timeInMillis); });
+export class ChatMessageList {
+    private internalList: ChatMessageListInternal;
+
+    constructor(internalList: ChatMessageListInternal) {
+        this.internalList = internalList;
+    }
+
+    public get date() {
+        return this.internalList.date;
+    }
+
+    public get messageList() {
+        return this.internalList.messageList;
+    }
+
+    subscribe(notifyAdded: () => void) {
+        this.internalList.subscribe(notifyAdded);
+    }
+
+    unsubscribe() {
+        this.internalList.unsubscribe();
+    }
+}
+
+export class ChatMessage {
+    private message: DisplayMessage;
+    private isFirst: null | boolean;
+    private notifyChange: (event: "first" | "sent" | "delivered" | "seen") => void;
+    readonly signalEvent: (event: "sent" | "delivered" | "seen", timestamp: number) => void;
+
+    public get messageId() {
+        return this.displayMessage.messageId;
+    }
+
+    public get displayMessage() {
+        return this.message;
+    }
+
+    public get isFirstOfType() {
+        return this.isFirst === null || this.isFirst;
+    }
+
+    public updateFirst(isFirst: boolean) {
+        if (this.isFirst === null || isFirst !== null || this.isFirst !== isFirst) {
+            this.isFirst = isFirst;
+            this.notifyChange?.("first");
+        }
+
+    }
+
+    subscribe(notifyChange: (event: "first" | "sent" | "delivered" | "seen") => void) {
+        this.notifyChange = notifyChange;
+    }
+
+    unsubscribe() {
+        this.notifyChange = null;
+    }
+
+    constructor(displayMessage: DisplayMessage, 
+        isFirst: boolean,
+        signalEvent?: (event: "delivered" | "seen", timestamp: number) => void) {
+            this.message = displayMessage;
+            this.isFirst = isFirst;
+            this.signalEvent = (event, timestamp) => {
+                const prevDelivery = this.message.delivery;
+                let newDelivery: DeliveryInfo;
+                if (event === "sent") {
+                    newDelivery = prevDelivery || {
+                        delivered: false,
+                        seen: false
+                    };
+                }
+                else {
+                    newDelivery = calculateDelivery(prevDelivery, event, timestamp);
+                }
+                if (!_.isEqual(newDelivery, prevDelivery)) {
+                    this.message = { ...this.message, delivery: newDelivery };
+                    this.notifyChange?.(event);
+                    if (event !== "sent") signalEvent?.(event, timestamp);
+                }
+            }
+            if (!displayMessage.sentByMe && !displayMessage.delivery?.delivered) {
+                this.signalEvent("delivered", Date.now());
+            }
+    }
+}
+
+function calculateDelivery(prevDelivery: DeliveryInfo, event: "delivered" | "seen", timestamp: number) {
+    const { delivered, seen } = prevDelivery || {};
+    let newDelivery: DeliveryInfo;
+    if (event === "delivered") {
+        newDelivery = {
+            delivered: delivered && delivered < timestamp ? delivered : timestamp,
+            seen: seen || false
+        };
+    }
+    else {
+        newDelivery = {
+            delivered: delivered || timestamp,
+            seen: seen || timestamp
+        };
+    }
+    return newDelivery;
 }
 
 function logError(err: any): void {
     const message = err.message;
-    const stack = err.stack;
-    if (message || stack) {
-        console.log(`${message}${stack}`);
+    if (message) {
+        console.log(`${message}`);
     }
     else {
         console.log(`${stringify(err)}`);
     }
+    console.trace();
 }
 
 function truncateText(text: string) {

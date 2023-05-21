@@ -13,7 +13,7 @@ import { chats, truncateText } from "../prvChats";
 import { ReplyingToProps, ReplyingToMemo } from "./ReplyingTo";
 import { MessageCardContext } from "./MessageCard";
 import { ReplyingToInfo } from "../../../shared/commonTypes";
-import { Chat } from "../client";
+import { Chat, ChatMessageList } from "../client";
 import useResizeObserver from "@react-hook/resize-observer";
 
 const ScrollDownButton = styled.div`
@@ -97,7 +97,8 @@ function useScrollRestore(scrollbar: () => HTMLDivElement, lastScrolledTo: Scrol
   }
 
   function onIntersect(entries: IntersectionObserverEntry[]) {
-    for (const { isIntersecting, intersectionRatio, time, target: { id } } of entries) {
+    for (const { isIntersecting, intersectionRatio, time, target, boundingClientRect, intersectionRect } of entries) {
+      const { id } = target;
       const [element, visited] = messagesRef.current.get(id);
       if (!visited) {
         messagesRef.current.set(id, [element, true]);
@@ -106,6 +107,10 @@ function useScrollRestore(scrollbar: () => HTMLDivElement, lastScrolledTo: Scrol
         if (isIntersecting && intersectionRatio > 0) {
           inViewRef.current.set(id, time);
         }
+      }
+      const notSeen = Number.isNaN(parseInt((target as HTMLElement).dataset.seen))
+      if (intersectionRect.bottom && intersectionRect.bottom <= boundingClientRect.bottom && notSeen) {
+        target.dispatchEvent(new CustomEvent("seen", { detail: { timestamp: Date.now() }}));
       }
     }
   }
@@ -266,8 +271,7 @@ function useScrollOnResize(scrollbar: () => HTMLDivElement,
 }
 
 const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastScrolledTo }: ChatViewProps) {
-  const { messages, contactDetails: { displayName } } = chat;
-  const [, triggerRerender] = useState(2);
+  const { messages, contactDetails: { displayName, contactName } } = chat;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageRef = useRef(message);
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
@@ -283,9 +287,16 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
     scrollbar().style.overflowY = scrollOn ? "scroll" : "hidden";
     scrollbar().style.paddingRight = scrollOn ? "8px" : "14px"
   }
-  const contextData = useMemo(() => ({ chatWith: displayName, highlight, setHighlight, registerMessageRef, setReplyTo, toggleScroll }), [highlight]);
-  const [isTyping, setIsTyping] = useState(false);
+  const contextData = useMemo(() => ({ chatWith: displayName, highlight, setHighlight, registerMessageRef, setReplyTo, toggleScroll }), [displayName, highlight]);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [chatMessageLists, setChatMessageLists] = useState(chat.messages);
+  const [isOtherTyping, setIsOtherTyping] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const onReceivedNew = useCallback(() => {
+    if (isScrolledDown) {
+      window.setTimeout(() => scrollbar().scrollTo({ top: scrollbar().scrollHeight, behavior: "instant" }), 10);
+    }
+  }, [isScrolledDown]);
 
   const scrollHandler = (event: Event) => {
     const scrollbar = event.target as HTMLDivElement;
@@ -293,8 +304,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
       setIsScrolledDown(true);
       return;
     }
-    const scrollFinished = getIsScrolledDown(scrollbar);
-    setIsScrolledDown(scrollFinished);
+    setIsScrolledDown(getIsScrolledDown(scrollbar));
     updateCurrentElement();
   }
 
@@ -303,12 +313,28 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   useScrollOnResize(scrollbar, orientationState.lastOrientation, setIsScrolledDown);
 
   useEffect(() => {
-    chat.subscribe("chatview", () => triggerRerender((rerender) => 10 / rerender));
+    chat.subscribe((event) => {
+      if (event === "typing-change") {
+        setIsOtherTyping(chat.isOtherTyping);
+      }
+      else if (event === "received-new") {
+        onReceivedNew();
+      }
+      else if (event === "loading-earlier") {
+        setLoading(true);
+      }
+      else if (event === "loaded-earlier") {
+        setLoading(false);
+      }
+      else if (event === "added") {
+        setChatMessageLists(chat.messages);
+      }
+    });
     return () => {
-      chat.unsubscribe("chatview");
+      chat.unsubscribe();
       setMessage(messageRef.current);
     }
-  },[])
+  }, []);
 
   useLayoutEffect(() => {
     const updateHeight = () => setKeyboardHeight((navigator as any).virtualKeyboard.boundingRect.height || 0);
@@ -344,7 +370,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
                 <ArrowBackSharp sx={{ fontSize: "2rem" }}/>
               </IconButton>}
             <DisableSelectTypography level="h5" sx={{ textAlign: "left", flex: 0, flexBasis: "content", display: "flex", flexWrap: "wrap", alignContent: "center" }}>
-              {displayName}
+              {contactName || displayName}
             </DisableSelectTypography>
           </Stack>
             {belowXL && 
@@ -356,7 +382,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
           <MessageCardContext.Provider value={contextData}>
             <MessageListMemo 
               key={displayName} 
-              messages={messages}/>
+              chatMessageLists={chatMessageLists}/>
           </MessageCardContext.Provider>
             {!isScrolledDown &&
           <ScrollDownButton onClick={ () => scrollRef.current.scrollBy({ top: scrollRef.current.scrollHeight, behavior: "instant" }) } style={{ bottom: `${keyboardHeight + 150}px` }}>
@@ -387,9 +413,6 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
             minRows={1}
             maxRows={5} 
             style={{ flex: 1 }}
-            autoFocus={isTyping}
-            onFocus={() => setIsTyping(true) }
-            onBlur={() => setIsTyping(false) }
             startDecorator={replyToElement}
             startDecoratorStyle={{ width: "100%", paddingRight: belowXL ? "0px" : "80px", display: "flex", justifyContent: "flex-start", marginBottom: "4px" }}/>
             <IconButton 
