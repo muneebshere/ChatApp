@@ -581,7 +581,7 @@ class SocketHandler {
         return { reason: null };
     }
 
-    private async UpdateChat(chat: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>) {
+    private async UpdateChat(chat: Omit<ChatData, "chatDetails" | "exportedChattingSession" | "createdAt"> & Partial<Omit<ChatData, "createdAt">>) {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.updateChat(chat))) return failure(ErrorStrings.ProcessFailed);
         return { reason: null };

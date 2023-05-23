@@ -44,7 +44,7 @@ type ClientChatInterface = Readonly<{
     GetMessageById: (data: { messageId: string }, timeout?: number) => Promise<StoredMessage | Failure>,
     StoreMessage: (data: Omit<StoredMessage, "sessionId">, timeout?: number) => Promise<Failure>,
     MessageProcessed: (data: { messageId: string }, timeout?: number) => Promise<Failure>,
-    UpdateChat: (data: Omit<Partial<ChatData> & Omit<ChatData, "chatDetails" | "exportedChattingSession">, "sessionId">, timeout?: number) => Promise<Failure>,
+    UpdateChat: (data: Omit<Partial<ChatData> & Omit<ChatData, "chatDetails" | "exportedChattingSession">, "sessionId" | "createdAt">, timeout?: number) => Promise<Failure>,
     notifyClient: () => void
 }>;
 
@@ -792,7 +792,7 @@ export class Client {
         const { profile, text, messageId, timestamp } = viewChatRequest;
         const lastActive = respondingAt;
         const chatDetails = await crypto.deriveEncrypt(profile, this.#encryptionBaseVector, "ContactDetails");
-        const chatData = { chatDetails, exportedChattingSession, lastActive, sessionId };
+        const chatData = { chatDetails, exportedChattingSession, lastActive, sessionId, createdAt: timestamp };
         await this.#socketHandler.CreateChat(chatData);
         await this.#socketHandler.DeleteChatRequest({ sessionId });
         const newChat = await Chat.instantiate(this.#username, this.#encryptionBaseVector, this.chatInterface(sessionId), chatData, { text, messageId, sentByMe: false, timestamp });
@@ -826,7 +826,7 @@ export class Client {
         const { messageId, text, timestamp } = awaitedRequest.chatMessage.displayMessage;
         const [{ profile, respondedAt }, exportedChattingSession] = response;
         const chatDetails = await crypto.deriveEncrypt(profile, this.#encryptionBaseVector, "ContactDetails");
-        const chatData = { chatDetails, exportedChattingSession, lastActive: respondedAt, sessionId };
+        const chatData = { chatDetails, exportedChattingSession, lastActive: respondedAt, createdAt: timestamp, sessionId };
         const { reason } = await this.#socketHandler.CreateChat(chatData);
         if (reason) {
             logError(reason);
@@ -987,7 +987,9 @@ type ChatEvent = "room-established" | "room-disconnected" | "typing-change" | "a
 export class Chat {
     private disposed = false;
     private readonly loadingBatch = 10;
+    private isLoading = false;
     private loadedUpto = Date.now();
+    private createdAt_: number;
     private lastActive_: number;
     private lastActivity_: DisplayMessage;
     private otherTyping: boolean;
@@ -1020,6 +1022,16 @@ export class Chat {
     }
 
     get isOtherTyping() { return this.otherTyping; }
+
+    get earliestLoaded() { return this.loadedUpto; }
+
+    get createdAt() { return this.createdAt_; }
+
+    get canLoadFurther() { return this.loadedUpto > this.createdAt; }
+
+    hasMessage(messageId: string) {
+        return this.messagesList.has(messageId);
+    }
 
     private set isOtherTyping(value: boolean) {
         window.clearTimeout(this.typingTimeout);
@@ -1072,11 +1084,12 @@ export class Chat {
     }
 
     static async instantiate(me: string, encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chatData: ChatData, firstMessage?: { messageId: string, text: string, timestamp: number, sentByMe: boolean, deliveredAt?: number }) {
-        const { chatDetails, exportedChattingSession, lastActive, sessionId } = chatData;
+        const { chatDetails, exportedChattingSession, lastActive, createdAt, sessionId } = chatData;
         const contactDetails: Contact = await crypto.deriveDecrypt(chatDetails, encryptionBaseVector, "ContactDetails");
         const chattingSession = await ChattingSession.importSession(exportedChattingSession, encryptionBaseVector);
         const chat = new Chat(sessionId, me, contactDetails, encryptionBaseVector, clientInterface, chattingSession);
         chat.lastActive_ = lastActive;
+        chat.createdAt_ = createdAt;
         if (firstMessage) {
             const { messageId, text, timestamp, sentByMe, deliveredAt: deliveredAt } = firstMessage;
             const delivery = { delivered: deliveredAt, seen: deliveredAt };
@@ -1203,40 +1216,49 @@ export class Chat {
         return success;
     }
 
+    async performLoad(load: () => Promise<void>) {
+        this.isLoading = true;
+        this.notify?.("loading-earlier");
+        await load();
+        this.isLoading = false;
+        this.notify?.("loaded-earlier");
+    }
+
     async loadNext() {
-        if (this.disposed) {
-            return;
-        }
-        const messages = await this.clientInterface.GetMessagesByNumber({ limit: this.loadingBatch, olderThan: this.loadedUpto });
-        if ("reason" in messages) {
-            logError(messages);
-            return;
-        }
-        await this.decryptPushMessages(messages);
+        if (this.disposed || this.isLoading || !this.canLoadFurther) return;
+        await this.performLoad(async () => {
+            const messages = await this.clientInterface.GetMessagesByNumber({ limit: this.loadingBatch, olderThan: this.loadedUpto });
+            if ("reason" in messages) {
+                logError(messages);
+                return;
+            }
+            await this.decryptPushMessages(messages);
+        });
     }
 
     async loadUptoId(messageId: string) {
-        if (this.disposed) {
-            return;
-        }
-        const messages = await this.clientInterface.GetMessagesUptoId({ messageId, olderThan: this.loadedUpto });
-        if ("reason" in messages) {
-            logError(messages);
-            return;
-        }
-        await this.decryptPushMessages(messages);
+        if (this.disposed || this.isLoading || this.messagesList.has(messageId)) return;
+        await this.performLoad(async () => {
+            const messages = await this.clientInterface.GetMessagesUptoId({ messageId, olderThan: this.loadedUpto });
+            if ("reason" in messages) {
+                logError(messages);
+                return;
+            }
+            await this.decryptPushMessages(messages);
+
+        });
     }
 
     async loadUptoTime(newerThan: number) {
-        if (this.disposed) {
-            return;
-        }
-        const messages = await this.clientInterface.GetMessagesUptoTimestamp({ newerThan, olderThan: this.loadedUpto });
-        if ("reason" in messages) {
-            logError(messages);
-            return;
-        }
-        await this.decryptPushMessages(messages);
+        if (this.disposed || this.isLoading || !this.canLoadFurther) return;
+        await this.performLoad(async () => {
+            const messages = await this.clientInterface.GetMessagesUptoTimestamp({ newerThan, olderThan: this.loadedUpto });
+            if ("reason" in messages) {
+                logError(messages);
+                return;
+            }
+            await this.decryptPushMessages(messages);
+        });
     }
 
     async messageReceived(message: MessageHeader) {
@@ -1297,10 +1319,10 @@ export class Chat {
     }
 
     private async decryptPushMessages(messages: StoredMessage[]) {
-        await Promise.all(messages.map(async (message) => {
-            const displayMessage: DisplayMessage = await crypto.deriveDecrypt(message.content, this.#encryptionBaseVector, this.sessionId);
-            this.addMessageToList(displayMessage);
-        }));
+        const decrypted = await allSettledResults(messages.map(async (message) => (await crypto.deriveDecrypt(message.content, this.#encryptionBaseVector, this.sessionId)) as DisplayMessage));
+        for (const message of _.orderBy(decrypted, (m) => m.timestamp, "desc")) {
+            this.addMessageToList(message);
+        }
     }
 
     private async encryptStoreMessage(message: DisplayMessage, wasUnprocessed: boolean) {
@@ -1604,6 +1626,6 @@ function fromBase64(data: string) {
     return Buffer.from(data, "base64");
 }
 
-async function allSettledResults<T>(promises: Promise<T>[]) {
+async function allSettledResults<T>(promises: Promise<T>[]): Promise<T[]> {
     return (await Promise.allSettled(promises)).filter((result) => result.status === "fulfilled").map((result) => (result as PromiseFulfilledResult<T>).value);
 }

@@ -156,6 +156,7 @@ export type StoredMessage = Readonly<{
 
 export type ChatData = Readonly<{
   sessionId: string,
+  createdAt: number,
   lastActive: number,
   chatDetails: UserEncryptedData,
   exportedChattingSession: UserEncryptedData
@@ -289,7 +290,7 @@ type SocketClientRequestParametersMap = {
     GetMessageById: { sessionId: string, messageId: string },
     StoreMessage: StoredMessage,
     CreateChat: ChatData,
-    UpdateChat: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>,
+    UpdateChat: Omit<ChatData, "chatDetails" | "exportedChattingSession" | "createdAt"> & Partial<Omit<ChatData, "createdAt">>,
     SendChatRequest: { sessionId: string },
     SendMessage: MessageHeader,
     MessageProcessed: { sessionId: string, messageId: string },

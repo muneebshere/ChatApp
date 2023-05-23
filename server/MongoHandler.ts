@@ -135,6 +135,10 @@ const chatSchema = new Schema({
         required: true,
         unique: true
     },
+    createdAt: {
+        type: Schema.Types.Number,
+        required: true
+    },
     lastActive: {
         type: Schema.Types.Number,
         required: true
@@ -624,7 +628,7 @@ export class MongoUserHandler {
         }
     }
 
-    async updateChat({ sessionId, ...chat }: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>) {
+    async updateChat({ sessionId, ...chat }: Omit<ChatData, "chatDetails" | "exportedChattingSession" | "createdAt"> & Partial<Omit<ChatData, "createdAt">>) {
         try {
             return !!(await this.Chat.findOneAndUpdate({ sessionId }, bufferReplaceForMongo(chat)).exec());
         }

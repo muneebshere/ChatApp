@@ -15,13 +15,13 @@ import { ReplyingToInfo } from "../../../shared/commonTypes";
 
 const StyledReactMarkdownReply = StyledReactMarkdownVariable(18);
 
-export type ReplyingToProps = ReplyingToInfo & Pick<MessageCardContextData, "chatWith" | "setHighlight"> & Readonly<{
+export type ReplyingToProps = ReplyingToInfo & Pick<MessageCardContextData, "chatWith" | "highlightReplied"> & Readonly<{
   sentByMe: boolean;
   renderClose?: () => void;
 }>
 
 const ReplyingTo = forwardRef(function(replyingTo: ReplyingToProps, ref: ForwardedRef<HTMLDivElement>) {
-  const { chatWith, id: replyId, sentByMe, displayText, replyToOwn, setHighlight, renderClose } = replyingTo;
+  const { chatWith, id: replyId, sentByMe, displayText, replyToOwn, highlightReplied, renderClose } = replyingTo;
   const repliedColor = sentByMe ? "#e8fae5" : "#f2f2f2";
   const repliedOutlineColor = replyToOwn ? "#53bdeb" : "#06cf9c";
   const repliedBorderColor = sentByMe ? "#bddcb8" : "#c7c7c7";
@@ -58,7 +58,7 @@ const ReplyingTo = forwardRef(function(replyingTo: ReplyingToProps, ref: Forward
 
   return (
       <Link component="div" underline="none" sx={{ width: "100%" }} onClick={(event) => {
-          setHighlight(replyId);
+          highlightReplied(replyId);
           event.stopPropagation();
           return false;
         } }>

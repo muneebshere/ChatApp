@@ -3,7 +3,7 @@ import React, { useState, memo, useRef, useLayoutEffect, useEffect, useMemo, use
 import { useUpdateEffect } from "usehooks-ts";
 import styled from "@emotion/styled";
 import { Theme, useMediaQuery } from "@mui/material";
-import { Avatar, Badge, IconButton, Stack } from "@mui/joy";
+import { Avatar, Badge, CircularProgress, IconButton, Stack } from "@mui/joy";
 import { SendRounded, ArrowBackSharp, KeyboardDoubleArrowDownOutlined, CachedSharp } from "@mui/icons-material";
 import { MessageListMemo } from "./MessageList";
 import { useSize } from "./Hooks/useSize";
@@ -76,14 +76,21 @@ function useReplyingTo(chatWith: string, setHighlight: (highlight: string) => vo
     if (!replyTo) return null;
     const { id, displayText: content, replyToOwn } = replyTo;
     const displayText = truncateText(content, belowXL ? 80 : 200);
-    const replyData: ReplyingToProps = { chatWith, id, displayText, replyToOwn, sentByMe: false, setHighlight, renderClose: () => setReplyTo(null) };
+    const replyData: ReplyingToProps = { chatWith, id, displayText, replyToOwn, sentByMe: false, highlightReplied: setHighlight, renderClose: () => setReplyTo(null) };
     return (<ReplyingToMemo {...replyData}/>);
   }, [replyTo]);
 
   return [replyTo?.id, setReplyTo, replyToElement];
 }
 
-function useScrollRestore(scrollbar: () => HTMLDivElement, lastScrolledTo: ScrollState, setLastScrolledTo: (scroll: ScrollState) => void, orientationState: OrientationState): [() => void, (element: HTMLDivElement) => void] {
+function useScrollRestore(scrollbar: () => HTMLDivElement, 
+                          lastScrolledTo: ScrollState, 
+                          setLastScrolledTo: (scroll: ScrollState) => void, 
+                          orientationState: OrientationState,
+                          earliestLoaded: () => number,
+                          loadMore: () => void,
+                          waitingHighlightRef: React.MutableRefObject<string>,
+                          setHighlight: (messageId: string) => void): [() => void, (element: HTMLDivElement) => void] {
   
   const inViewRef = useRef(new Map<string, number>());
   const messagesRef = useRef(new Map<string, [HTMLDivElement, boolean]>());
@@ -110,9 +117,20 @@ function useScrollRestore(scrollbar: () => HTMLDivElement, lastScrolledTo: Scrol
           inViewRef.current.set(id, time);
         }
       }
-      const notSeen = Number.isNaN(parseInt((target as HTMLElement).dataset.seen))
-      if (intersectionRect.bottom && intersectionRect.bottom <= boundingClientRect.bottom && notSeen) {
+      const notSeen = Number.isNaN(parseInt((target as HTMLElement).dataset.seen));
+      const timestamp = parseInt((target as HTMLElement).dataset.timestamp);
+      if (notSeen && intersectionRect.bottom && intersectionRect.bottom <= boundingClientRect.bottom) {
         target.dispatchEvent(new CustomEvent("seen", { detail: { timestamp: Date.now() }}));
+      }
+      if (timestamp === earliestLoaded() && intersectionRect.top && intersectionRect.top >= boundingClientRect.top) {
+        loadMore();
+      }
+      const waitingHighlight = waitingHighlightRef.current;
+      if (waitingHighlight && id === waitingHighlight && intersectionRect.top && intersectionRect.top >= boundingClientRect.top) {
+        setTimeout(() => {
+          setHighlight(waitingHighlight);
+          waitingHighlightRef.current = null;
+        }, 50);
       }
     }
   }
@@ -279,24 +297,36 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollbar = () => scrollRef.current;
-  const [highlight, setHighlight] = useState("");
+  const [highlighted, setHighlight] = useState("");
   const [isScrolledDown, setIsScrolledDown] = useState(true);
   const wasScrolledDownRef = useRef(true);
   const orientationState = useOrientationState();
   const [replyId, setReplyTo, replyToElement] = useReplyingTo(displayName, setHighlight, belowXL);
-  const [updateCurrentElement, registerMessageRef] = useScrollRestore(scrollbar, lastScrolledTo, setLastScrolledTo, orientationState);
   const [width, ] = useSize(scrollRef);
   const toggleScroll = (scrollOn: boolean) => { 
     scrollbar().style.overflowY = scrollOn ? "scroll" : "hidden";
     scrollbar().style.paddingRight = scrollOn ? "8px" : "14px"
   }
-  const contextData = useMemo(() => ({ chatWith: displayName, highlight, setHighlight, registerMessageRef, setReplyTo, toggleScroll }), [displayName, highlight]);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [chatMessageLists, setChatMessageLists] = useState(chat.messages);
   const [isOnline, setIsOnline] = useState(chat.hasRoom);
   const [isOtherTyping, setIsOtherTyping] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const isFocusedRef = useRef(false);
+  const waitingHighlightRef = useRef("");
+  const [updateCurrentElement, registerMessageRef] = useScrollRestore(scrollbar, lastScrolledTo, setLastScrolledTo, orientationState, () => chat.earliestLoaded, () => chat.canLoadFurther && chat.loadNext(), waitingHighlightRef, setHighlight);
+  const highlightReplied = (messageId: string) => {
+    if (!messageId || chat.hasMessage(messageId)) {
+      setHighlight(messageId);
+    }
+    else {
+      chat.loadUptoId(messageId).then(() => {
+        waitingHighlightRef.current = messageId;
+        setTimeout(() => scrollbar().scrollTo({ top: 0, behavior: "smooth" }), 10);
+      });
+    }
+  }
+  const contextData = useMemo(() => ({ chatWith: displayName, highlighted, highlightReplied, registerMessageRef, setReplyTo, toggleScroll }), [displayName, highlighted]);
 
   const scrollHandler = (event: Event) => {
     const scrollbar = event.target as HTMLDivElement;
@@ -405,6 +435,10 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
               </IconButton>}
         </div>
         <StyledScrollbar ref={scrollRef} sx={{ paddingBottom: 0 }}>
+          {loadingMore &&
+            <div style={{ width: "100%", display: "flex", justifyContent: "center", paddingBlock: "4px"}}>
+              <CircularProgress size="sm" variant="soft" color="success"/>            
+            </div>}
           <MessageCardContext.Provider value={contextData}>
             <MessageListMemo 
               key={displayName} 
