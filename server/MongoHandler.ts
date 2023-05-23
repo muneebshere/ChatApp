@@ -580,7 +580,7 @@ export class MongoUserHandler {
     }
 
     async getMessageById(sessionId: string, messageId: string): Promise<StoredMessage> {
-        return await this.Message.findOne({ sessionId, messageId }).exec();
+        return bufferReplaceFromLean(await this.Message.findOne({ sessionId, messageId }).lean().exec());
     }
 
     async deleteChatRequest(sessionId: string) {

@@ -11,6 +11,7 @@ import { serialize, deserialize } from "../../shared/cryptoOperator";
 import * as esrp from "../../shared/ellipticSRP";
 import { ErrorStrings, Failure, Username, UserEncryptedData, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, randomFunctions, failure, PasswordEncryptedData, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, RegisterNewUserChallenge, NewUserData, Profile, RegisterNewUserChallengeResponse, LogInRequest, LogInChallenge, LogInChallengeResponse, UserData, DeliveryInfo  } from "../../shared/commonTypes";
 import { DateTime } from "luxon";
+import { noProfilePictureImage } from "./noProfilePictureImage";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;
@@ -43,7 +44,8 @@ type ClientChatInterface = Readonly<{
     GetMessageById: (data: { messageId: string }, timeout?: number) => Promise<StoredMessage | Failure>,
     StoreMessage: (data: Omit<StoredMessage, "sessionId">, timeout?: number) => Promise<Failure>,
     MessageProcessed: (data: { messageId: string }, timeout?: number) => Promise<Failure>,
-    UpdateChat: (data: Omit<Partial<ChatData> & Omit<ChatData, "chatDetails" | "exportedChattingSession">, "sessionId">, timeout?: number) => Promise<Failure>
+    UpdateChat: (data: Omit<Partial<ChatData> & Omit<ChatData, "chatDetails" | "exportedChattingSession">, "sessionId">, timeout?: number) => Promise<Failure>,
+    notifyClient: () => void
 }>;
 
 type ClientChatRequestInterface = Readonly<{
@@ -94,6 +96,15 @@ function SocketHandler(socket: () => Socket, sessionCrypto: () => SessionCrypto,
     }
     return requestMap as RequestMap;
 }
+
+export type ChatDetails = Readonly<{
+    otherUser: string, 
+    displayName: string, 
+    contactName: string, 
+    profilePicture: string, 
+    lastActivity: DisplayMessage,
+    online: boolean
+}>;
 export class Client {
     private readonly responseMap: Map<SocketServerSideEventsKey, any> = new Map([
         [SocketServerSideEvents.RoomRequested, this.roomRequested] as [SocketServerSideEventsKey, any],
@@ -148,7 +159,8 @@ export class Client {
         },
         UpdateChat: (data, timeout = 0) => {
             return this.#socketHandler.UpdateChat({ sessionId, ...data }, timeout);
-        }
+        },
+        notifyClient: () => this.notifyChange?.()
     })
 
     private addChat(chat: Chat | ChatRequest | AwaitedRequest) {
@@ -158,7 +170,7 @@ export class Client {
         this.notifyChange?.();
     }
 
-    private removeChat(key: string, keyType: "username" | "sessionId") {
+    private removeChat(key: string, keyType: "username" | "sessionId", dontNotify = false) {
         const chat = keyType === "username" ? this.chatUsernamesList.get(key) : this.chatSessionIdsList.get(key);
         this.chatSessionIdsList.delete(chat.sessionId);
         this.chatUsernamesList.delete(chat.otherUser);
@@ -166,23 +178,29 @@ export class Client {
         if (chat.type === "Chat") {
             chat.disconnectRoom();
         }
-        this.notifyChange?.();
+        dontNotify || this.notifyChange?.();
     }
 
     public getChatByUser(otherUser: string): Chat | ChatRequest | AwaitedRequest {
         return this.chatUsernamesList.get(otherUser);
     }
 
-    public getChatDetailsByUser(otherUser: string): { displayName?: string, contactName?: string, profilePicture?: string, lastActive: number } {
+    public getChatDetailsByUser(otherUser: string): ChatDetails {
         const chat = this.chatUsernamesList.get(otherUser);
         if (!chat) return null;
-        const { lastActive } = chat;
         if ("contactDetails" in chat) {
             const { contactDetails: { displayName, profilePicture, contactName } } = chat;
-            return { displayName, contactName, profilePicture, lastActive };
+            if ("lastActivity" in chat) {
+                const { lastActivity, hasRoom: online } = chat;
+                return { otherUser, displayName, contactName, profilePicture, lastActivity, online };
+            }
+            else {
+                return { otherUser, displayName, contactName, profilePicture, lastActivity: chat.chatMessage.displayMessage, online: false };
+            }
         }
         else {
-            return { displayName: otherUser, lastActive };
+            const profilePicture = noProfilePictureImage;
+            return { otherUser, displayName: otherUser, contactName: "", profilePicture, lastActivity: chat.chatMessage.displayMessage, online: false };
         }
     }
 
@@ -616,7 +634,7 @@ export class Client {
                 return;
             }
             const firstResponse = _.orderBy(result, ["timestamp"], ["asc"])[0];
-            await this.receiveRequestResponse(firstResponse);
+            if (firstResponse) await this.receiveRequestResponse(firstResponse);
         }
         await this.loadChats();
         await this.loadRequests();
@@ -778,7 +796,7 @@ export class Client {
         await this.#socketHandler.CreateChat(chatData);
         await this.#socketHandler.DeleteChatRequest({ sessionId });
         const newChat = await Chat.instantiate(this.#username, this.#encryptionBaseVector, this.chatInterface(sessionId), chatData, { text, messageId, sentByMe: false, timestamp });
-        this.removeChat(sessionId, "sessionId");
+        this.removeChat(sessionId, "sessionId", true);
         this.addChat(newChat);
         return true;
     }
@@ -821,7 +839,7 @@ export class Client {
         }
         await this.#socketHandler.MessageProcessed({ sessionId, messageId });
         const newChat = await Chat.instantiate(this.#username, this.#encryptionBaseVector, this.chatInterface(sessionId), chatData, { messageId, text, timestamp, sentByMe: true, deliveredAt: respondedAt });
-        this.removeChat(sessionId, "sessionId");
+        this.removeChat(sessionId, "sessionId", true);
         this.addChat(newChat);
         await this.requestRoom(newChat);
         return true;
@@ -964,7 +982,7 @@ export class ChatRequest {
     }
 }
 
-type ChatEvent = "room-established" | "room-disconnected" | "typing-change" | "new-received" | "added" | "loading-earlier" | "loaded-earlier" | "received-new"
+type ChatEvent = "room-established" | "room-disconnected" | "typing-change" | "added" | "loading-earlier" | "loaded-earlier" | "received-new"
 
 export class Chat {
     private disposed = false;
@@ -993,6 +1011,8 @@ export class Chat {
 
     get lastActive() { return this.lastActive_; }
 
+    get lastActivity() { return this.lastActivity_; }
+
     get messages() { 
         return Array.from(this.chatMessageLists.entries())
                 .sort(([d1,], [d2,]) => DateTime.fromISO(d1).toMillis() - DateTime.fromISO(d2).toMillis())
@@ -1005,12 +1025,13 @@ export class Chat {
         window.clearTimeout(this.typingTimeout);
         if (this.otherTyping !== value) {
             this.otherTyping = value;
+            this.notifyActivity?.();
             this.notify?.("typing-change");
         }
         if (value) {
             this.typingTimeout = window.setTimeout(() => {
                 this.isOtherTyping = false;
-            }, 3000);
+            }, 1500);
         }
     }
 
@@ -1034,8 +1055,9 @@ export class Chat {
         this.#socket?.off(`${this.otherUser} -> ${this.me}`);
         this.#socket = null;
         this.#sessionCrypto = null;
-        this.disposed = true;
         this.notify?.("room-disconnected");
+        this.notifyActivity?.();
+        this.clientInterface.notifyClient();
     }
 
     private constructor(sessionId: string, me: string, recipientDetails: Contact, encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chattingSession: ChattingSession) {
@@ -1060,7 +1082,7 @@ export class Chat {
             const delivery = { delivered: deliveredAt, seen: deliveredAt };
             await chat.encryptStoreMessage({ messageId, text, timestamp, sentByMe, delivery }, false);
         }
-        chat.loadNext().then(() => chat.loadUnprocessedMessages());
+        await chat.loadUnprocessedMessages().then(() => chat.loadNext());
         return chat;
     }
 
@@ -1083,6 +1105,7 @@ export class Chat {
         this.#socket.on("disconnect", () => {
             this.disconnectRoom();
         })
+        this.notifyActivity?.();
         this.loadUnprocessedMessages();
         this.notify?.("room-established");
     }
@@ -1115,8 +1138,13 @@ export class Chat {
             return false;
         }
         await this.clientInterface.StoreMessage(await encryptedMessage);
-        this.messagesList.get(messageId)?.signalEvent("sent", Date.now());
-        const { lastActive_: lastActive } = this;
+        const sentChatMessage = this.messagesList.get(messageId);
+        if (sentChatMessage) {
+            sentChatMessage.signalEvent("sent", Date.now());
+            this.lastActivity_ = sentChatMessage.displayMessage;
+            this.notifyActivity?.();
+        }
+        const { lastActive } = this;
         await this.clientInterface.UpdateChat({ lastActive, exportedChattingSession });
         return true;
     }
@@ -1149,7 +1177,7 @@ export class Chat {
             logError(exportedChattingSession);
             return false;
         }
-        const { lastActive_: lastActive } = this;
+        const { lastActive } = this;
         await this.clientInterface.UpdateChat({ lastActive, exportedChattingSession });
     }
 
@@ -1232,14 +1260,15 @@ export class Chat {
             this.notify?.("added");
         }
         this.messagesList.set(messageId, chatMessageList.messageById(messageId));
-        if (timestamp < this.loadedUpto) {
-            this.loadedUpto = timestamp;
-        }
-        else if (timestamp > this.lastActive_) {
-            this.lastActive_ = timestamp;
+        if (timestamp >= (this.lastActivity_?.timestamp || 0)) {
             this.lastActivity_ = message;
+            this.lastActive_ = timestamp;
             this.notify?.("received-new");
             this.notifyActivity?.();
+            this.clientInterface.notifyClient();
+        }
+        else if (timestamp < this.loadedUpto) {
+            this.loadedUpto = timestamp;
         }
     }
 
@@ -1248,10 +1277,8 @@ export class Chat {
             ack(false);
             return;
         }
-        if (data === "disconnected") {
-            this.#socket?.off(`${this.otherUser} -> ${this.me}`);
-            this.#socket = null;
-            this.#sessionCrypto = null;
+        if (data === "room-disconnected") {
+            this.disconnectRoom();
             return;
         }
         try {
@@ -1306,9 +1333,13 @@ export class Chat {
                 if (chatMessage) {
                     chatMessage.signalEvent(event, timestamp);
                     displayMessage = chatMessage.displayMessage;
+                    if (reportingAbout === this.lastActivity_.messageId) {
+                        this.lastActivity_ = displayMessage;
+                        this.notifyActivity?.();
+                    }
                 }
                 else {
-                    const storedMessage = await this.getMessageById(messageId);
+                    const storedMessage = await this.getMessageById(reportingAbout);
                     if (storedMessage) {
                         const delivery = calculateDelivery(storedMessage.delivery, event, timestamp);
                         displayMessage = { ...storedMessage, delivery };
@@ -1335,7 +1366,7 @@ export class Chat {
             logError(exportedChattingSession);
             return false;
         };
-        const { lastActive_: lastActive } = this;
+        const { lastActive } = this;
         await this.clientInterface.UpdateChat({ lastActive, exportedChattingSession });
         return true;
     }
@@ -1343,6 +1374,7 @@ export class Chat {
     private async populateReplyingTo(id: string): Promise<ReplyingToInfo> {
         if (!id) return null;
         const repliedTo = await this.getMessageById(id);
+        if (!repliedTo) return undefined;
         const replyToOwn = repliedTo.sentByMe;
         const displayText = truncateText(repliedTo.text);
         return { id, replyToOwn, displayText };
@@ -1561,8 +1593,7 @@ function logError(err: any): void {
     console.trace();
 }
 
-function truncateText(text: string) {
-    const maxChar = 200;
+export function truncateText(text: string, maxChar = 200) {
     if (!text) return null;
     if (text.length <= maxChar) return text;
     const truncate = text.indexOf(" ", maxChar);

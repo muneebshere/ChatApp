@@ -154,6 +154,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
   });
 
   useLayoutEffect(() => {
+    if (!registerMessageRef) return;
     const seenListener = (ev: any) => {
       chatMessage.signalEvent("seen", ev.detail.timestamp);
       ev.target.removeEventListener("seen" as any, seenListener);

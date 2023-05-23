@@ -3,7 +3,7 @@ import React, { useState, memo, useRef, useLayoutEffect, useEffect, useMemo, use
 import { useUpdateEffect } from "usehooks-ts";
 import styled from "@emotion/styled";
 import { Theme, useMediaQuery } from "@mui/material";
-import { IconButton, Stack } from "@mui/joy";
+import { Avatar, Badge, IconButton, Stack } from "@mui/joy";
 import { SendRounded, ArrowBackSharp, KeyboardDoubleArrowDownOutlined, CachedSharp } from "@mui/icons-material";
 import { MessageListMemo } from "./MessageList";
 import { useSize } from "./Hooks/useSize";
@@ -15,6 +15,8 @@ import { MessageCardContext } from "./MessageCard";
 import { ReplyingToInfo } from "../../../shared/commonTypes";
 import { Chat, ChatMessageList } from "../client";
 import useResizeObserver from "@react-hook/resize-observer";
+import { match } from "ts-pattern";
+import { flushSync } from "react-dom";
 
 const ScrollDownButton = styled.div`
   display: grid;
@@ -26,7 +28,7 @@ const ScrollDownButton = styled.div`
   z-index: 10;
   background-color: rgba(244, 244, 244, 0.8);
   border: 1px solid #d2d2d2;
-  border-radius: 10px;
+  border-radius: 100%;
   box-shadow: 0px 0px 4px #dadada;
   cursor: pointer;
 
@@ -271,7 +273,7 @@ function useScrollOnResize(scrollbar: () => HTMLDivElement,
 }
 
 const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastScrolledTo }: ChatViewProps) {
-  const { messages, contactDetails: { displayName, contactName } } = chat;
+  const { contactDetails: { displayName, contactName, profilePicture } } = chat;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageRef = useRef(message);
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
@@ -279,6 +281,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   const scrollbar = () => scrollRef.current;
   const [highlight, setHighlight] = useState("");
   const [isScrolledDown, setIsScrolledDown] = useState(true);
+  const wasScrolledDownRef = useRef(true);
   const orientationState = useOrientationState();
   const [replyId, setReplyTo, replyToElement] = useReplyingTo(displayName, setHighlight, belowXL);
   const [updateCurrentElement, registerMessageRef] = useScrollRestore(scrollbar, lastScrolledTo, setLastScrolledTo, orientationState);
@@ -290,13 +293,10 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   const contextData = useMemo(() => ({ chatWith: displayName, highlight, setHighlight, registerMessageRef, setReplyTo, toggleScroll }), [displayName, highlight]);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [chatMessageLists, setChatMessageLists] = useState(chat.messages);
+  const [isOnline, setIsOnline] = useState(chat.hasRoom);
   const [isOtherTyping, setIsOtherTyping] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const onReceivedNew = useCallback(() => {
-    if (isScrolledDown) {
-      window.setTimeout(() => scrollbar().scrollTo({ top: scrollbar().scrollHeight, behavior: "instant" }), 10);
-    }
-  }, [isScrolledDown]);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const isFocusedRef = useRef(false);
 
   const scrollHandler = (event: Event) => {
     const scrollbar = event.target as HTMLDivElement;
@@ -309,30 +309,47 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   }
 
   const debouncedScrollHandler = _.debounce(scrollHandler, 50, { trailing: true, maxWait: 50 });
+  const debouncedSendTyping = _.debounce(() => {
+    if (isFocusedRef.current) {
+      chat.sendEvent("typing", Date.now());
+    }
+  }, 1000, { maxWait: 1000, leading: true, trailing: true });
   
   useScrollOnResize(scrollbar, orientationState.lastOrientation, setIsScrolledDown);
 
+  useUpdateEffect(() => {
+    wasScrolledDownRef.current = isScrolledDown;
+  }, [isScrolledDown]);
+
   useEffect(() => {
     chat.subscribe((event) => {
-      if (event === "typing-change") {
+      if (event === "room-established") {
+        setIsOnline(true);
+      }
+      else if (event === "room-disconnected") {
+        setIsOnline(false);
+      }
+      else if (event === "typing-change") {
         setIsOtherTyping(chat.isOtherTyping);
       }
-      else if (event === "received-new") {
-        onReceivedNew();
-      }
       else if (event === "loading-earlier") {
-        setLoading(true);
+        setLoadingMore(true);
       }
       else if (event === "loaded-earlier") {
-        setLoading(false);
+        setLoadingMore(false);
       }
       else if (event === "added") {
         setChatMessageLists(chat.messages);
       }
+      else if (event === "received-new") {
+        if (wasScrolledDownRef.current) {
+          window.setTimeout(() => scrollbar().scrollTo({ top: scrollbar().scrollHeight, behavior: "instant" }), 10);
+        }
+      }
     });
     return () => {
-      chat.unsubscribe();
       setMessage(messageRef.current);
+      chat.unsubscribe();
     }
   }, []);
 
@@ -363,15 +380,24 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   return (
     <StyledSheet sx={{ height: "100%", display: "flex", flexDirection: "column", overflow: "clip" }}>
       <Stack direction="column" spacing={1} sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column", overflow: "clip" }}>
-        <div style={{ width: "100%", display: "flex", flexDirection: "row" }}>
-          <Stack direction="row" spacing={2} sx={{ flex: 1 }}>
+        <div style={{ width: "100%", display: "flex", flexDirection: "row", borderBottom: "1px solid #d1d1d1", paddingBottom: "8px" }}>
+          <Stack direction="row" spacing={2} sx={{ flex: 1, justifyContent: "left" }}>
             {belowXL && 
               <IconButton variant="outlined" color="neutral" onClick={() => { window.location.hash = "" }}>
                 <ArrowBackSharp sx={{ fontSize: "2rem" }}/>
               </IconButton>}
-            <DisableSelectTypography level="h5" sx={{ textAlign: "left", flex: 0, flexBasis: "content", display: "flex", flexWrap: "wrap", alignContent: "center" }}>
-              {contactName || displayName}
-            </DisableSelectTypography>
+            <Stack direction="row" spacing={2} sx={{ flexGrow: 1, flexWrap: "wrap", alignContent: "center" }}>
+              <Avatar src={profilePicture} size="lg"/>
+              <Stack direction="column" sx={{ justifyContent: "center" }}>
+                <DisableSelectTypography level="h6" fontWeight="lg" sx={{ width: "fit-content" }}>
+                  {contactName || displayName}
+                </DisableSelectTypography>
+                {isOnline &&
+                  <DisableSelectTypography sx={{ fontSize: "14px", color: "#656565", display: "flex", justifyContent: "left" }}>
+                    {isOtherTyping ? "typing..." : "online"}
+                  </DisableSelectTypography>}
+              </Stack>
+            </Stack>
           </Stack>
             {belowXL && 
               <IconButton variant="outlined" color="neutral" onClick={() => window.location.reload() }>
@@ -408,8 +434,18 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
             ref={textareaRef}
             placeholder="Type a message"
             defaultValue={message}
-            onChange={(e) => messageRef.current = e.target.value }
+            onChange={(e) => { 
+              messageRef.current = e.target.value;
+              debouncedSendTyping();
+             }}
             onSubmit={sendMessage}
+            onFocus={() => {
+              isFocusedRef.current = true;
+            } }
+            onBlur={() => {
+              isFocusedRef.current = false;
+              chat.sendEvent("stopped-typing", Date.now());
+            }}
             minRows={1}
             maxRows={5} 
             style={{ flex: 1 }}

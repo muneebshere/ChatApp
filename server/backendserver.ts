@@ -659,12 +659,15 @@ async function createRoom([username1, socket1, sessionCrypto1]: RoomUser, [usern
         const socket2Event = `${username2} -> ${username1}`;
         const forward1 = configureSocket(socket1, sessionCrypto1, socket2, sessionCrypto2, socket1Event);
         const forward2 = configureSocket(socket2, sessionCrypto2, socket1, sessionCrypto1, socket2Event);
-        return () => {
-            socket1?.emit(socket2Event, "disconnected");
-            socket2?.emit(socket1Event, "disconnected");
+        const dispose = () => {
+            socket1?.emit(socket2Event, "room-disconnected");
+            socket2?.emit(socket1Event, "room-disconnected");
             socket1?.off(socket1Event, forward1);
             socket2?.off(socket2Event, forward2);
         }
+        socket1.on("disconnect", dispose);
+        socket2.on("disconnect", dispose);
+        return dispose;
     }
 
     function awaitClientRoomReady(socket: Socket, otherUsername: string) {

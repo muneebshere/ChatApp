@@ -7,7 +7,7 @@ import { ReplayCircleFilledSharp, ReportProblem } from "@mui/icons-material";
 import { DisableSelectTypography, StyledSheet } from "./CommonElementStyles";
 import Sidebar from "./Sidebar";
 import { ChatViewMemo, OrientationState, ScrollState } from "./ChatView";
-import { AwaitedRequest, ChatRequest, Client } from "../client";
+import { AwaitedRequest, ChatDetails, ChatRequest, Client } from "../client";
 import { chats } from "../prvChats";
 import { ChatRequestView } from "./ChatRequestView";
 import { flushSync } from "react-dom";
@@ -25,7 +25,7 @@ export default function Main({ connected, retrying, displayName, client }: MainP
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const typedMessages = useRef(new Map<string, string>());
   const lastScrollPositions = useRef(new Map<string, ScrollState>());
-  const [, triggerRerender] = useState(2);
+  const [chats, setChats] = useState<string[]>(client.chatsList);
   
   useEffect(() => {
     let currentChatWith = window.history.state?.currentChatWith || window.location.hash.slice(1);
@@ -37,7 +37,7 @@ export default function Main({ connected, retrying, displayName, client }: MainP
     setCurrentChatWith(currentChatWith);
     const popStateListener = (event: PopStateEvent) => setCurrentChatWith(event.state?.currentChatWith);
     window.addEventListener("popstate", popStateListener);
-    client.subscribeChange(() => triggerRerender((rerender) => 10 / rerender));
+    client.subscribeChange(() => setChats(Array.from(client.chatsList)));
     return () => window.removeEventListener("popstate", popStateListener);
   }, []);
 
@@ -74,26 +74,19 @@ export default function Main({ connected, retrying, displayName, client }: MainP
   }
 
   return (
-  <Grid container direction="column" sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column" }}>
+  <Grid container direction="column" sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column", paddingTop: "12px" }}>
     <DisconnectedAlert connected={connected} retrying={retrying} client={client}/>
-    <Grid xs={12} sx={{ flex: 0, flexBasis: "content" }}>
-      <StyledSheet id="titleBar">
-        <DisableSelectTypography level="h4" sx={{ textAlign: "center" }}>
-          {displayName}
-        </DisableSelectTypography>
-      </StyledSheet>
-    </Grid>
     <Grid 
       container 
       xs={12} 
       sx={{ flex: 1, flexBasis: 0, minHeight: 0 }}>
       {(!belowXL || !currentChatWith) &&
       <Grid xs={12} xl={3} sx={{ minHeight: 0, maxHeight: "100%", display: "flex", flexDirection: "column" }}>
-        <Sidebar currentChatWith={currentChatWith} openChat={openChat} client={client} belowXL={belowXL}/>
+        <Sidebar currentChatWith={currentChatWith} chats={chats} openChat={openChat} client={client} belowXL={belowXL}/>
       </Grid>}
       {(!belowXL || currentChatWith) &&
       <Grid xs={12} xl={9} sx={{ minHeight: 0, maxHeight: "100%" }}>
-        {getView(currentChatWith)}
+        {chats && getView(currentChatWith)}
       </Grid>}
     </Grid>
   </Grid>)

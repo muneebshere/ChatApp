@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useReducer, useCallback } from "react";
+import React, { useState, useEffect, useReducer, useCallback, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { useEffectOnce, useEventListener } from "usehooks-ts";
 import { Container, CircularProgress } from "@mui/joy";
@@ -11,6 +11,7 @@ import { SignUpContext, defaultSignUpDataReducer, defaultSignUpData, signUpActio
 import { Spacer } from "./components/CommonElementStyles";
 import { ClientEvent, Client } from "./client";
 import { match } from "ts-pattern";
+import tinycolor from "tinycolor2";
 
 export type SubmitResponse = {
   displayName?: string;
@@ -29,6 +30,50 @@ if ("virtualKeyboard" in navigator) {
 }
 
 createRoot(document.getElementById("root")).render(<Root/>);
+
+function createAvatarGenerator(width: number, height: number) {
+  const canvasRef = getCanvas();
+
+  function getCanvas(): [HTMLCanvasElement, CanvasRenderingContext2D] {
+    const canvas = document.createElement("canvas");
+    canvas.height = height;
+    canvas.width = width;
+    const ctx = canvas.getContext("2d");
+    fillRect(ctx);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fontKerning = "none";
+    ctx.font = `100px "Fira Sans", sans-serif`;
+    ctx.moveTo(width, height);
+    return [canvas, ctx];
+  }
+
+  function fillRect(ctx: CanvasRenderingContext2D) {
+    const theta = 2 * Math.PI * Math.random();
+    const x1 = width * (0.5 - Math.cos(theta));
+    const x2 = width * (0.5 + Math.cos(theta));
+    const y1 = height * (0.5 - Math.sin(theta));
+    const y2 = height * (0.5 + Math.sin(theta));
+    const gradient = ctx.createLinearGradient(x1, y1, x2, y2);
+    gradient.addColorStop(0, tinycolor.random().toHexString());
+    gradient.addColorStop(1, tinycolor.random().toHexString());
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  return (displayName: string, username: string) => {
+    const [canvas, ctx] = canvasRef;
+    const initials = 
+      (displayName
+        ? displayName.split(" ").filter((s, i) => i < 2).map((s) => s[0]).join("")
+        : username.substring(0, 2)).toUpperCase();
+    ctx.fillStyle = "#ffffff"
+    ctx.fillText(initials, width/2, height/2);
+    return canvas.toDataURL();
+  }
+}
+
+const generateAvatar = createAvatarGenerator(200, 200);
 
 function Root() {
   return (
@@ -124,8 +169,9 @@ function App() {
   }
 
   function signUp({ displayName, username, password, savePassword }: SubmitResponse) {
+    const profilePicture = generateAvatar(displayName, username);
     displayName ||= username;
-    return client.signUp({ username, displayName, profilePicture: "", description: "" }, password, savePassword);
+    return client.signUp({ username, displayName, profilePicture, description: "Hey there! I am using ChatApp." }, password, savePassword);
   }
 
   return (
