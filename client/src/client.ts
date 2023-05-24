@@ -172,25 +172,6 @@ export default class Client {
         return this.chatUsernamesList.get(otherUser);
     }
 
-    public getChatDetailsByUser(otherUser: string): ChatDetails {
-        const chat = this.chatUsernamesList.get(otherUser);
-        if (!chat) return null;
-        if ("contactDetails" in chat) {
-            const { contactDetails: { displayName, profilePicture, contactName } } = chat;
-            if ("lastActivity" in chat) {
-                const { lastActivity, hasRoom: online } = chat;
-                return { otherUser, displayName, contactName, profilePicture, lastActivity, online };
-            }
-            else {
-                return { otherUser, displayName, contactName, profilePicture, lastActivity: chat.chatMessage.displayMessage, online: false };
-            }
-        }
-        else {
-            const profilePicture = noProfilePictureImage;
-            return { otherUser, displayName: otherUser, contactName: "", profilePicture, lastActivity: chat.chatMessage.displayMessage, online: false };
-        }
-    }
-
     public get chatsList() {
         return _.orderBy(this.chatList, [(chat) => this.getChatByUser(chat).lastActive], ["desc"]);
     }
@@ -613,7 +594,7 @@ export default class Client {
 
     async loadUser() {
         for (const { sessionId, messageId, timestamp, otherUser, text } of this.#x3dhUser.pendingChatRequests) {
-            const awaited = AwaitedRequest(otherUser, sessionId, messageId, timestamp, text );
+            const awaited = new AwaitedRequest(otherUser, sessionId, messageId, timestamp, text );
             this.addChat(awaited);
             const result = await this.#socketHandler.GetUnprocessedMessages({ sessionId });
             if ("reason" in result) {
@@ -656,7 +637,7 @@ export default class Client {
             logError(reason);
             return failure(ErrorStrings.ProcessFailed);
         }
-        this.addChat(AwaitedRequest(otherUser, sessionId, messageId, timestamp, firstMessage));
+        this.addChat(new AwaitedRequest(otherUser, sessionId, messageId, timestamp, firstMessage));
         return { reason: null };
     }
 

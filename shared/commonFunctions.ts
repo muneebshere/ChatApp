@@ -1,7 +1,7 @@
 import { stringify } from "safe-stable-stringify";
 import { Buffer } from "./node_modules/buffer";
 import { isBrowser, isNode, isWebWorker } from "./node_modules/browser-or-node";
-import { Failure } from "./commonTypes";
+import { ErrorStrings, Failure } from "./commonTypes";
 
 export function failure(reason: ErrorStrings, details: any = null): Failure {
     return details ? { reason, details } : { reason };

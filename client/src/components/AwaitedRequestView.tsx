@@ -1,13 +1,13 @@
 import _ from "lodash";
 import React from "react";
 import { Theme, useMediaQuery } from "@mui/material";
-import { IconButton, Stack } from "@mui/joy";
-import { ArrowBackSharp } from "@mui/icons-material";
+import { Stack } from "@mui/joy";
 import { DayCard } from "./MessageList";
 import { StyledSheet, DisableSelectTypography } from "./CommonElementStyles";
 import MessageCard from "./MessageCard";
 import { DateTime } from "luxon";
 import { AwaitedRequest } from "../chatClasses";
+import { ChatHeaderMemo } from "./ChatHeader";
 
 
 type AwaitedRequestViewProps = {
@@ -15,7 +15,8 @@ type AwaitedRequestViewProps = {
 }
 
 export function AwaitedRequestView({ awaitedRequest }: AwaitedRequestViewProps) {
-  const { lastActive: lastActivity, chatMessage, otherUser } = awaitedRequest;
+  const { details: chatDetails, chatMessage, otherUser } = awaitedRequest;
+  const { lastActivity: { timestamp: lastActive } } = chatDetails;
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
 
   return (
@@ -24,17 +25,9 @@ export function AwaitedRequestView({ awaitedRequest }: AwaitedRequestViewProps) 
                       flexDirection: "column", 
                       overflow: "clip" }}>
       <Stack direction="column" spacing={2}>
-        <Stack direction="row" spacing={2}>
-          {belowXL && 
-            <IconButton variant="outlined" color="neutral" onClick={() => { window.location.hash = "" }}>
-              <ArrowBackSharp sx={{ fontSize: "2rem" }}/>
-            </IconButton>}
-          <DisableSelectTypography level="h5" sx={{ textAlign: "left", flex: 0, flexBasis: "content", display: "flex", flexWrap: "wrap", alignContent: "center" }}>
-            {otherUser}
-          </DisableSelectTypography>
-        </Stack>
+        <ChatHeaderMemo {...{ belowXL, chatDetails }}/>
         <div style={{ width: "100%", display: "flex", justifyContent: "center" }}>
-          <DayCard date={DateTime.fromMillis(lastActivity).toISODate()}/>
+          <DayCard date={DateTime.fromMillis(lastActive).toISODate()}/>
         </div>
         <DisableSelectTypography level="body2" sx={{ width: "100%", textAlign: "center", color: "lightgrey" }}>
           You sent a chat request to @{otherUser}. Wait for them to respond.

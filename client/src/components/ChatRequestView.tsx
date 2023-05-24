@@ -1,13 +1,13 @@
 import _ from "lodash";
-import React from "react";
+import React, { useLayoutEffect } from "react";
 import { Theme, useMediaQuery } from "@mui/material";
-import { Button, IconButton, Stack } from "@mui/joy";
-import { ArrowBackSharp } from "@mui/icons-material";
+import { Button, Stack } from "@mui/joy";
 import { DayCard } from "./MessageList";
 import { StyledSheet, DisableSelectTypography } from "./CommonElementStyles";
 import MessageCard from "./MessageCard";
 import { DateTime } from "luxon";
 import { ChatRequest } from "../chatClasses";
+import { ChatHeaderMemo } from "./ChatHeader";
 
 
 type ChatRequestViewProps = {
@@ -15,8 +15,11 @@ type ChatRequestViewProps = {
 }
 
 export function ChatRequestView({ chatRequest }: ChatRequestViewProps) {
-  const { contactDetails: { displayName }, lastActive: lastActivity, chatMessage, otherUser } = chatRequest;
+  const { details: chatDetails, chatMessage, otherUser } = chatRequest;
+  const { lastActivity: { timestamp: lastActive } } = chatDetails;
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
+
+  useLayoutEffect(() => chatRequest.markVisited(), []);
 
   return (
     <StyledSheet sx={{ height: "100%", 
@@ -24,17 +27,9 @@ export function ChatRequestView({ chatRequest }: ChatRequestViewProps) {
                       flexDirection: "column", 
                       overflow: "clip" }}>
       <Stack direction="column" spacing={2}>
-        <Stack direction="row" spacing={2}>
-          {belowXL && 
-            <IconButton variant="outlined" color="neutral" onClick={() => { window.location.hash = "" }}>
-              <ArrowBackSharp sx={{ fontSize: "2rem" }}/>
-            </IconButton>}
-          <DisableSelectTypography level="h5" sx={{ textAlign: "left", flex: 0, flexBasis: "content", display: "flex", flexWrap: "wrap", alignContent: "center" }}>
-            {displayName}
-          </DisableSelectTypography>
-        </Stack>
+        <ChatHeaderMemo {...{ belowXL, chatDetails }}/>
         <div style={{ width: "100%", display: "flex", justifyContent: "center" }}>
-          <DayCard date={DateTime.fromMillis(lastActivity).toISODate()}/>
+          <DayCard date={DateTime.fromMillis(lastActive).toISODate()}/>
         </div>
         <DisableSelectTypography level="body2" sx={{ width: "100%", textAlign: "center", color: "lightgrey" }}>
           You have received a chat request from @{otherUser}. Accept chat request to reply.

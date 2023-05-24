@@ -1,12 +1,13 @@
 import _ from "lodash";
-import React, { useState, useRef, useMemo, useEffect } from "react";
-import { Avatar, Badge, Card, IconButton, Input, List, ListItem, ListItemButton, Stack } from "@mui/joy";
+import React, { useState, useRef, useMemo, useLayoutEffect } from "react";
+import { Avatar, Badge, IconButton, Input, List, ListItem, ListItemButton, Stack } from "@mui/joy";
 import { PersonAddAltOutlined, Search, ClearSharp, HourglassTop, DoneAllSharp, DoneSharp } from "@mui/icons-material";
 import { NewChatPopup, NewMessageDialog } from "./NewChat";
 import { DisableSelectTypography, StyledScrollbar } from "./CommonElementStyles";
 import Client from "../client";
 import { DateTime } from "luxon";
 import { truncateText } from "../../../shared/commonFunctions";
+import { AwaitedRequest, Chat, ChatRequest } from "../chatClasses";
 
 type SidebarProps = {
   currentChatWith: string,
@@ -29,14 +30,8 @@ export default function Sidebar({ currentChatWith, openChat, chats, client, belo
     return (await client.checkUsernameExists(username)) ? (username !== client.username ? "" : "Cannot chat with yourself.") : "No such user.";
   }
 
-  function matchesSearch(otherUser: string) {
-    const searchLowerCase = search.toLowerCase();
-    const { displayName, contactName } = client.getChatDetailsByUser(otherUser);
-    return displayName.toLowerCase().includes(searchLowerCase) || (contactName && contactName.toLowerCase().includes(searchLowerCase));
-  }
-
   return (
-    <Stack direction="column" style={{ height: "100%" }}>
+  <Stack direction="column" style={{ height: "100%" }}>
       <NewMessageDialog
         newChatWith={newChatWith} 
         warn={warn} 
@@ -93,9 +88,10 @@ export default function Sidebar({ currentChatWith, openChat, chats, client, belo
       <StyledScrollbar>
         <List variant="plain" color="neutral">
           {chats
-            .filter((otherUser) => !search || matchesSearch(otherUser))
-            .map((otherUser) => (<ListItem key={otherUser}>
-              <ChatCard otherUser={otherUser} client={client} isCurrent={currentChatWith === otherUser} setCurrent={() => openChat(otherUser) }/>
+            .map((otherUser) => [otherUser, client.getChatByUser(otherUser)] as const)
+            .filter(([, chat]) => !search || chat.matchesName(search))
+            .map(([otherUser, chat]) => (<ListItem key={otherUser}>
+              <ChatCard chat={chat} isCurrent={currentChatWith === otherUser} setCurrent={() => openChat(otherUser) }/>
             </ListItem>))}
         </List>            
       </StyledScrollbar>
@@ -103,17 +99,15 @@ export default function Sidebar({ currentChatWith, openChat, chats, client, belo
 }
 
 type ChatCardProps = Readonly<{
-  otherUser: string,
-  client: Client,
+  chat: Chat | ChatRequest | AwaitedRequest
   isCurrent: boolean,
   setCurrent: () => void
 }>;
 
-function ChatCard({ otherUser, client, isCurrent, setCurrent }: ChatCardProps) {
-  const [chatDetails, setChatDetails] = useState(client.getChatDetailsByUser(otherUser));
-  const { displayName, contactName, profilePicture, lastActivity, online } = chatDetails;
+function ChatCard({ chat, isCurrent, setCurrent }: ChatCardProps) {
+  const [chatDetails, setChatDetails] = useState(chat.details);
+  const { displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages } = chatDetails;
   const { text, timestamp, sentByMe, delivery } = lastActivity;
-  const [isTyping, setIsTyping] = useState(false);
   const status = useMemo(() => {
     if (!sentByMe) return null;
     if (!delivery) return <HourglassTop sx={{ color: "gold", rotate: "-90deg", fontSize: "1rem", marginRight: "4px" }}/>;
@@ -134,15 +128,12 @@ function ChatCard({ otherUser, client, isCurrent, setCurrent }: ChatCardProps) {
     return dt.toFormat("dd/LL/y");
   }
 
-  useEffect(() => {
-    const chat = client.getChatByUser(otherUser);
-    if (chat?.type === "Chat") {
-      chat.subscribeActivity(() => {
-        setChatDetails(client.getChatDetailsByUser(otherUser));
-        setIsTyping(chat.isOtherTyping);
-      })
-    }
+  useLayoutEffect(() => {
+    chat.subscribeActivity(() => setChatDetails(chat.details));
+
+    return () => chat.unsubscribeActivity();
   }, []);
+
   return (<ListItemButton 
     onClick={() => setCurrent()} 
     selected={isCurrent} 
@@ -150,7 +141,7 @@ function ChatCard({ otherUser, client, isCurrent, setCurrent }: ChatCardProps) {
     variant={isCurrent ? "soft" : "plain"}
     color="success">
     <Stack direction="row" spacing={2} sx={{ flexGrow: 1 }}>
-      <Badge variant="solid" color="success" badgeInset="10%" invisible={!online} sx={{ height: "fit-content", margin: "auto" }}>
+      <Badge variant="solid" color="success" badgeInset="10%" invisible={!isOnline} sx={{ height: "fit-content", margin: "auto" }}>
         <Avatar src={profilePicture} size="lg"/>
       </Badge>
       <Stack direction="column" sx={{ flexGrow: 1 }}>
@@ -159,15 +150,36 @@ function ChatCard({ otherUser, client, isCurrent, setCurrent }: ChatCardProps) {
             {contactName || displayName}
           </DisableSelectTypography>
           <div style={{ flexGrow: 1, display: "flex", flexWrap: "wrap", justifyContent: "right", alignContent: "center" }}>
-            <DisableSelectTypography level="body3" component="span" sx={{ height: "fit-content" }}>
+            <DisableSelectTypography level="body3" component="span" sx={{ height: "fit-content", color: unreadMessages ? "#1fa855" : "#656565" }}>
               {formatTime()}
             </DisableSelectTypography>
           </div>
         </div>
-        <DisableSelectTypography sx={{ fontSize: "14px", color: isTyping ? "#1fa855" : "#656565" }}>
-          {!isTyping && status}
-          {isTyping ? "typing..." : truncateText(text, 50)}
-        </DisableSelectTypography>
+        <div style={{ display: "flex", flexDirection: "row" }}>
+          <DisableSelectTypography sx={{ flexGrow: 1, fontSize: "15px", color: isOtherTyping ? "#1fa855" : "#656565" }}>
+            {!isOtherTyping && status}
+            {isOtherTyping ? "typing..." : truncateText(text, 50)}
+          </DisableSelectTypography>
+          {!!unreadMessages &&
+            <div style={{ marginBlock: "auto", 
+                          marginInline: "5px",
+                          display: "flex",
+                          flexWrap: "wrap",
+                          justifyContent: "center",
+                          alignContent: "center",
+                          textAlign: "center",
+                          paddingBlock: "1px",
+                          paddingInline: "2px",
+                          height: "20px",
+                          width: "20px",
+                          fontSize: "12px",
+                          fontWeight: "800",
+                          borderRadius: "100%", 
+                          backgroundColor: "#1fa855", 
+                          color: "white" }}>
+              {unreadMessages < 10 ? unreadMessages : "9+"}
+            </div>}
+        </div>
       </Stack>
     </Stack>
   </ListItemButton>)
