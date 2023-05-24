@@ -9,7 +9,7 @@ import Main from "./components/Main";
 import { LogInContext, defaultLogInDataReducer, defaultLogInData, logInAction } from "./components/Login";
 import { SignUpContext, defaultSignUpDataReducer, defaultSignUpData, signUpAction } from "./components/Signup";
 import { Spacer } from "./components/CommonElementStyles";
-import { ClientEvent, Client } from "./client";
+import Client, { ClientEvent } from "./client";
 import { match } from "ts-pattern";
 import tinycolor from "tinycolor2";
 

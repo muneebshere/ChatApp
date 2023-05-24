@@ -2,7 +2,6 @@ import _ from "lodash";
 import { DateTime } from "luxon";
 import { config } from "./node_modules/dotenv";
 import { ServerOptions, createServer } from "node:https";
-import { stringify } from "safe-stable-stringify";
 import fs, { promises as fsPromises } from "node:fs";
 import session, { Session, CookieOptions as SessionCookieOptions, SessionOptions } from "express-session";
 import cookieParser from "cookie-parser";
@@ -14,8 +13,8 @@ import { Server as SocketServer, Socket } from "socket.io";
 import { Buffer } from "./node_modules/buffer";
 import { SessionCrypto } from "../shared/sessionCrypto";
 import * as crypto from "../shared/cryptoOperator";
-import { serialize } from "../shared/cryptoOperator";
-import { failure, Failure, ErrorStrings, Username, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, PasswordDeriveInfo, randomFunctions, ChatRequestHeader, KeyBundle, UserEncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, typedEntries, RegisterNewUserRequest, RegisterNewUserChallenge, RegisterNewUserChallengeResponse, NewUserData, LogInRequest, LogInChallenge, UserData, LogInChallengeResponse } from "../shared/commonTypes";
+import { Failure, ErrorStrings, Username, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, KeyBundle, UserEncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, RegisterNewUserChallenge, RegisterNewUserChallengeResponse, NewUserData, LogInRequest, LogInChallenge, UserData, LogInChallengeResponse } from "../shared/commonTypes";
+import { failure, fromBase64, logError, randomFunctions, typedEntries } from "../shared/commonFunctions";
 import { MongoHandlerCentral, MongoUserHandler, bufferReplaceForMongo } from "./MongoHandler";
 import * as esrp from "../shared/ellipticSRP";
 
@@ -27,7 +26,7 @@ catch (e) {
     console.log("Could not load config.env");
 }
 
-const { getRandomVector, getRandomString } = randomFunctions();
+const { getRandomString } = randomFunctions();
 const sleep = (timeInMillis: number) => new Promise((resolve, _) => { setTimeout(resolve, timeInMillis); });
 const PORT = 8080;
 
@@ -767,21 +766,6 @@ function isDoc(docObj: any): boolean {
         return Object.entries(docObj).some(([_, v]) => isDoc(v));
     }
     return false;
-}
-
-function logError(err: any): void {
-    const message = err.message;
-    if (message) {
-        console.log(`${message}`);
-    }
-    else {
-        console.log(`${stringify(err)}`);
-    }
-    console.trace();
-}
-
-function fromBase64(data: string) {
-    return Buffer.from(data, "base64");
 }
 
 function parseIpRepresentation(address: string) {

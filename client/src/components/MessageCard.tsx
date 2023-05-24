@@ -21,7 +21,7 @@ import { DisplayMessage, ReplyingToInfo, DeliveryInfo } from "../../../shared/co
 import { ElementRects } from "@floating-ui/react";
 import useSwipeDrag from "./Hooks/useSwipeDrag";
 import { SxProps } from "@mui/material";
-import { ChatMessage } from "../client";
+import { ChatMessage } from "../chatClasses";
 
 interface HTMLDivElementScroll extends HTMLDivElement {
   scrollIntoViewIfNeeded(centerIfNeeded?: boolean): void;

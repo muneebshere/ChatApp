@@ -1,22 +1,20 @@
 import _ from "lodash";
-import React, { useState, memo, useRef, useLayoutEffect, useEffect, useMemo, useCallback } from "react";
+import React, { useState, memo, useRef, useLayoutEffect, useEffect, useMemo } from "react";
 import { useUpdateEffect } from "usehooks-ts";
 import styled from "@emotion/styled";
 import { Theme, useMediaQuery } from "@mui/material";
-import { Avatar, Badge, CircularProgress, IconButton, Stack } from "@mui/joy";
+import { Avatar, CircularProgress, IconButton, Stack } from "@mui/joy";
 import { SendRounded, ArrowBackSharp, KeyboardDoubleArrowDownOutlined, CachedSharp } from "@mui/icons-material";
 import { MessageListMemo } from "./MessageList";
 import { useSize } from "./Hooks/useSize";
 import { StyledSheet, StyledScrollbar, DisableSelectTypography } from "./CommonElementStyles";
 import { StyledScrollingTextarea } from "./TextareaAutosize";
-import { chats, truncateText } from "../prvChats";
 import { ReplyingToProps, ReplyingToMemo } from "./ReplyingTo";
 import { MessageCardContext } from "./MessageCard";
 import { ReplyingToInfo } from "../../../shared/commonTypes";
-import { Chat, ChatMessageList } from "../client";
 import useResizeObserver from "@react-hook/resize-observer";
-import { match } from "ts-pattern";
-import { flushSync } from "react-dom";
+import { Chat } from "../chatClasses";
+import { truncateText } from "../../../shared/commonFunctions";
 
 const ScrollDownButton = styled.div`
   display: grid;

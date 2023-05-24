@@ -4,9 +4,9 @@ import { Avatar, Badge, Card, IconButton, Input, List, ListItem, ListItemButton,
 import { PersonAddAltOutlined, Search, ClearSharp, HourglassTop, DoneAllSharp, DoneSharp } from "@mui/icons-material";
 import { NewChatPopup, NewMessageDialog } from "./NewChat";
 import { DisableSelectTypography, StyledScrollbar } from "./CommonElementStyles";
-import { AwaitedRequest, Chat, ChatDetails, ChatRequest, Client, truncateText } from "../client";
-import { DisplayMessage } from "../../../shared/commonTypes";
+import Client from "../client";
 import { DateTime } from "luxon";
+import { truncateText } from "../../../shared/commonFunctions";
 
 type SidebarProps = {
   currentChatWith: string,

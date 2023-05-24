@@ -1,8 +1,8 @@
-import { SignedEncryptedData, randomFunctions } from "./commonTypes";
+import { SignedEncryptedData } from "./commonTypes";
 import * as crypto from "./cryptoOperator";
 import { serialize, deserialize } from "./cryptoOperator";
 import { Buffer } from "./node_modules/buffer";
-import BufferSerializer from "./custom_modules/buffer-serializer";
+import { fromBase64, randomFunctions } from "./commonFunctions";
 
 const { getRandomVector } = randomFunctions();
 
@@ -35,7 +35,7 @@ export class SessionCrypto {
 
     async decryptVerifyFromBase64(serializedData: string, purpose: string): Promise<any> {
         try {
-            const data: SignedEncryptedMessage | SignedEncryptedMessage = deserialize(Buffer.from(serializedData, "base64"));
+            const data: SignedEncryptedMessage | SignedEncryptedMessage = deserialize(fromBase64(serializedData));
             const { sessionReference, salt } = data;
             if (sessionReference !== this.#sessionReference)
                 return null;

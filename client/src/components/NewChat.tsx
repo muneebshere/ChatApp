@@ -7,7 +7,6 @@ import { CloseButton, DisableSelectTypography } from "./CommonElementStyles";
 import ControlledTextField from "./ControlledTextField";
 import { StyledScrollingTextarea } from "./TextareaAutosize";
 import { Placement } from "@floating-ui/react";
-import { useIsFirstRender } from "usehooks-ts";
 
 type NewChatPopupProps = {
   initialChatWith?: string,

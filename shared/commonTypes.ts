@@ -1,45 +1,5 @@
 import _ from "lodash";
 import { Buffer } from "./node_modules/buffer/";
-import { isBrowser, isNode, isWebWorker } from "./node_modules/browser-or-node";
-
-export function randomFunctions() {
-    let crypto: any = null;
-    if (isNode) { 
-        crypto = eval(`require("node:crypto").webcrypto`);
-    }
-    else if (isBrowser) {
-        crypto = window.crypto;
-    }
-    else if (isWebWorker) {
-        crypto = self.crypto;
-    }
-    if (crypto === null) {
-        throw "No crypto in this environment";
-    }
-    function getRandomVector(bytes: number): Buffer {
-        let rv = new Uint8Array(bytes);
-        crypto.getRandomValues(rv);
-        return Buffer.from(rv);
-      }
-    function getRandomString(chars: number, base: "base64" | "hex") {
-        const bitsPerChar = base === "hex" ? 4 : 6;
-        const bytes = Math.ceil((chars * bitsPerChar) / 8);
-        return getRandomVector(bytes).toString(base).slice(0, chars);
-    }
-    return { getRandomVector, getRandomString };
-}
-
-export function failure(reason: ErrorStrings, details: any = null): Failure {
-    return details ? { reason, details } : { reason };
-}
-
-export function getPromise<T>(): [Promise<T>, (result: T) => void] {
-    let resolve: (result: T) => void;
-    const promise = new Promise<T>((res) => {
-        resolve = res;
-    });
-    return [promise, resolve];
-}
 
 export type ExposedSignedPublicKey = Readonly<{
     exportedPublicKey: Buffer;
@@ -375,12 +335,4 @@ export enum ErrorStrings {
     IncorrectData = "IncorrectData",
     IncorrectPassword = "IncorrectPassword",
     TooManyWrongTries = "TooManyWrongTries"
-}
-
-export type Entry<T> = { 
-    [K in keyof T]: [K, T[K]] 
-}[keyof T]
-
-export function typedEntries<T extends {}>(object: T): ReadonlyArray<Entry<T>> {
-  return Object.entries(object) as unknown as ReadonlyArray<Entry<T>>; 
 }

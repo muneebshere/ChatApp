@@ -1,20 +1,13 @@
 import _ from "lodash";
-import React, { useState, memo, useRef, useLayoutEffect, useEffect, useCallback } from "react";
-import { flushSync } from "react-dom";
-import { useUpdateEffect } from "usehooks-ts";
-import { useInView } from "react-intersection-observer";
-import styled from "@emotion/styled";
+import React from "react";
 import { Theme, useMediaQuery } from "@mui/material";
-import { Button, IconButton, Stack, Typography } from "@mui/joy";
-import { SendRounded, ArrowBackSharp, KeyboardDoubleArrowDownOutlined } from "@mui/icons-material";
+import { IconButton, Stack } from "@mui/joy";
+import { ArrowBackSharp } from "@mui/icons-material";
 import { DayCard } from "./MessageList";
-import { useSize } from "./Hooks/useSize";
-import { StyledSheet, StyledScrollbar, DisableSelectTypography } from "./CommonElementStyles";
-import { StyledScrollingTextarea } from "./TextareaAutosize";
-import { chats } from "../prvChats";
-import { AwaitedRequest, ChatRequest } from "../client";
+import { StyledSheet, DisableSelectTypography } from "./CommonElementStyles";
 import MessageCard from "./MessageCard";
 import { DateTime } from "luxon";
+import { AwaitedRequest } from "../chatClasses";
 
 
 type AwaitedRequestViewProps = {

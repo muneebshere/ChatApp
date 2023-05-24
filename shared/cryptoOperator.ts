@@ -2,9 +2,10 @@ import _ from "lodash";
 import { isBrowser, isNode, isWebWorker } from "./node_modules/browser-or-node";
 import { Buffer } from "./node_modules/buffer";
 import BufferSerializer from "./custom_modules/buffer-serializer";
-import { EncryptedData, SignedEncryptedData, EncryptInfo, PasswordDeriveInfo, randomFunctions, SignedKeyPair, ExposedSignedPublicKey, ExportedSigningKeyPair, ExportedSignedKeyPair, UserEncryptedData } from "./commonTypes";
+import { EncryptedData, SignedEncryptedData, EncryptInfo, PasswordDeriveInfo, SignedKeyPair, ExposedSignedPublicKey, ExportedSigningKeyPair, ExportedSignedKeyPair, UserEncryptedData } from "./commonTypes";
 import BufferWriter from "./custom_modules/buffer-serializer/types/buffer-writer";
 import BufferReader from "./custom_modules/buffer-serializer/types/buffer-reader";
+import { randomFunctions } from "./commonFunctions";
 
 export const serializer = new BufferSerializer();
 const serializeToB64 = (arg: any) => serialize(arg).toString("base64");

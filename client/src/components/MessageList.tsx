@@ -8,8 +8,8 @@ import MessageCard from "./MessageCard";
 import { DisplayMessage } from "../../../shared/commonTypes";
 import { ElementRects } from "@floating-ui/react";
 import { DisableSelectTypography } from "./CommonElementStyles";
-import { ChatMessage, ChatMessageList } from "../client";
 import { useEffectOnce } from "usehooks-ts";
+import { ChatMessageList } from "../chatClasses";
 
 function formatDate(date: string): string {
   const dt = DateTime.fromISO(date);

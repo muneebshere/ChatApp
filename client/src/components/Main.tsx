@@ -1,16 +1,12 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from "react";
-import { useEffectOnce } from "usehooks-ts";
-import { useInView } from "react-intersection-observer";
+import React, { useState, useRef, useEffect } from "react";
 import { Alert, Grid, IconButton, LinearProgress, Stack } from "@mui/joy";
 import { useMediaQuery, Theme, SxProps } from "@mui/material";
 import { ReplayCircleFilledSharp, ReportProblem } from "@mui/icons-material";
 import { DisableSelectTypography, StyledSheet } from "./CommonElementStyles";
 import Sidebar from "./Sidebar";
-import { ChatViewMemo, OrientationState, ScrollState } from "./ChatView";
-import { AwaitedRequest, ChatDetails, ChatRequest, Client } from "../client";
-import { chats } from "../prvChats";
+import { ChatViewMemo, ScrollState } from "./ChatView";
+import Client from "../client";
 import { ChatRequestView } from "./ChatRequestView";
-import { flushSync } from "react-dom";
 import { AwaitedRequestView } from "./AwaitedRequestView";
 
 type MainProps = { 

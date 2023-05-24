@@ -1,8 +1,9 @@
 import { Buffer } from "./node_modules/buffer";
 import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
-import { ExposedSignedPublicKey, SignedKeyPair, ExportedSignedKeyPair, ExportedSigningKeyPair, KeyBundle, MessageHeader, ChatRequestHeader, randomFunctions, UserEncryptedData, Profile, getPromise } from "../../shared/commonTypes";
+import { ExposedSignedPublicKey, SignedKeyPair, ExportedSignedKeyPair, ExportedSigningKeyPair, KeyBundle, MessageHeader, ChatRequestHeader, UserEncryptedData, Profile } from "../../shared/commonTypes";
 import { Queue } from "async-await-queue";
+import { randomFunctions } from "../../shared/commonFunctions";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 
