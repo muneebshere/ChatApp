@@ -62,7 +62,7 @@ export type Contact = Profile & {
     readonly contactName?: string;
 }
 
-export type ReplyingToInfo = Readonly<{ id: string, replyToOwn: boolean, displayText: string }>;
+export type ReplyingToInfo = Readonly<{ replyId: string, replyToOwn: boolean, displayText: string }>;
 
 export type DeliveryInfo = Readonly<({
     delivered: false;
@@ -74,7 +74,7 @@ export type DeliveryInfo = Readonly<({
 
 export type DisplayMessage =Readonly<{
     messageId: string;
-    replyingTo?: ReplyingToInfo;
+    replyingToInfo?: ReplyingToInfo;
     timestamp: number;
     text: string;
     sentByMe: boolean;
@@ -122,9 +122,26 @@ export type ChatData = Readonly<{
   exportedChattingSession: UserEncryptedData
 }>;
 
+export type Receipt = Readonly<{
+    addressedTo: string,
+    sessionId:string,
+    messageId: string,
+    signature: string,
+    bounced: boolean
+}>;
+
 export type Username = { 
     readonly username: string 
 };
+
+export type SessionIdentifier = {
+    readonly sessionId: string;
+};
+
+export type MessageIdentifier = Readonly<{
+    sessionId: string;
+    messageId: string;
+}>;
 
 export type Failure = Readonly<{
     reason: string;
@@ -191,9 +208,11 @@ enum SocketClientSideEventsEnum {
     ConcludeLogIn,
     InitiateLogInSaved,
     ConcludeLogInSaved,
+
     PublishKeyBundles,
     UpdateX3DHUser,
     RequestKeyBundle,
+
     GetAllChats,
     GetAllRequests,
     GetUnprocessedMessages,
@@ -201,13 +220,24 @@ enum SocketClientSideEventsEnum {
     GetMessagesUptoTimestamp,
     GetMessagesUptoId,
     GetMessageById,
+
     StoreMessage,
     CreateChat,
     UpdateChat,
+
     SendChatRequest,
     SendMessage,
     MessageProcessed,
     DeleteChatRequest,
+
+    StoreBackup,
+    GetBackupById,
+    BackupProcessed,
+
+    SendReceipt,
+    GetAllReceipts,
+    ClearAllReceipts,
+
     LogOut,
     RequestRoom,
     TerminateCurrentSession
@@ -243,18 +273,24 @@ type SocketClientRequestParametersMap = {
     RequestKeyBundle: Username,
     GetAllChats: [],
     GetAllRequests: [],
-    GetUnprocessedMessages: { sessionId: string },
-    GetMessagesByNumber: { sessionId: string, limit: number, olderThan?: number },
-    GetMessagesUptoTimestamp: { sessionId: string, newerThan: number, olderThan?: number },
-    GetMessagesUptoId: { sessionId: string, messageId: string, olderThan?: number },
-    GetMessageById: { sessionId: string, messageId: string },
+    GetUnprocessedMessages: SessionIdentifier,
+    GetMessagesByNumber: SessionIdentifier & { limit: number, olderThan?: number },
+    GetMessagesUptoTimestamp: SessionIdentifier & { newerThan: number, olderThan?: number },
+    GetMessagesUptoId: MessageIdentifier & { olderThan?: number },
+    GetMessageById: MessageIdentifier,
     StoreMessage: StoredMessage,
     CreateChat: ChatData,
     UpdateChat: Omit<ChatData, "chatDetails" | "exportedChattingSession" | "createdAt"> & Partial<Omit<ChatData, "createdAt">>,
-    SendChatRequest: { sessionId: string },
+    SendChatRequest: SessionIdentifier,
     SendMessage: MessageHeader,
-    MessageProcessed: { sessionId: string, messageId: string },
-    DeleteChatRequest: { sessionId: string },
+    MessageProcessed: MessageIdentifier,
+    DeleteChatRequest: SessionIdentifier,
+    StoreBackup: StoredMessage,
+    GetBackupById: MessageIdentifier,
+    BackupProcessed: MessageIdentifier,
+    SendReceipt: Receipt,
+    GetAllReceipts: SessionIdentifier,
+    ClearAllReceipts: SessionIdentifier,
     LogOut: Username,
     RequestRoom: Username,
     TerminateCurrentSession: []
@@ -267,7 +303,7 @@ export type SocketClientRequestParameters = {
 
 type SocketClientRequestReturnMap = {
     UsernameExists: { exists: boolean }, 
-    UserLoginPermitted: { tries: number, allowsAt: number }, 
+    UserLoginPermitted: { tries: number, allowsAt: number, isAlreadyOnline: boolean }, 
     InitiateRegisterNewUser: RegisterNewUserChallenge,
     ConcludeRegisterNewUser: never,
     InitiateLogIn: LogInChallenge,
@@ -291,6 +327,12 @@ type SocketClientRequestReturnMap = {
     SendMessage: never,
     MessageProcessed: never,
     DeleteChatRequest: never,
+    StoreBackup: never,
+    GetBackupById: StoredMessage,
+    BackupProcessed: never,
+    SendReceipt: never,
+    GetAllReceipts: Receipt[],
+    ClearAllReceipts: never,
     LogOut: never,
     RequestRoom: never,
     TerminateCurrentSession: never
@@ -304,6 +346,7 @@ enum SocketServerSideEventsEnum {
     CompleteHandshake,
     MessageReceived,
     ChatRequestReceived,
+    ReceiptReceived,
     RoomRequested,
     ClientRoomReady,
     ServerRoomReady

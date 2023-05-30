@@ -60,6 +60,15 @@ export async function allSettledResults<T>(promises: Promise<T>[]): Promise<T[]>
     return (await Promise.allSettled(promises)).filter((result) => result.status === "fulfilled").map((result) => (result as PromiseFulfilledResult<T>).value);
 }
 
+export function awaitCallback<T>(callback: (resolve: (result: T) => void) => Promise<void>, timeout = 0, timeoutResponse: T = null) {
+    return new Promise<T>(async (resolve) => {
+        await callback(resolve);
+        if (timeout) {
+            window.setTimeout(() => resolve(timeoutResponse), timeout);
+        }
+    });
+}
+
 export type Entry<T> = { 
     [K in keyof T]: [K, T[K]] 
 }[keyof T]

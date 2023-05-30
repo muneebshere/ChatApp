@@ -21,7 +21,7 @@ export type ReplyingToProps = ReplyingToInfo & Pick<MessageCardContextData, "cha
 }>
 
 const ReplyingTo = forwardRef(function(replyingTo: ReplyingToProps, ref: ForwardedRef<HTMLDivElement>) {
-  const { chatWith, id: replyId, sentByMe, displayText, replyToOwn, highlightReplied, renderClose } = replyingTo;
+  const { chatWith, replyId, sentByMe, displayText, replyToOwn, highlightReplied, renderClose } = replyingTo;
   const repliedColor = sentByMe ? "#e8fae5" : "#f2f2f2";
   const repliedOutlineColor = replyToOwn ? "#53bdeb" : "#06cf9c";
   const repliedBorderColor = sentByMe ? "#bddcb8" : "#c7c7c7";

@@ -73,13 +73,13 @@ function useReplyingTo(chatWith: string, setHighlight: (highlight: string) => vo
 
   const replyToElement = useMemo(() => {
     if (!replyTo) return null;
-    const { id, displayText: content, replyToOwn } = replyTo;
+    const { replyId, displayText: content, replyToOwn } = replyTo;
     const displayText = truncateText(content, belowXL ? 80 : 200);
-    const replyData: ReplyingToProps = { chatWith, id, displayText, replyToOwn, sentByMe: false, highlightReplied: setHighlight, renderClose: () => setReplyTo(null) };
+    const replyData: ReplyingToProps = { chatWith, replyId, displayText, replyToOwn, sentByMe: false, highlightReplied: setHighlight, renderClose: () => setReplyTo(null) };
     return (<ReplyingToMemo {...replyData}/>);
   }, [replyTo]);
 
-  return [replyTo?.id, setReplyTo, replyToElement];
+  return [replyTo?.replyId, setReplyTo, replyToElement];
 }
 
 function useScrollRestore(scrollbar: () => HTMLDivElement, 
@@ -332,16 +332,19 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
       setIsScrolledDown(true);
       return;
     }
-    setIsScrolledDown(getIsScrolledDown(scrollbar));
+    setIsScrolledDown(getIsScrolledDown(scrollbar, 2));
     updateCurrentElement();
   }
 
   const debouncedScrollHandler = _.debounce(scrollHandler, 50, { trailing: true, maxWait: 50 });
+
   const debouncedSendTyping = _.debounce(() => {
-    if (isFocusedRef.current) {
-      chat.sendEvent("typing", Date.now());
+    if (isFocusedRef.current && chatDetails.isOnline) {
+      chat.sendTyping("typing", Date.now());
     }
   }, 1000, { maxWait: 1000, leading: true, trailing: true });
+
+  useEffect(() => () => debouncedScrollHandler.cancel());
   
   useScrollOnResize(scrollbar, orientationState.lastOrientation, setIsScrolledDown);
 
@@ -382,7 +385,6 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
     window.visualViewport.addEventListener("resize", updateHeight);
 
     return () => {
-      debouncedScrollHandler.cancel();
       scrollRef.current.removeEventListener("scroll", debouncedScrollHandler);
       window.visualViewport.removeEventListener("resize", updateHeight);
     }
@@ -447,7 +449,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
             } }
             onBlur={() => {
               isFocusedRef.current = false;
-              chat.sendEvent("stopped-typing", Date.now());
+              chatDetails.isOnline && chat.sendTyping("stopped-typing", Date.now());
             }}
             minRows={1}
             maxRows={5} 

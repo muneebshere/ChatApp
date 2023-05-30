@@ -4,9 +4,10 @@ import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
 import { Buffer } from "./node_modules/buffer/";
 import { Buffer as NodeBuffer } from "node:buffer";
-import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PasswordEncryptedData, PublishKeyBundlesRequest, StoredMessage, RegisterNewUserRequest, NewUserData, UserEncryptedData } from "../shared/commonTypes";
+import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PasswordEncryptedData, PublishKeyBundlesRequest, StoredMessage, RegisterNewUserRequest, NewUserData, UserEncryptedData, Receipt } from "../shared/commonTypes";
 import * as crypto from "../shared/cryptoOperator";
 import { parseIpReadable } from "./backendserver";
+import { logError } from "../shared/commonFunctions";
 
 const exposedSignedKey = {
     exportedPublicKey: {
@@ -127,6 +128,29 @@ const messageSchema = new Schema({
         required: true
     },
     content: userEncryptedData
+});
+
+const receiptDepositSchema = new Schema({
+    addressedTo: {
+        type: Schema.Types.String,
+        required: true
+    },
+    sessionId: {
+        type: Schema.Types.String,
+        required: true
+    },
+    messageId: {
+        type: Schema.Types.String,
+        required: true
+    },
+    signature: {
+        type: Schema.Types.String,
+        required: true
+    },
+    bounced: {
+        type: Schema.Types.Boolean,
+        required: true
+    }
 });
 
 const chatSchema = new Schema({
@@ -335,6 +359,8 @@ export class MongoHandlerCentral {
 
     private static readonly MessageDeposit = mongoose.model("MessageDeposit", messageHeaderSchema.index({ addressedTo: "hashed", sessionId: "hashed" }).index({ addressedTo: 1, sessionId: 1, messageId: 1 }, { unique: true }), "message_deposit");
 
+    private static readonly ReceiptDeposit = mongoose.model("ReceiptDeposit", receiptDepositSchema.index({ addressedTo: 1, sessionId: 1, messageId: 1 }, { unique: true }), "receipt_deposit");
+
     static onError: () => void;
 
     static async connect(url: string, options?: mongoose.ConnectOptions) {
@@ -440,6 +466,19 @@ export class MongoHandlerCentral {
         }
     }
 
+    static async depositReceipt(receipt: Receipt) {
+        try {
+            const userHandler = this.userHandlers.get(receipt.addressedTo);
+            if (await userHandler.depositReceipt(receipt)) return true;
+            const newReceipt = new this.ReceiptDeposit(bufferReplaceForMongo(receipt));
+            return (newReceipt === await newReceipt.save());
+        }
+        catch (err) {
+            logError(err);
+            return false;
+        }
+    }
+
     static async retrieveMessages(addressedTo: string, then: (messages: any[]) => Promise<boolean>) {
         try {
             const messages = await this.MessageDeposit.find({ addressedTo }).lean().exec();
@@ -454,11 +493,25 @@ export class MongoHandlerCentral {
         }
     }
 
-    static async retrieveChatRequests(addressedTo: string, then: (messages: any[]) => Promise<boolean>) {
+    static async retrieveChatRequests(addressedTo: string, then: (requests: any[]) => Promise<boolean>) {
         try {
             const chatRequests = await this.MessageDeposit.find({ addressedTo }).lean().exec();
             if (await then(cleanLean(chatRequests))) {
                 return (await this.ChatRequestDeposit.deleteMany({ addressedTo })).deletedCount === chatRequests.length;
+            }
+            return false;
+        }
+        catch (err) {
+            logError(err);
+            return false;
+        }
+    }
+
+    static async retrieveReceipts(addressedTo: string, then: (receipts: any[]) => Promise<boolean>) {
+        try {
+            const receipts = await this.ReceiptDeposit.find({ addressedTo }).lean().exec();
+            if (await then(cleanLean(receipts))) {
+                return (await this.ReceiptDeposit.deleteMany({ addressedTo })).deletedCount === receipts.length;
             }
             return false;
         }
@@ -479,22 +532,26 @@ export class MongoHandlerCentral {
 
 export class MongoUserHandler {
     private readonly username: string;
-    private readonly ChatRequest: mongoose.Model<any>;
-    private readonly UnprocessedMessage: mongoose.Model<any>;
-    private readonly Message: mongoose.Model<any>;
-    private readonly Chat: mongoose.Model<any>;
-    private readonly notifyMessage: (message: MessageHeader | ChatRequestHeader) => void;
+    private readonly ChatRequests: mongoose.Model<any>;
+    private readonly UnprocessedMessages: mongoose.Model<any>;
+    private readonly Messages: mongoose.Model<any>;
+    private readonly Chats: mongoose.Model<any>;
+    private readonly Receipts: mongoose.Model<any>;
+    private readonly Backup: mongoose.Model<any>;
+    private readonly notifyMessage: (message: MessageHeader | ChatRequestHeader | Receipt) => void;
 
     private constructor(username: string, notifyMessage: (message: MessageHeader | ChatRequestHeader) => void) {
         this.username = username;
-        this.ChatRequest = mongoose.model(`${username}ChatRequests`, chatRequestHeaderSchema.index({ timestamp: -1 }).index({ sessionId: 1 }, { unique: true }), `${username}_chat_requests`);
-        this.UnprocessedMessage = mongoose.model(`${username}UnprocessedMessages`, messageHeaderSchema.index({ sessionId: "hashed", timestamp: -1 }).index({ sessionId: 1, messageId: 1 }, { unique: true }), `${username}_unprocessed_messages`);
-        this.Message = mongoose.model(`${username}Messages`, messageSchema.index({ sessionId: "hashed", timestamp: -1 }).index({ sessionId: 1, messageId: 1 }, { unique: true }), `${username}_messages`);
-        this.Chat = mongoose.model(`${username}Chats`, chatSchema.index({ lastActive: -1 }), `${username}_chats`);
+        this.ChatRequests = mongoose.model(`${username}ChatRequests`, chatRequestHeaderSchema.index({ timestamp: -1 }).index({ sessionId: 1 }, { unique: true }), `${username}_chat_requests`);
+        this.UnprocessedMessages = mongoose.model(`${username}UnprocessedMessages`, messageHeaderSchema.index({ sessionId: "hashed", timestamp: -1 }).index({ sessionId: 1, messageId: 1 }, { unique: true }), `${username}_unprocessed_messages`);
+        this.Messages = mongoose.model(`${username}Messages`, messageSchema.index({ sessionId: "hashed", timestamp: -1 }).index({ sessionId: 1, messageId: 1 }, { unique: true }), `${username}_messages`);
+        this.Chats = mongoose.model(`${username}Chats`, chatSchema.index({ lastActive: -1 }), `${username}_chats`);
+        this.Receipts =  mongoose.model(`${username}Receipts`, receiptDepositSchema.index({ sessionId: 1, messageId: 1 }, { unique: true }), `${username}_receipts`);
+        this.Backup =  mongoose.model(`${username}Backup`, messageSchema.index({ sessionId: 1, messageId: 1 }, { unique: true }), `${username}_backups`);
         this.notifyMessage = notifyMessage;
     }
 
-    static async createHandler(username: string, notifyMessage: (message: MessageHeader | ChatRequestHeader) => void) {
+    static async createHandler(username: string, notifyMessage: (message: MessageHeader | ChatRequestHeader | Receipt) => void) {
         const userHandler = new MongoUserHandler(username, notifyMessage);
         MongoHandlerCentral.registerUserHandler(username, userHandler);
         await userHandler.retrieve();
@@ -504,7 +561,7 @@ export class MongoUserHandler {
     private async retrieve() {
         MongoHandlerCentral.retrieveChatRequests(this.username, async (chatRequests) => {
             try {
-                const inserted = await this.ChatRequest.insertMany(chatRequests, { lean: true });
+                const inserted = await this.ChatRequests.insertMany(chatRequests, { lean: true });
                 return (inserted.length === chatRequests.length);
             }
             catch (err) {
@@ -514,8 +571,18 @@ export class MongoUserHandler {
         });
         MongoHandlerCentral.retrieveMessages(this.username, async (messages) => {
             try {
-                const inserted = await this.UnprocessedMessage.insertMany(messages, { lean: true });
+                const inserted = await this.UnprocessedMessages.insertMany(messages, { lean: true });
                 return (inserted.length === messages.length);
+            }
+            catch (err) {
+                logError(err);
+                return false;
+            }
+        });
+        MongoHandlerCentral.retrieveReceipts(this.username, async (receipts) => {
+            try {
+                const inserted = await this.Receipts.insertMany(receipts, { lean: true });
+                return (inserted.length === receipts.length);
             }
             catch (err) {
                 logError(err);
@@ -527,7 +594,7 @@ export class MongoUserHandler {
     async depositMessage(message: MessageHeader) {
         try {
             if (message.addressedTo !== this.username) return false;
-            const newMessage = new this.UnprocessedMessage(bufferReplaceForMongo(message));
+            const newMessage = new this.UnprocessedMessages(bufferReplaceForMongo(message));
             if (newMessage === await newMessage.save()) {
                 this.notifyMessage?.(message);
                 return true;
@@ -543,7 +610,7 @@ export class MongoUserHandler {
     async depositChatRequest(chatRequest: ChatRequestHeader) {
         try {
             if (chatRequest.addressedTo !== this.username) return false;
-            const newChatRequest = new this.ChatRequest(bufferReplaceForMongo(chatRequest));
+            const newChatRequest = new this.ChatRequests(bufferReplaceForMongo(chatRequest));
             if (newChatRequest === await newChatRequest.save()) {
                 this.notifyMessage?.(chatRequest);
                 return true;
@@ -556,40 +623,56 @@ export class MongoUserHandler {
         }
     }
 
+    async depositReceipt(receipt: Receipt) {
+        try {
+            if (receipt.addressedTo !== this.username) return false;
+            const newReceipt = new this.Receipts(bufferReplaceForMongo(receipt));
+            if (newReceipt === await newReceipt.save()) {
+                this.notifyMessage?.(receipt);
+                return true;
+            }
+            return false;
+        }
+        catch (err) {
+            logError(err);
+            return false;
+        }
+    }
+
     async getAllChats(): Promise<ChatData[]> {
-        return bufferReplaceFromLean(await this.Chat.find().lean().exec());
+        return bufferReplaceFromLean(await this.Chats.find().lean().exec());
     }
 
     async getAllRequests(): Promise<ChatRequestHeader[]> {
-        return bufferReplaceFromLean(await this.ChatRequest.find().lean().exec());
+        return bufferReplaceFromLean(await this.ChatRequests.find().lean().exec());
     }
 
     async getUnprocessedMessages(sessionId: string): Promise<MessageHeader[]> {
-        return bufferReplaceFromLean(await this.UnprocessedMessage.find({ sessionId }).lean().exec());
+        return bufferReplaceFromLean(await this.UnprocessedMessages.find({ sessionId }).lean().exec());
     }
 
     async getMessagesByNumber(sessionId: string, limit: number, olderThan = Date.now()): Promise<StoredMessage[]> {
-        return bufferReplaceFromLean(await this.Message.find({ sessionId }).lt("timestamp", olderThan).sort({ timestamp: -1 }).limit(limit).lean().exec());
+        return bufferReplaceFromLean(await this.Messages.find({ sessionId }).lt("timestamp", olderThan).sort({ timestamp: -1 }).limit(limit).lean().exec());
     }
 
     async getMessagesUptoTimestamp(sessionId: string, newerThan: number, olderThan = Date.now()): Promise<StoredMessage[]> {
-        return bufferReplaceFromLean(await this.Message.find({ sessionId }).lt("timestamp", olderThan).gt("timestamp", newerThan).sort({ timestamp: -1 }).lean().exec());
+        return bufferReplaceFromLean(await this.Messages.find({ sessionId }).lt("timestamp", olderThan).gt("timestamp", newerThan).sort({ timestamp: -1 }).lean().exec());
     }
 
     async getMessagesUptoId(sessionId: string, messageId: string, olderThan = Date.now()): Promise<StoredMessage[]> {
-        const message = await this.Message.findOne({ sessionId, messageId }).exec();
+        const message = await this.Messages.findOne({ sessionId, messageId }).exec();
         if (!message) return null;
         const { timestamp } = message;
         return this.getMessagesUptoTimestamp(sessionId, timestamp, olderThan);
     }
 
     async getMessageById(sessionId: string, messageId: string): Promise<StoredMessage> {
-        return bufferReplaceFromLean(await this.Message.findOne({ sessionId, messageId }).lean().exec());
+        return bufferReplaceFromLean(await this.Messages.findOne({ sessionId, messageId }).lean().exec());
     }
 
     async deleteChatRequest(sessionId: string) {
         try {
-            return (await this.ChatRequest.deleteOne({ sessionId })).deletedCount === 1
+            return (await this.ChatRequests.deleteOne({ sessionId })).deletedCount === 1
         }
         catch (err) {
             logError(err);
@@ -600,7 +683,7 @@ export class MongoUserHandler {
     async storeMessage(message: StoredMessage) {
         try {
             const { sessionId, messageId } = message;
-            const upsert = await this.Message.updateOne({ sessionId, messageId }, bufferReplaceForMongo(message), { upsert: true });
+            const upsert = await this.Messages.updateOne({ sessionId, messageId }, bufferReplaceForMongo(message), { upsert: true });
             return (upsert.modifiedCount + upsert.upsertedCount) === 1;
         }
         catch (err) {
@@ -609,15 +692,50 @@ export class MongoUserHandler {
         }
     }
 
+    async storeBackup(backup: StoredMessage) {
+        try {
+            const newBackup = new this.Backup(bufferReplaceForMongo(backup));
+            if (newBackup === await newBackup.save()) {
+                return true;
+            }
+            return false;
+        }
+        catch (err) {
+            logError(err);
+            return false;
+        }
+    }
+
+    async getBackupById(sessionId: string, messageId: string): Promise<StoredMessage> {
+        return bufferReplaceFromLean(await this.Backup.findOne({ sessionId, messageId }).lean().exec());
+    }
+
+    async getAllReceipts(sessionId: string): Promise<Receipt[]> {
+        return bufferReplaceFromLean(await this.Receipts.find({ sessionId }).lean().exec());
+    }
+
+    async clearAllReceipts(sessionId: string) {
+        return (await this.Receipts.deleteMany({ sessionId })).deletedCount > 1;
+    }
+
+    async backupProcessed(sessionId: string, messageId: string) {
+        try {
+            return (await this.Backup.deleteOne({ sessionId, messageId })).deletedCount === 1
+        }
+        catch (err) {
+            logError(err);
+            return false;
+        }
+    }
+
     async messageProcessed(sessionId: string, messageId: string) {
-        return (await this.UnprocessedMessage.deleteOne({ sessionId, messageId })).deletedCount === 1;
+        return (await this.UnprocessedMessages.deleteOne({ sessionId, messageId })).deletedCount === 1;
     }
 
     async createChat(chat: ChatData) {
         try {
-            const newChat = new this.Chat(bufferReplaceForMongo(chat));
+            const newChat = new this.Chats(bufferReplaceForMongo(chat));
             if (newChat === await newChat.save()) {
-                const { sessionId } = chat;
                 return true;
             }
             return false;
@@ -630,7 +748,7 @@ export class MongoUserHandler {
 
     async updateChat({ sessionId, ...chat }: Omit<ChatData, "chatDetails" | "exportedChattingSession" | "createdAt"> & Partial<Omit<ChatData, "createdAt">>) {
         try {
-            return !!(await this.Chat.findOneAndUpdate({ sessionId }, bufferReplaceForMongo(chat)).exec());
+            return !!(await this.Chats.findOneAndUpdate({ sessionId }, bufferReplaceForMongo(chat)).exec());
         }
         catch (err) {
             logError(err);
@@ -708,15 +826,4 @@ export function cleanLean(obj: any): any {
         }
     }
     return obj;
-}
-
-function logError(err: any): void {
-    const message = err.message;
-    const stack = err.stack;
-    if (message || stack) {
-        console.log(`${message}${stack}`);
-    }
-    else {
-        console.log(`${err}`);
-    }
 }

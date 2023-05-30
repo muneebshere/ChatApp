@@ -108,6 +108,16 @@ type NewMessageDialogProps = {
 
 export function NewMessageDialog({ warn, newChatWith, belowXL, setWarn, setNewChatWith, setNewMessage, validate, sendRequest }: NewMessageDialogProps) {
   const [isPopupOpen, setIsPopupOpen] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState((navigator as any).virtualKeyboard.boundingRect.height);
+
+  useEffect(() => {
+    const updateHeight = () => setKeyboardHeight((navigator as any).virtualKeyboard.boundingRect.height);
+    window.visualViewport.addEventListener("resize", updateHeight);
+    return () => {
+      window.visualViewport.removeEventListener("resize", updateHeight);
+    }
+  }, []);
+
   return (
     <>
       <Dialog 
@@ -130,6 +140,8 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, setWarn, setNewCh
             sx={{
               width: belowXL ? "90vw" : "40vw",
               borderRadius: "md",
+              position: "relative",
+              bottom: keyboardHeight ? "100px" : 0,
               p: 3,
               backgroundColor: "rgba(246, 246, 246, 0.8)",
               boxShadow: "lg", 

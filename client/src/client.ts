@@ -9,7 +9,7 @@ import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
 import * as esrp from "../../shared/ellipticSRP";
 import { allSettledResults, failure, fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
-import { ErrorStrings, Failure, Username, SocketClientSideEvents, PasswordEncryptedData, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, NewUserData, Profile, RegisterNewUserChallengeResponse, LogInRequest, LogInChallengeResponse  } from "../../shared/commonTypes";
+import { ErrorStrings, Failure, Username, SocketClientSideEvents, PasswordEncryptedData, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, NewUserData, Profile, RegisterNewUserChallengeResponse, LogInRequest, LogInChallengeResponse, MessageIdentifier, SessionIdentifier, Receipt, UserEncryptedData  } from "../../shared/commonTypes";
 import { noProfilePictureImage } from "./noProfilePictureImage";
 import { AwaitedRequest, Chat, ChatDetails, ChatRequest } from "./chatClasses";
 
@@ -41,11 +41,18 @@ export type ClientChatInterface = Readonly<{
     GetMessagesByNumber: (data: { limit: number, olderThan?: number }, timeout?: number) => Promise<StoredMessage[] | Failure>,
     GetMessagesUptoTimestamp: (data: { newerThan: number, olderThan?: number }, timeout?: number) => Promise<StoredMessage[] | Failure>,
     GetMessagesUptoId: (data: { messageId: string, olderThan?: number }, timeout?: number) => Promise<StoredMessage[] | Failure>,
-    GetMessageById: (data: { messageId: string }, timeout?: number) => Promise<StoredMessage | Failure>,
+    GetMessageById: (data: Omit<MessageIdentifier, "sessionId">, timeout?: number) => Promise<StoredMessage | Failure>,
     StoreMessage: (data: Omit<StoredMessage, "sessionId">, timeout?: number) => Promise<Failure>,
-    MessageProcessed: (data: { messageId: string }, timeout?: number) => Promise<Failure>,
+    MessageProcessed: (data: Omit<MessageIdentifier, "sessionId">, timeout?: number) => Promise<Failure>,
     UpdateChat: (data: Omit<Partial<ChatData> & Omit<ChatData, "chatDetails" | "exportedChattingSession">, "sessionId" | "createdAt">, timeout?: number) => Promise<Failure>,
-    notifyClient: () => void
+    StoreBackup(data: Omit<StoredMessage, "sessionId">, timeout?: number): Promise<Failure>,
+    GetBackupById(data: Omit<MessageIdentifier, "sessionId">, timeout?: number): Promise<StoredMessage | Failure>,
+    BackupProcessed(data: Omit<MessageIdentifier, "sessionId">, timeout?: number): Promise<Failure>,
+    SendReceipt(data: Omit<Receipt, "sessionId">, timeout?: number): Promise<Failure>,
+    GetAllReceipts(timeout?: number): Promise<Receipt[] | Failure>,
+    ClearAllReceipts(timeout?: number): Promise<Failure>,
+    isConnected(): boolean,
+    notifyClient: (timeout?: number) => void
 }>;
 
 export type ClientChatRequestInterface = Readonly<{
@@ -96,7 +103,8 @@ export default class Client {
     private readonly responseMap: Map<SocketServerSideEventsKey, any> = new Map([
         [SocketServerSideEvents.RoomRequested, this.roomRequested] as [SocketServerSideEventsKey, any],
         [SocketServerSideEvents.MessageReceived, this.messageReceived],
-        [SocketServerSideEvents.ChatRequestReceived, this.chatRequestReceived]
+        [SocketServerSideEvents.ChatRequestReceived, this.chatRequestReceived],
+        [SocketServerSideEvents.ReceiptReceived, this.receiptReceived]
     ]);
     private readonly url: string;
     private readonly axInstance: Axios;
@@ -147,6 +155,25 @@ export default class Client {
         UpdateChat: (data, timeout = 0) => {
             return this.#socketHandler.UpdateChat({ sessionId, ...data }, timeout);
         },
+        StoreBackup: (data, timeout = 0) => {
+            return this.#socketHandler.StoreBackup({ sessionId, ...data }, timeout);
+        },
+        GetBackupById: (data, timeout = 0) => {
+            return this.#socketHandler.GetBackupById({ sessionId, ...data }, timeout);
+        },
+        BackupProcessed: (data, timeout = 0) => {
+            return this.#socketHandler.BackupProcessed({ sessionId, ...data }, timeout);
+        },
+        SendReceipt: (data, timeout = 0) => {
+            return this.#socketHandler.SendReceipt({ sessionId, ...data }, timeout);
+        },
+        GetAllReceipts: (timeout = 0) => {
+            return this.#socketHandler.GetAllReceipts({ sessionId }, timeout);
+        },
+        ClearAllReceipts: (timeout = 0) => {
+            return this.#socketHandler.ClearAllReceipts({ sessionId }, timeout);
+        },
+        isConnected: () => this.isConnected,
         notifyClient: () => this.notifyChange?.()
     })
 
@@ -346,7 +373,7 @@ export default class Client {
         return result.exists;
     }
 
-    async userLogInPermitted(username: string): Promise<{ tries: number, allowsAt: number }> {
+    async userLogInPermitted(username: string): Promise<{ tries: number, allowsAt: number, isAlreadyOnline: boolean }> {
         const result = await this.#socketHandler.UserLoginPermitted({ username });
         if ("reason" in result) {
             throw "Can't determine if username login is permitted.";
@@ -745,19 +772,21 @@ export default class Client {
         const { sessionId } = request;
         const { profile: myProfile } = this;
         const viewChatRequest = await this.#x3dhUser.viewChatRequest(request);
-        const exportedChattingSession = await this.#x3dhUser.acceptChatRequest(request, respondingAt, myProfile, async (response) => {
-            const sent = await this.#socketHandler.SendMessage(response);
-            if (sent.reason) {
-                logError(sent);
-                return false;
-            }
+        let exportedChattingSession: UserEncryptedData;
+        const response = await this.#x3dhUser.acceptChatRequest(request, respondingAt, myProfile, async (exported) => {
+            exportedChattingSession = exported;
             return true;
         });
-        if (typeof exportedChattingSession === "string" || typeof viewChatRequest === "string") {
-            logError(exportedChattingSession);
+        if (typeof response === "string" || typeof viewChatRequest === "string") {
+            logError(response);
             return false;
         }
         const { profile, text, messageId, timestamp } = viewChatRequest;
+        const sent = await this.#socketHandler.SendMessage(response);
+        if (sent.reason) {
+            logError(sent);
+            return false;
+        }
         const lastActive = respondingAt;
         const chatDetails = await crypto.deriveEncrypt(profile, this.#encryptionBaseVector, "ContactDetails");
         const chatData = { chatDetails, exportedChattingSession, lastActive, sessionId, createdAt: timestamp };
@@ -786,13 +815,22 @@ export default class Client {
         if (!awaitedRequest || awaitedRequest.type !== "AwaitedRequest") {
             return false;
         }
-        const response = await this.#x3dhUser.receiveChatRequestResponse(message);
+        let exportedChattingSession: UserEncryptedData;
+        const response = await this.#x3dhUser.receiveChatRequestResponse(message, async (exported) => {
+            exportedChattingSession = exported;
+            return true;
+        });
         if (typeof response === "string") {
             logError(response);
             return false;
         }
         const { messageId, text, timestamp } = awaitedRequest.chatMessage.displayMessage;
-        const [{ profile, respondedAt }, exportedChattingSession] = response;
+        const [profileResponse] = response;
+        if (typeof profileResponse === "string") {
+            logError(profileResponse);
+            return false;
+        }
+        const { profile, respondedAt } = profileResponse;
         const chatDetails = await crypto.deriveEncrypt(profile, this.#encryptionBaseVector, "ContactDetails");
         const chatData = { chatDetails, exportedChattingSession, lastActive: respondedAt, createdAt: timestamp, sessionId };
         const { reason } = await this.#socketHandler.CreateChat(chatData);
@@ -882,6 +920,14 @@ export default class Client {
             .with("Chat", () => (this.chatSessionIdsList.get(sessionId) as Chat)?.messageReceived(message))
             .with("AwaitedRequest", () => this.receiveRequestResponse(message))
             .otherwise(async () => false);
+    }
+
+    private async receiptReceived(receipt: Receipt) {
+        const { sessionId } = receipt;
+        const chat = this.chatSessionIdsList.get(sessionId);
+        if (chat?.type === "Chat") {
+            await chat.processReceipt(receipt);
+        }
     }
 
     private async chatRequestReceived(message: ChatRequestHeader) {

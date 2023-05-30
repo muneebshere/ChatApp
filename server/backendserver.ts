@@ -13,8 +13,8 @@ import { Server as SocketServer, Socket } from "socket.io";
 import { Buffer } from "./node_modules/buffer";
 import { SessionCrypto } from "../shared/sessionCrypto";
 import * as crypto from "../shared/cryptoOperator";
-import { Failure, ErrorStrings, Username, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, KeyBundle, UserEncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, RegisterNewUserChallenge, RegisterNewUserChallengeResponse, NewUserData, LogInRequest, LogInChallenge, UserData, LogInChallengeResponse } from "../shared/commonTypes";
-import { failure, fromBase64, logError, randomFunctions, typedEntries } from "../shared/commonFunctions";
+import { Failure, ErrorStrings, Username, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, KeyBundle, UserEncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, RegisterNewUserChallenge, RegisterNewUserChallengeResponse, NewUserData, LogInRequest, LogInChallenge, UserData, LogInChallengeResponse, Receipt, MessageIdentifier, SessionIdentifier } from "../shared/commonTypes";
+import { allSettledResults, failure, fromBase64, logError, randomFunctions, typedEntries } from "../shared/commonFunctions";
 import { MongoHandlerCentral, MongoUserHandler, bufferReplaceForMongo } from "./MongoHandler";
 import * as esrp from "../shared/ellipticSRP";
 
@@ -86,6 +86,12 @@ class SocketHandler {
         [SocketClientSideEvents.SendChatRequest]: this.SendChatRequest,
         [SocketClientSideEvents.SendMessage]: this.SendMessage,
         [SocketClientSideEvents.DeleteChatRequest]: this.DeleteChatRequest,
+        [SocketClientSideEvents.StoreBackup]: this.StoreBackup,
+        [SocketClientSideEvents.GetBackupById]: this.GetBackupById,
+        [SocketClientSideEvents.BackupProcessed]: this.BackupProcessed,
+        [SocketClientSideEvents.SendReceipt]: this.SendReceipt,
+        [SocketClientSideEvents.GetAllReceipts]: this.GetAllReceipts,
+        [SocketClientSideEvents.ClearAllReceipts]: this.ClearAllReceipts,
         [SocketClientSideEvents.LogOut]: this.LogOut,
         [SocketClientSideEvents.RequestRoom]: this.RoomRequested,
         [SocketClientSideEvents.TerminateCurrentSession]: this.TerminateCurrentSession
@@ -243,9 +249,10 @@ class SocketHandler {
         });
     }
 
-    private async UserLoginPermitted({ username }: Username): Promise<{ tries: number, allowsAt: number }> {
+    private async UserLoginPermitted({ username }: Username): Promise<{ tries: number, allowsAt: number, isAlreadyOnline: boolean }> {
         const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username, this.#ipRep);
-        return allowsAt && allowsAt > Date.now() ? { tries, allowsAt } : { tries: null, allowsAt: null };
+        const isAlreadyOnline = onlineUsers.has(username);
+        return allowsAt && allowsAt > Date.now() ? { isAlreadyOnline, tries, allowsAt } : { isAlreadyOnline, tries: null, allowsAt: null };
     }
 
     private async UsernameExists({ username }: Username): Promise<{ exists: boolean }> {
@@ -296,6 +303,7 @@ class SocketHandler {
     private async InitiateLogIn(request: LogInRequest): Promise<LogInChallenge | Failure> {
         if (this.#username) return failure(ErrorStrings.InvalidRequest);
         const { username, clientEphemeralPublicHex } = request;
+        if (onlineUsers.has(username)) return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
         const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username, this.#ipRep);
         if (allowsAt && allowsAt > Date.now()) {
             return failure(ErrorStrings.TooManyWrongTries, { tries, allowsAt });
@@ -317,6 +325,7 @@ class SocketHandler {
         const { challengeReference, clientConfirmationCode } = response;
         if (!this.#logInChallengeTemp || this.#logInChallengeTemp.challengeReference !== challengeReference) return failure(ErrorStrings.InvalidReference);
         const { confirmClient, sharedKeyBits, username, clientVerifyingKey, userData } = this.#logInChallengeTemp;
+        if (onlineUsers.has(username)) return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
         try {
             if (!(await confirmClient(clientConfirmationCode))) {
                 let { tries } = await MongoHandlerCentral.getUserRetries(username, this.#ipRep);
@@ -354,6 +363,7 @@ class SocketHandler {
         if (!savedAuthDetails) return failure(ErrorStrings.InvalidReference);
         const { username, authKeyBits, coreKeyBits, laterConfirmation }: ServerSavedDetails = await crypto.deriveDecrypt(savedAuthDetails, serverKeyBits, "Saved Auth") ?? {};
         if (!username) return failure(ErrorStrings.IncorrectData);
+        if (onlineUsers.has(username)) return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
         const { clientIdentityVerifyingKey, profileData, x3dhInfo } = (await MongoHandlerCentral.getLeanUser(username)) ?? {}; 
         const clientVerifyingKey = await crypto.importKey(clientIdentityVerifyingKey, "ECDSA", "public", false);
         this.#logInSavedTemp = { username, coreKeyBits, laterConfirmation, clientVerifyingKey, userData: { profileData, x3dhInfo } };
@@ -363,6 +373,7 @@ class SocketHandler {
 
     private async ConcludeLogInSaved({ username, clientConfirmationCode }: { username: string, clientConfirmationCode: Buffer }) {
         if (this.#username) return failure(ErrorStrings.InvalidRequest);
+        if (onlineUsers.has(username)) return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
         if (!this.#logInSavedTemp || this.#logInSavedTemp.username !== username) return failure(ErrorStrings.InvalidReference);
         const { laterConfirmation, coreKeyBits, userData, clientVerifyingKey } = this.#logInSavedTemp;
         const { clientConfirmationData, serverConfirmationCode, sharedSecret } = laterConfirmation;
@@ -530,35 +541,34 @@ class SocketHandler {
         return await this.#mongoHandler.getAllRequests();
     }
 
-    private async GetUnprocessedMessages(param: { sessionId: string }): Promise<MessageHeader[] | Failure> {
+    private async GetUnprocessedMessages({ sessionId }: SessionIdentifier): Promise<MessageHeader[] | Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
-        return await this.#mongoHandler.getUnprocessedMessages(param.sessionId);
+        return await this.#mongoHandler.getUnprocessedMessages(sessionId);
     }
 
-    private async GetMessagesByNumber(param: { sessionId: string, limit: number, olderThan?: number }): Promise<StoredMessage[] | Failure> {
+    private async GetMessagesByNumber(param: SessionIdentifier & { limit: number, olderThan?: number }): Promise<StoredMessage[] | Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         let { sessionId, limit, olderThan } = param;
         olderThan ||= Date.now();
         return await this.#mongoHandler.getMessagesByNumber(sessionId, limit, olderThan);
     }
 
-    private async GetMessagesUptoTimestamp(param: { sessionId: string, newerThan: number, olderThan?: number }): Promise<StoredMessage[] | Failure> {
+    private async GetMessagesUptoTimestamp(param: SessionIdentifier & { newerThan: number, olderThan?: number }): Promise<StoredMessage[] | Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         let { sessionId, newerThan, olderThan } = param;
         olderThan ||= Date.now();
         return await this.#mongoHandler.getMessagesUptoTimestamp(sessionId, newerThan, olderThan);
     }
 
-    private async GetMessagesUptoId(param: { sessionId: string, messageId: string, olderThan?: number }): Promise<StoredMessage[] | Failure> {
+    private async GetMessagesUptoId(param: MessageIdentifier & { olderThan?: number }): Promise<StoredMessage[] | Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         let { sessionId, messageId, olderThan } = param;
         olderThan ||= Date.now();
         return await this.#mongoHandler.getMessagesUptoId(sessionId, messageId, olderThan);
     }
 
-    private async GetMessageById(param: { sessionId: string, messageId: string }): Promise<StoredMessage | Failure> {
+    private async GetMessageById({ sessionId, messageId }: MessageIdentifier): Promise<StoredMessage | Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
-        let { sessionId, messageId } = param;
         return await this.#mongoHandler.getMessageById(sessionId, messageId);
     }
 
@@ -568,7 +578,7 @@ class SocketHandler {
         return { reason: null };
     }
 
-    private async MessageProcessed({ sessionId, messageId }: { sessionId: string, messageId: string }): Promise<Failure> {
+    private async MessageProcessed({ sessionId, messageId }: MessageIdentifier): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.messageProcessed(sessionId, messageId))) return failure(ErrorStrings.ProcessFailed);
         return { reason: null };
@@ -586,19 +596,56 @@ class SocketHandler {
         return { reason: null };
     }
 
-    private async DeleteChatRequest(param: { sessionId: string }) {
+    private async DeleteChatRequest({ sessionId }: SessionIdentifier) {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
-        const success = await this.#mongoHandler.deleteChatRequest(param.sessionId);
+        const success = await this.#mongoHandler.deleteChatRequest(sessionId);
         return success ? { reason: null } : failure(ErrorStrings.ProcessFailed);
     }
 
-    private async notifyMessage(message: MessageHeader | ChatRequestHeader) {
+    private async StoreBackup(backup: StoredMessage): Promise<Failure> {
+        if (!this.#username) return failure(ErrorStrings.InvalidRequest);
+        if (!(await this.#mongoHandler.storeBackup(backup))) return failure(ErrorStrings.ProcessFailed);
+        return { reason: null };
+    }
+
+    private async GetBackupById({ sessionId, messageId }: MessageIdentifier): Promise<StoredMessage | Failure> {
+        if (!this.#username) return failure(ErrorStrings.InvalidRequest);
+        return await this.#mongoHandler.getBackupById(sessionId, messageId);
+    }
+
+    private async BackupProcessed({ sessionId, messageId }: MessageIdentifier): Promise<Failure> {
+        if (!this.#username) return failure(ErrorStrings.InvalidRequest);
+        if (!(await this.#mongoHandler.backupProcessed(sessionId, messageId))) return failure(ErrorStrings.ProcessFailed);
+        return { reason: null };
+    }
+
+    private async SendReceipt(receipt: Receipt): Promise<Failure> {
+        if (!this.#username || this.#username === receipt.addressedTo) return failure(ErrorStrings.InvalidRequest);
+        if (!(await MongoHandlerCentral.depositReceipt(receipt))) return failure(ErrorStrings.ProcessFailed);
+        return { reason: null };
+    }
+
+    private async GetAllReceipts({ sessionId }: SessionIdentifier): Promise<Receipt[] | Failure> {
+        if (!this.#username) return failure(ErrorStrings.InvalidRequest);
+        return await this.#mongoHandler.getAllReceipts(sessionId);
+    }
+
+    private async ClearAllReceipts({ sessionId }: SessionIdentifier): Promise<Failure> {
+        if (!this.#username) return failure(ErrorStrings.InvalidRequest);
+        if (!(await this.#mongoHandler.clearAllReceipts(sessionId))) return failure(ErrorStrings.ProcessFailed);
+        return { reason: null };
+    }
+
+    private async notifyMessage(message: MessageHeader | ChatRequestHeader | Receipt) {
         if (message.addressedTo !== this.#username) return;
         if ("messageBody" in message) {
             await this.request(SocketServerSideEvents.MessageReceived, message);
         }
         else if ("initialMessage" in message) {
             await this.request(SocketServerSideEvents.ChatRequestReceived, message);
+        }
+        else {
+            await this.request(SocketServerSideEvents.ReceiptReceived, message);
         }
     }
 
@@ -691,17 +738,16 @@ async function createRoom([username1, socket1, sessionCrypto1]: RoomUser, [usern
     socket1.emit(SocketServerSideEvents.ServerRoomReady, username2);
     socket2.emit(SocketServerSideEvents.ServerRoomReady, username1);
 
-    return Promise.all([established1, established2]).then(([est1, est2]) => {
-        if (est1 && est2) {
-            const dispose = constructRoom();
-            socket1.emit(username2, "confirmed");
-            socket2.emit(username1, "confirmed");
-            return dispose;
-        }
-        else {
-            return null;
-        }
-    });
+    const [est1, est2] = await allSettledResults([established1, established2]);
+    if (est1 && est2) {
+        const dispose = constructRoom();
+        socket1.emit(username2, "confirmed");
+        socket2.emit(username1, "confirmed");
+        return dispose;
+    }
+    else {
+        return null;
+    }
 }
 
 function halfCreateRoom(roomUser1: RoomUser, messageTimeoutMs = 20000) {

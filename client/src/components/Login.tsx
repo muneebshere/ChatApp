@@ -21,7 +21,7 @@ type LogInData = {
   readonly submitted: boolean;
   readonly warned: boolean;
   readonly usernameExists: (username: string) => Promise<boolean>;
-  readonly userLoginPermitted: (username: string) => Promise<{ tries: number, allowsAt: number }>;
+  readonly userLoginPermitted: (username: string) => Promise<{ tries: number, allowsAt: number, isAlreadyOnline: boolean }>;
   readonly submit: (response: SubmitResponse) => Promise<Failure>;
 }
 
@@ -76,7 +76,7 @@ export const LogInContext = createContext<LogInContextType>(null);
 
 export default function LogInForm() {
   const { logInData: { username, usernameEntered, password, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, failed, submitted, warned, usernameExists, userLoginPermitted, submit },  logInDispatch } = useContext(LogInContext);
-  const [usernameValid, setUsernameValid] = useState(false);
+  const [usernameError, setUsernameError] = useState("");
   const setUsername = (username: string) => logInDispatch(logInAction("username", username));
   const setUsernameEntered = (usernameEntered: boolean) => logInDispatch(logInAction("usernameEntered", usernameEntered));
   const setPassword = (password: string) => logInDispatch(logInAction("password", password));
@@ -93,7 +93,13 @@ export default function LogInForm() {
   const decrementTimer = useCallback(() => setTryAgainIn(tryAgainIn - 1000), [tryAgainIn]);
 
   useEffect(() => {
-    usernameExists(username).then((exists) => setUsernameValid(exists)).catch(() => {});
+    usernameExists(username).then(async (exists) => {
+      if (exists) {
+        const { isAlreadyOnline } = await userLoginPermitted(username);
+        setUsernameError(isAlreadyOnline ? "This user is already logged in elsewhere." : "");
+      }
+      else setUsernameError("No such user.");
+    }).catch(() => {});
   }, [username]);
 
   useEffect(() => {
@@ -105,7 +111,7 @@ export default function LogInForm() {
   }, [tryAgainIn]);
 
   function onUsernameEntered() {
-    if (!!usernameValid) {
+    if (!usernameError) {
       setUsernameEntered(true);
       userLoginPermitted(username).then((({ tries, allowsAt }) => {
         if (tries && allowsAt) {
@@ -137,6 +143,10 @@ export default function LogInForm() {
           setTryAgainIn(allowsAt - Date.now());
         }
       }
+      else if (reason === ErrorStrings.InvalidRequest && details === "Already Logged In Elsewhere") {
+        setUsernameError("This user is already logged in elsewhere.");
+        setUsernameEntered(false);
+      }
       else {
         setFailed(true);
       }
@@ -160,13 +170,13 @@ export default function LogInForm() {
             value={username}
             preventSpaces
             setValue={setUsername}
-            valid={usernameValid}
+            valid={!usernameError}
             forceInvalid={!!username}
-            errorMessage="No such user."
+            errorMessage={usernameError}
             onEnter={onUsernameEntered}/>
           <Button variant="solid"
             onClick={onUsernameEntered} 
-            disabled={ !usernameValid }>
+            disabled={ !!usernameError }>
               Next
           </Button>
         </React.Fragment>

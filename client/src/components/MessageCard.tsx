@@ -95,7 +95,7 @@ function formatTooltipDate(timestamp: number) {
 
 function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & MessageCardContextData) {
   const { highlighted, highlightReplied, setReplyTo, registerMessageRef, chatWith, toggleScroll, chatMessage } = message;
-  const { messageId, text, timestamp, replyingTo, sentByMe } = chatMessage.displayMessage;
+  const { messageId, text, timestamp, replyingToInfo, sentByMe } = chatMessage.displayMessage;
   const [darken, setDarken] = useState(false);
   const [isFirstOfType, setIsFirstOfType] = useState(chatMessage.isFirstOfType);
   const [delivery, setDelivery] = useState(chatMessage.displayMessage.delivery);
@@ -108,7 +108,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
     const crossAxis = (-floatingRef.current?.getBoundingClientRect()?.width || 0) + rects.reference.width;
     return { crossAxis }
   }
-  const replyingData = useMemo(() => ({ id: messageId, replyToOwn: sentByMe, displayText: text }), []);
+  const replyingData = useMemo(() => ({ replyId: messageId, replyToOwn: sentByMe, displayText: text }), []);
   const onClick: React.MouseEventHandler<HTMLDivElement> = (event) => {
     if (event.detail >= 2) {
       setReplyTo(replyingData);
@@ -170,8 +170,8 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
   }, []);
 
   const repliedMessage = useMemo(() => {
-    const props = replyingTo ? { chatWith, sentByMe, highlightReplied, ...replyingTo } : null;
-    return replyingTo
+    const props = replyingToInfo ? { chatWith, sentByMe, highlightReplied, ...replyingToInfo } : null;
+    return replyingToInfo
       ? <ReplyingToMemo { ...props}/>
       : null
 
