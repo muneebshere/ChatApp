@@ -84,8 +84,7 @@ export type DisplayMessage =Readonly<{
 export type MessageHeader = Readonly<{
     addressedTo: string;
     sessionId: string;
-    messageId: string;
-    timestamp: number;
+    headerId: string;
     receivingRatchetNumber: number;
     sendingRatchetNumber: number;
     sendingChainNumber: number;
@@ -95,10 +94,8 @@ export type MessageHeader = Readonly<{
 }>;
 
 export type ChatRequestHeader = Readonly<{
-    sessionId: string;
-    messageId: string;
-    timestamp: number;
     addressedTo: string;
+    headerId: string;
     myVerifyingIdentityKey: Buffer;
     myPublicDHIdentityKey: ExposedSignedPublicKey;
     myPublicEphemeralKey: ExposedSignedPublicKey;
@@ -108,24 +105,28 @@ export type ChatRequestHeader = Readonly<{
 }>;
 
 export type StoredMessage = Readonly<{
+    chatId: string;
+    hashedId: string;
+    timemark: number;
+    content: UserEncryptedData;
+}>;
+
+export type Backup = Readonly<{
     sessionId: string;
-    messageId: string;
-    timestamp: number;
+    headerId: string;
     content: UserEncryptedData;
 }>;
 
 export type ChatData = Readonly<{
-  sessionId: string,
-  createdAt: number,
-  lastActive: number,
-  chatDetails: UserEncryptedData,
-  exportedChattingSession: UserEncryptedData
+    chatId: string,
+    chatDetails: UserEncryptedData,
+    exportedChattingSession: UserEncryptedData
 }>;
 
 export type Receipt = Readonly<{
     addressedTo: string,
-    sessionId:string,
-    messageId: string,
+    sessionId: string,
+    headerId: string,
     signature: string,
     bounced: boolean
 }>;
@@ -134,13 +135,23 @@ export type Username = {
     readonly username: string 
 };
 
-export type SessionIdentifier = {
-    readonly sessionId: string;
+export type ChatIdentifier = {
+    readonly chatId: string;
 };
 
 export type MessageIdentifier = Readonly<{
+    chatId: string;
+    hashedId: string;
+}>;
+
+export type HeaderIdentifier = Readonly<{
     sessionId: string;
-    messageId: string;
+    headerId: string;
+}>;
+
+export type SessionIdentifier = Readonly<{ 
+    sessionId: string, 
+    addressedTo: string 
 }>;
 
 export type Failure = Readonly<{
@@ -183,12 +194,14 @@ export type UserData = Readonly<{
     clientIdentitySigningKey: PasswordEncryptedData,
     serverIdentityVerifyingKey: PasswordEncryptedData,
     x3dhInfo: UserEncryptedData,
-    profileData: UserEncryptedData
+    profileData: UserEncryptedData,
+    chatsData: UserEncryptedData
 }>;
 
-export type NewUserData = UserData & { 
-    readonly keyBundles: PublishKeyBundlesRequest
-};
+export type NewUserData = Readonly<{ 
+    userData: UserData;
+    keyBundles: PublishKeyBundlesRequest;
+}>;
 
 export type PublishKeyBundlesRequest = {
     defaultKeyBundle: KeyBundle;
@@ -210,12 +223,12 @@ enum SocketClientSideEventsEnum {
     ConcludeLogInSaved,
 
     PublishKeyBundles,
-    UpdateX3DHUser,
+    UpdateUserData,
     RequestKeyBundle,
 
-    GetAllChats,
+    GetChats,
     GetAllRequests,
-    GetUnprocessedMessages,
+    GetMessageHeaders,
     GetMessagesByNumber,
     GetMessagesUptoTimestamp,
     GetMessagesUptoId,
@@ -227,7 +240,7 @@ enum SocketClientSideEventsEnum {
 
     SendChatRequest,
     SendMessage,
-    MessageProcessed,
+    MessageHeaderProcessed,
     DeleteChatRequest,
 
     StoreBackup,
@@ -269,25 +282,25 @@ type SocketClientRequestParametersMap = {
     InitiateLogInSaved: { serverKeyBits: Buffer },
     ConcludeLogInSaved: { username: string, clientConfirmationCode: Buffer },
     PublishKeyBundles: PublishKeyBundlesRequest,
-    UpdateX3DHUser: { x3dhInfo: UserEncryptedData } & Username,
+    UpdateUserData: { x3dhInfo?: UserEncryptedData, chatsData?: UserEncryptedData } & Username,
     RequestKeyBundle: Username,
-    GetAllChats: [],
+    GetChats: { chatIds: string[]},
     GetAllRequests: [],
-    GetUnprocessedMessages: SessionIdentifier,
-    GetMessagesByNumber: SessionIdentifier & { limit: number, olderThan?: number },
-    GetMessagesUptoTimestamp: SessionIdentifier & { newerThan: number, olderThan?: number },
-    GetMessagesUptoId: MessageIdentifier & { olderThan?: number },
+    GetMessageHeaders: SessionIdentifier,
+    GetMessagesByNumber: ChatIdentifier & { limit: number, olderThanTimemark: number },
+    GetMessagesUptoTimestamp: ChatIdentifier & { newerThanTimemark: number, olderThanTimemark: number },
+    GetMessagesUptoId: MessageIdentifier & { olderThanTimemark: number },
     GetMessageById: MessageIdentifier,
     StoreMessage: StoredMessage,
     CreateChat: ChatData,
-    UpdateChat: Omit<ChatData, "chatDetails" | "exportedChattingSession" | "createdAt"> & Partial<Omit<ChatData, "createdAt">>,
-    SendChatRequest: SessionIdentifier,
+    UpdateChat: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>,
+    SendChatRequest: ChatRequestHeader,
     SendMessage: MessageHeader,
-    MessageProcessed: MessageIdentifier,
-    DeleteChatRequest: SessionIdentifier,
-    StoreBackup: StoredMessage,
-    GetBackupById: MessageIdentifier,
-    BackupProcessed: MessageIdentifier,
+    MessageHeaderProcessed: HeaderIdentifier,
+    DeleteChatRequest: { headerId: string },
+    StoreBackup: Backup,
+    GetBackupById: HeaderIdentifier,
+    BackupProcessed: HeaderIdentifier,
     SendReceipt: Receipt,
     GetAllReceipts: SessionIdentifier,
     ClearAllReceipts: SessionIdentifier,
@@ -309,13 +322,13 @@ type SocketClientRequestReturnMap = {
     InitiateLogIn: LogInChallenge,
     ConcludeLogIn: UserData,
     InitiateLogInSaved: { authKeyBits: Buffer },
-    ConcludeLogInSaved: { serverConfirmationCode: Buffer, coreKeyBits: Buffer, userData: Pick<UserData, "profileData" | "x3dhInfo"> },
+    ConcludeLogInSaved: { serverConfirmationCode: Buffer, coreKeyBits: Buffer, userData: Pick<UserData, "profileData" | "x3dhInfo" | "chatsData"> },
     PublishKeyBundles: never,
-    UpdateX3DHUser: never,
+    UpdateUserData: never,
     RequestKeyBundle: RequestKeyBundleResponse,
-    GetAllChats: ChatData[],
+    GetChats: ChatData[],
     GetAllRequests: ChatRequestHeader[],
-    GetUnprocessedMessages: MessageHeader[],
+    GetMessageHeaders: MessageHeader[],
     GetMessagesByNumber: StoredMessage[],
     GetMessagesUptoTimestamp: StoredMessage[],
     GetMessagesUptoId: StoredMessage[],
@@ -325,10 +338,10 @@ type SocketClientRequestReturnMap = {
     UpdateChat: never,
     SendChatRequest: never,
     SendMessage: never,
-    MessageProcessed: never,
+    MessageHeaderProcessed: never,
     DeleteChatRequest: never,
     StoreBackup: never,
-    GetBackupById: StoredMessage,
+    GetBackupById: Backup,
     BackupProcessed: never,
     SendReceipt: never,
     GetAllReceipts: Receipt[],

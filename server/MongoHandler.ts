@@ -4,7 +4,7 @@ import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
 import { Buffer } from "./node_modules/buffer/";
 import { Buffer as NodeBuffer } from "node:buffer";
-import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PasswordEncryptedData, PublishKeyBundlesRequest, StoredMessage, RegisterNewUserRequest, NewUserData, UserEncryptedData, Receipt } from "../shared/commonTypes";
+import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PasswordEncryptedData, PublishKeyBundlesRequest, StoredMessage, RegisterNewUserRequest, NewUserData, UserEncryptedData, Receipt, Backup } from "../shared/commonTypes";
 import * as crypto from "../shared/cryptoOperator";
 import { parseIpReadable } from "./backendserver";
 import { logError } from "../shared/commonFunctions";
@@ -42,135 +42,6 @@ const userEncryptedData = {
     }
 };
 
-const chatRequestHeaderSchema = new Schema({
-    sessionId: {
-        type: Schema.Types.String,
-        required: true,
-        unique: true,
-    },
-    messageId: {
-        type: Schema.Types.String,
-        required: true
-    },
-    timestamp: {
-        type: Schema.Types.Number,
-        required: true
-    },
-    addressedTo: {
-        type: Schema.Types.String,
-        required: true
-    },
-    myVerifyingIdentityKey: {
-        type: Schema.Types.Buffer,
-        required: true
-    },
-    myPublicDHIdentityKey: exposedSignedKey,
-    myPublicEphemeralKey: exposedSignedKey,
-    yourOneTimeKeyIdentifier: {
-        type: Schema.Types.String,
-        required: false
-    },
-    yourSignedPreKeyVersion: {
-        type: Schema.Types.Number,
-        required: true
-    },
-    initialMessage: signedEncryptedData
-});
-
-const messageHeaderSchema = new Schema({
-    addressedTo: {
-        type: Schema.Types.String,
-        required: true
-    },
-    sessionId: {
-        type: Schema.Types.String,
-        required: true
-    },
-    messageId: {
-        type: Schema.Types.String,
-        required: true
-    },
-    timestamp: {
-        type: Schema.Types.Number,
-        required: true
-    },
-    receivingRatchetNumber: {
-        type: Schema.Types.Number,
-        required: true
-    },
-    sendingRatchetNumber: {
-        type: Schema.Types.Number,
-        required: true
-    },
-    sendingChainNumber: {
-        type: Schema.Types.Number,
-        required: true
-    },
-    previousChainNumber: {
-        type: Schema.Types.Number,
-        required: true
-    },
-    nextDHRatchetKey: exposedSignedKey,
-    messageBody: signedEncryptedData
-});
-
-const messageSchema = new Schema({
-    sessionId: {
-        type: Schema.Types.String,
-        required: true
-    },
-    messageId: {
-        type: Schema.Types.String,
-        required: true
-    },
-    timestamp: {
-        type: Schema.Types.Number,
-        required: true
-    },
-    content: userEncryptedData
-});
-
-const receiptDepositSchema = new Schema({
-    addressedTo: {
-        type: Schema.Types.String,
-        required: true
-    },
-    sessionId: {
-        type: Schema.Types.String,
-        required: true
-    },
-    messageId: {
-        type: Schema.Types.String,
-        required: true
-    },
-    signature: {
-        type: Schema.Types.String,
-        required: true
-    },
-    bounced: {
-        type: Schema.Types.Boolean,
-        required: true
-    }
-});
-
-const chatSchema = new Schema({
-    sessionId: {
-        type: Schema.Types.String,
-        required: true,
-        unique: true
-    },
-    createdAt: {
-        type: Schema.Types.Number,
-        required: true
-    },
-    lastActive: {
-        type: Schema.Types.Number,
-        required: true
-    },
-    chatDetails: userEncryptedData,
-    exportedChattingSession: userEncryptedData
-});
-
 const ipSchema = {
     ipRep: {
         type: Schema.Types.String,
@@ -186,32 +57,26 @@ const ipSchema = {
     }
 }
 
+const passwordEncryptedData = {
+    ciphertext: {
+        type: Schema.Types.Buffer,
+        required: true
+    },
+    hSalt: {
+        type: Schema.Types.Buffer,
+        required: true
+    },
+    pSalt: {
+        type: Schema.Types.Buffer,
+        required: true
+    },
+    iterSeed: {
+        type: Schema.Types.Number,
+        required: true
+    }
+};
+
 export class MongoHandlerCentral {
-
-    private static readonly userHandlers = new Map<string, MongoUserHandler>();
-
-    private static readonly passwordDeriveInfo = {
-        pSalt: {
-            type: Schema.Types.Buffer,
-            required: true
-        },
-        iterSeed: {
-            type: Schema.Types.Number,
-            required: true
-        }
-    };
-
-    private static readonly passwordEncryptedData = {
-        ciphertext: {
-            type: Schema.Types.Buffer,
-            required: true
-        },
-        hSalt: {
-            type: Schema.Types.Buffer,
-            required: true
-        },
-        ...this.passwordDeriveInfo
-    };
 
     private static readonly keyBundleSchema = new Schema({
         owner: {
@@ -299,11 +164,14 @@ export class MongoHandlerCentral {
             type: Schema.Types.Buffer,
             required: true
         },
-        profileData: userEncryptedData,
-        encryptionBase: this.passwordEncryptedData,
-        serverIdentityVerifyingKey: this.passwordEncryptedData,
-        clientIdentitySigningKey: this.passwordEncryptedData,
-        x3dhInfo: userEncryptedData,
+        userData: {
+            encryptionBase: passwordEncryptedData,
+            serverIdentityVerifyingKey: passwordEncryptedData,
+            clientIdentitySigningKey: passwordEncryptedData,
+            profileData: userEncryptedData,
+            x3dhInfo: userEncryptedData,
+            chatsData: userEncryptedData
+        },
         keyBundles: {
             defaultKeyBundle: {
                 type: this.keyBundleSchema,
@@ -355,11 +223,127 @@ export class MongoHandlerCentral {
         }
     }).index({ username: 1, ipRep: 1, ipRead: 1 }, { unique: true }), "user_retries");
 
-    private static readonly ChatRequestDeposit = mongoose.model("ChatRequestDeposit", chatRequestHeaderSchema.index({ addressedTo: "hashed" }).index({ addressedTo: 1, sessionId: 1 }, { unique: true }), "chat_request_deposit");
+    private static readonly ChatRequest = mongoose.model("ChatRequest", new Schema({
+        addressedTo: {
+            type: Schema.Types.String,
+            required: true
+        },
+        headerId: {
+            type: Schema.Types.String,
+            required: true,
+            unique: true
+        },
+        myVerifyingIdentityKey: {
+            type: Schema.Types.Buffer,
+            required: true
+        },
+        myPublicDHIdentityKey: exposedSignedKey,
+        myPublicEphemeralKey: exposedSignedKey,
+        yourOneTimeKeyIdentifier: {
+            type: Schema.Types.String,
+            required: false,
+            unique: true
+        },
+        yourSignedPreKeyVersion: {
+            type: Schema.Types.Number,
+            required: true
+        },
+        initialMessage: signedEncryptedData
+    }).index({ addressedTo: "hashed" }), "chat_requests");
 
-    private static readonly MessageDeposit = mongoose.model("MessageDeposit", messageHeaderSchema.index({ addressedTo: "hashed", sessionId: "hashed" }).index({ addressedTo: 1, sessionId: 1, messageId: 1 }, { unique: true }), "message_deposit");
+    private static readonly MessageHeader = mongoose.model("MessageHeader", new Schema({
+        addressedTo: {
+            type: Schema.Types.String,
+            required: true
+        },
+        sessionId: {
+            type: Schema.Types.String,
+            required: true
+        },
+        headerId: {
+            type: Schema.Types.String,
+            required: true
+        },
+        receivingRatchetNumber: {
+            type: Schema.Types.Number,
+            required: true
+        },
+        sendingRatchetNumber: {
+            type: Schema.Types.Number,
+            required: true
+        },
+        sendingChainNumber: {
+            type: Schema.Types.Number,
+            required: true
+        },
+        previousChainNumber: {
+            type: Schema.Types.Number,
+            required: true
+        },
+        nextDHRatchetKey: exposedSignedKey,
+        messageBody: signedEncryptedData
+    }).index({ addressedTo: 1, sessionId: 1, headerId: 1 }, { unique: true }).index({ sendingRatchetNumber: 1, sendingChainNumber: 1 }, { unique: true }), "message_headers");
 
-    private static readonly ReceiptDeposit = mongoose.model("ReceiptDeposit", receiptDepositSchema.index({ addressedTo: 1, sessionId: 1, messageId: 1 }, { unique: true }), "receipt_deposit");
+    private static readonly Receipt = mongoose.model("Receipt", new Schema({
+        addressedTo: {
+            type: Schema.Types.String,
+            required: true
+        },
+        sessionId: {
+            type: Schema.Types.String,
+            required: true
+        },
+        headerId: {
+            type: Schema.Types.String,
+            required: true
+        },
+        signature: {
+            type: Schema.Types.String,
+            required: true
+        },
+        bounced: {
+            type: Schema.Types.Boolean,
+            required: true
+        }
+    }).index({ sessionId: 1, headerId: 1 }, { unique: true }), "receipts");
+
+    private static readonly Chat = mongoose.model("Chat", new Schema({
+        chatId: {
+            type: Schema.Types.String,
+            required: true,
+            unique: true
+        },
+        chatDetails: userEncryptedData,
+        exportedChattingSession: userEncryptedData
+    }).index({ chatId: "hashed" }), "chats");
+
+    private static readonly Message = mongoose.model("Message", new Schema({
+        chatId: {
+            type: Schema.Types.String,
+            required: true
+        },
+        hashedId: {
+            type: Schema.Types.String,
+            required: true
+        },
+        timemark: {
+            type: Schema.Types.Number,
+            required: true
+        },
+        content: userEncryptedData
+    }).index({ chatId: "hashed", timemark: -1 }).index({ chatId: 1, hashedId: 1 }, { unique: true }), "messages");
+
+    private static readonly Backup =  mongoose.model("Backup", new Schema({
+        sessionId: {
+            type: Schema.Types.String,
+            required: true
+        },
+        headerId: {
+            type: Schema.Types.String,
+            required: true
+        },
+        content: userEncryptedData
+    }).index({ sessionId: 1, headerId: 1 }, { unique: true }), "backups");
 
     static onError: () => void;
 
@@ -442,9 +426,7 @@ export class MongoHandlerCentral {
 
     static async depositMessage(message: MessageHeader) {
         try {
-            const userHandler = this.userHandlers.get(message.addressedTo);
-            if (await userHandler?.depositMessage(message)) return true;
-            const newMessage = new this.MessageDeposit(bufferReplaceForMongo(message));
+            const newMessage = new this.MessageHeader(bufferReplaceForMongo(message));
             return (newMessage === await newMessage.save());
         }
         catch (err) {
@@ -455,9 +437,7 @@ export class MongoHandlerCentral {
 
     static async depositChatRequest(chatRequest: ChatRequestHeader) {
         try {
-            const userHandler = this.userHandlers.get(chatRequest.addressedTo);
-            if (await userHandler.depositChatRequest(chatRequest)) return true;
-            const newChatRequest = new this.ChatRequestDeposit(bufferReplaceForMongo(chatRequest));
+            const newChatRequest = new this.ChatRequest(bufferReplaceForMongo(chatRequest));
             return (newChatRequest === await newChatRequest.save());
         }
         catch (err) {
@@ -468,9 +448,7 @@ export class MongoHandlerCentral {
 
     static async depositReceipt(receipt: Receipt) {
         try {
-            const userHandler = this.userHandlers.get(receipt.addressedTo);
-            if (await userHandler.depositReceipt(receipt)) return true;
-            const newReceipt = new this.ReceiptDeposit(bufferReplaceForMongo(receipt));
+            const newReceipt = new this.Receipt(bufferReplaceForMongo(receipt));
             return (newReceipt === await newReceipt.save());
         }
         catch (err) {
@@ -479,200 +457,40 @@ export class MongoHandlerCentral {
         }
     }
 
-    static async retrieveMessages(addressedTo: string, then: (messages: any[]) => Promise<boolean>) {
-        try {
-            const messages = await this.MessageDeposit.find({ addressedTo }).lean().exec();
-            if (await then(cleanLean(messages))) {
-                return (await this.MessageDeposit.deleteMany({ addressedTo })).deletedCount === messages.length;
-            }
-            return false;
-        }
-        catch (err) {
-            logError(err);
-            return false;
-        }
+    static async getChats(chatIds: string[]): Promise<ChatData[]> {
+        return bufferReplaceFromLean(await this.Chat.find({ chatId: { $in: chatIds } }).lean().exec());
     }
 
-    static async retrieveChatRequests(addressedTo: string, then: (requests: any[]) => Promise<boolean>) {
-        try {
-            const chatRequests = await this.MessageDeposit.find({ addressedTo }).lean().exec();
-            if (await then(cleanLean(chatRequests))) {
-                return (await this.ChatRequestDeposit.deleteMany({ addressedTo })).deletedCount === chatRequests.length;
-            }
-            return false;
-        }
-        catch (err) {
-            logError(err);
-            return false;
-        }
+    static async getAllRequests(addressedTo: string): Promise<ChatRequestHeader[]> {
+        return bufferReplaceFromLean(await this.ChatRequest.find({ addressedTo }).lean().exec());
     }
 
-    static async retrieveReceipts(addressedTo: string, then: (receipts: any[]) => Promise<boolean>) {
-        try {
-            const receipts = await this.ReceiptDeposit.find({ addressedTo }).lean().exec();
-            if (await then(cleanLean(receipts))) {
-                return (await this.ReceiptDeposit.deleteMany({ addressedTo })).deletedCount === receipts.length;
-            }
-            return false;
-        }
-        catch (err) {
-            logError(err);
-            return false;
-        }
+    static async getUnprocessedMessages(sessionId: string, addressedTo: string): Promise<MessageHeader[]> {
+        return bufferReplaceFromLean(await this.MessageHeader.find({ sessionId, addressedTo }).lean().exec());
     }
 
-    static registerUserHandler(username: string, userHandler: MongoUserHandler) {
-        this.userHandlers.set(username, userHandler);
+    static async getMessagesByNumber(chatId: string, limit: number, olderThanTimemark: number): Promise<StoredMessage[]> {
+        return bufferReplaceFromLean(await this.Message.find({ chatId }).lt("timemark", olderThanTimemark).sort({ timemark: -1 }).limit(limit).lean().exec());
     }
 
-    static deregisterUserHandler(username: string) {
-        this.userHandlers.delete(username);
-    }
-}
-
-export class MongoUserHandler {
-    private readonly username: string;
-    private readonly ChatRequests: mongoose.Model<any>;
-    private readonly UnprocessedMessages: mongoose.Model<any>;
-    private readonly Messages: mongoose.Model<any>;
-    private readonly Chats: mongoose.Model<any>;
-    private readonly Receipts: mongoose.Model<any>;
-    private readonly Backup: mongoose.Model<any>;
-    private readonly notifyMessage: (message: MessageHeader | ChatRequestHeader | Receipt) => void;
-
-    private constructor(username: string, notifyMessage: (message: MessageHeader | ChatRequestHeader) => void) {
-        this.username = username;
-        this.ChatRequests = mongoose.model(`${username}ChatRequests`, chatRequestHeaderSchema.index({ timestamp: -1 }).index({ sessionId: 1 }, { unique: true }), `${username}_chat_requests`);
-        this.UnprocessedMessages = mongoose.model(`${username}UnprocessedMessages`, messageHeaderSchema.index({ sessionId: "hashed", timestamp: -1 }).index({ sessionId: 1, messageId: 1 }, { unique: true }), `${username}_unprocessed_messages`);
-        this.Messages = mongoose.model(`${username}Messages`, messageSchema.index({ sessionId: "hashed", timestamp: -1 }).index({ sessionId: 1, messageId: 1 }, { unique: true }), `${username}_messages`);
-        this.Chats = mongoose.model(`${username}Chats`, chatSchema.index({ lastActive: -1 }), `${username}_chats`);
-        this.Receipts =  mongoose.model(`${username}Receipts`, receiptDepositSchema.index({ sessionId: 1, messageId: 1 }, { unique: true }), `${username}_receipts`);
-        this.Backup =  mongoose.model(`${username}Backup`, messageSchema.index({ sessionId: 1, messageId: 1 }, { unique: true }), `${username}_backups`);
-        this.notifyMessage = notifyMessage;
+    static async getMessagesUptoTimestamp(chatId: string, newerThanTimemark: number, olderThanTimemark: number): Promise<StoredMessage[]> {
+        return bufferReplaceFromLean(await this.Message.find({ chatId }).lt("timemark", olderThanTimemark).gt("timemark", newerThanTimemark).sort({ timemark: -1 }).lean().exec());
     }
 
-    static async createHandler(username: string, notifyMessage: (message: MessageHeader | ChatRequestHeader | Receipt) => void) {
-        const userHandler = new MongoUserHandler(username, notifyMessage);
-        MongoHandlerCentral.registerUserHandler(username, userHandler);
-        await userHandler.retrieve();
-        return userHandler;
-    }
-
-    private async retrieve() {
-        MongoHandlerCentral.retrieveChatRequests(this.username, async (chatRequests) => {
-            try {
-                const inserted = await this.ChatRequests.insertMany(chatRequests, { lean: true });
-                return (inserted.length === chatRequests.length);
-            }
-            catch (err) {
-                logError(err);
-                return false;
-            }
-        });
-        MongoHandlerCentral.retrieveMessages(this.username, async (messages) => {
-            try {
-                const inserted = await this.UnprocessedMessages.insertMany(messages, { lean: true });
-                return (inserted.length === messages.length);
-            }
-            catch (err) {
-                logError(err);
-                return false;
-            }
-        });
-        MongoHandlerCentral.retrieveReceipts(this.username, async (receipts) => {
-            try {
-                const inserted = await this.Receipts.insertMany(receipts, { lean: true });
-                return (inserted.length === receipts.length);
-            }
-            catch (err) {
-                logError(err);
-                return false;
-            }
-        });
-    }
-
-    async depositMessage(message: MessageHeader) {
-        try {
-            if (message.addressedTo !== this.username) return false;
-            const newMessage = new this.UnprocessedMessages(bufferReplaceForMongo(message));
-            if (newMessage === await newMessage.save()) {
-                this.notifyMessage?.(message);
-                return true;
-            }
-            return false;
-        }
-        catch (err) {
-            logError(err);
-            return false;
-        }
-    }
-
-    async depositChatRequest(chatRequest: ChatRequestHeader) {
-        try {
-            if (chatRequest.addressedTo !== this.username) return false;
-            const newChatRequest = new this.ChatRequests(bufferReplaceForMongo(chatRequest));
-            if (newChatRequest === await newChatRequest.save()) {
-                this.notifyMessage?.(chatRequest);
-                return true;
-            }
-            return false;
-        }
-        catch (err) {
-            logError(err);
-            return false;
-        }
-    }
-
-    async depositReceipt(receipt: Receipt) {
-        try {
-            if (receipt.addressedTo !== this.username) return false;
-            const newReceipt = new this.Receipts(bufferReplaceForMongo(receipt));
-            if (newReceipt === await newReceipt.save()) {
-                this.notifyMessage?.(receipt);
-                return true;
-            }
-            return false;
-        }
-        catch (err) {
-            logError(err);
-            return false;
-        }
-    }
-
-    async getAllChats(): Promise<ChatData[]> {
-        return bufferReplaceFromLean(await this.Chats.find().lean().exec());
-    }
-
-    async getAllRequests(): Promise<ChatRequestHeader[]> {
-        return bufferReplaceFromLean(await this.ChatRequests.find().lean().exec());
-    }
-
-    async getUnprocessedMessages(sessionId: string): Promise<MessageHeader[]> {
-        return bufferReplaceFromLean(await this.UnprocessedMessages.find({ sessionId }).lean().exec());
-    }
-
-    async getMessagesByNumber(sessionId: string, limit: number, olderThan = Date.now()): Promise<StoredMessage[]> {
-        return bufferReplaceFromLean(await this.Messages.find({ sessionId }).lt("timestamp", olderThan).sort({ timestamp: -1 }).limit(limit).lean().exec());
-    }
-
-    async getMessagesUptoTimestamp(sessionId: string, newerThan: number, olderThan = Date.now()): Promise<StoredMessage[]> {
-        return bufferReplaceFromLean(await this.Messages.find({ sessionId }).lt("timestamp", olderThan).gt("timestamp", newerThan).sort({ timestamp: -1 }).lean().exec());
-    }
-
-    async getMessagesUptoId(sessionId: string, messageId: string, olderThan = Date.now()): Promise<StoredMessage[]> {
-        const message = await this.Messages.findOne({ sessionId, messageId }).exec();
+    static async getMessagesUptoId(chatId: string, hashedId: string, olderThanTimemark: number): Promise<StoredMessage[]> {
+        const message = await this.Message.findOne({ chatId, hashedId }).exec();
         if (!message) return null;
-        const { timestamp } = message;
-        return this.getMessagesUptoTimestamp(sessionId, timestamp, olderThan);
+        const { timemark } = message;
+        return this.getMessagesUptoTimestamp(chatId, timemark, olderThanTimemark);
     }
 
-    async getMessageById(sessionId: string, messageId: string): Promise<StoredMessage> {
-        return bufferReplaceFromLean(await this.Messages.findOne({ sessionId, messageId }).lean().exec());
+    static async getMessageById(chatId: string, hashedId: string): Promise<StoredMessage> {
+        return bufferReplaceFromLean(await this.Message.findOne({ chatId, hashedId }).lean().exec());
     }
 
-    async deleteChatRequest(sessionId: string) {
+    static async deleteChatRequest(headerId: string) {
         try {
-            return (await this.ChatRequests.deleteOne({ sessionId })).deletedCount === 1
+            return (await this.ChatRequest.deleteOne({ headerId })).deletedCount === 1
         }
         catch (err) {
             logError(err);
@@ -680,10 +498,10 @@ export class MongoUserHandler {
         }
     }
 
-    async storeMessage(message: StoredMessage) {
+    static async storeMessage(message: StoredMessage) {
         try {
-            const { sessionId, messageId } = message;
-            const upsert = await this.Messages.updateOne({ sessionId, messageId }, bufferReplaceForMongo(message), { upsert: true });
+            const { chatId, hashedId } = message;
+            const upsert = await this.Message.updateOne({ chatId, hashedId }, bufferReplaceForMongo(message), { upsert: true });
             return (upsert.modifiedCount + upsert.upsertedCount) === 1;
         }
         catch (err) {
@@ -692,7 +510,7 @@ export class MongoUserHandler {
         }
     }
 
-    async storeBackup(backup: StoredMessage) {
+    static async storeBackup(backup: Backup) {
         try {
             const newBackup = new this.Backup(bufferReplaceForMongo(backup));
             if (newBackup === await newBackup.save()) {
@@ -706,21 +524,21 @@ export class MongoUserHandler {
         }
     }
 
-    async getBackupById(sessionId: string, messageId: string): Promise<StoredMessage> {
-        return bufferReplaceFromLean(await this.Backup.findOne({ sessionId, messageId }).lean().exec());
+    static async getBackupById(sessionId: string, headerId: string): Promise<Backup> {
+        return bufferReplaceFromLean(await this.Backup.findOne({ sessionId, headerId }).lean().exec());
     }
 
-    async getAllReceipts(sessionId: string): Promise<Receipt[]> {
-        return bufferReplaceFromLean(await this.Receipts.find({ sessionId }).lean().exec());
+    static async getAllReceipts(addressedTo: string, sessionId: string): Promise<Receipt[]> {
+        return bufferReplaceFromLean(await this.Receipt.find({ sessionId, addressedTo }).lean().exec());
     }
 
-    async clearAllReceipts(sessionId: string) {
-        return (await this.Receipts.deleteMany({ sessionId })).deletedCount > 1;
+    static async clearAllReceipts(addressedTo: string, sessionId: string) {
+        return (await this.Receipt.deleteMany({ addressedTo, sessionId })).deletedCount > 1;
     }
 
-    async backupProcessed(sessionId: string, messageId: string) {
+    static async backupProcessed(sessionId: string, headerId: string) {
         try {
-            return (await this.Backup.deleteOne({ sessionId, messageId })).deletedCount === 1
+            return (await this.Backup.deleteOne({ sessionId, headerId })).deletedCount === 1
         }
         catch (err) {
             logError(err);
@@ -728,13 +546,13 @@ export class MongoUserHandler {
         }
     }
 
-    async messageProcessed(sessionId: string, messageId: string) {
-        return (await this.UnprocessedMessages.deleteOne({ sessionId, messageId })).deletedCount === 1;
+    static async messageProcessed(sessionId: string, headerId: string) {
+        return (await this.MessageHeader.deleteOne({ sessionId, headerId })).deletedCount === 1;
     }
 
-    async createChat(chat: ChatData) {
+    static async createChat(chat: ChatData) {
         try {
-            const newChat = new this.Chats(bufferReplaceForMongo(chat));
+            const newChat = new this.Chat(bufferReplaceForMongo(chat));
             if (newChat === await newChat.save()) {
                 return true;
             }
@@ -746,9 +564,9 @@ export class MongoUserHandler {
         }
     }
 
-    async updateChat({ sessionId, ...chat }: Omit<ChatData, "chatDetails" | "exportedChattingSession" | "createdAt"> & Partial<Omit<ChatData, "createdAt">>) {
+    static async updateChat({ chatId, ...chat }: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>) {
         try {
-            return !!(await this.Chats.findOneAndUpdate({ sessionId }, bufferReplaceForMongo(chat)).exec());
+            return !!(await this.Chat.findOneAndUpdate({ chatId }, bufferReplaceForMongo(chat)).exec());
         }
         catch (err) {
             logError(err);

@@ -4,6 +4,7 @@ import { SessionCrypto } from "../../shared/sessionCrypto";
 import { ChattingSession, SendingMessage, ViewChatRequest } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
 import { MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, SocketServerSideEvents, DeliveryInfo, Receipt  } from "../../shared/commonTypes";
+import { Buffer } from "buffer";
 import { DateTime } from "luxon";
 import { allSettledResults, awaitCallback, logError, randomFunctions, truncateText } from "../../shared/commonFunctions";
 import { ClientChatInterface, ClientChatRequestInterface } from "./client";
@@ -22,6 +23,7 @@ export type ChatDetails = Readonly<{
     unreadMessages: number,
 }>;
 export abstract class AbstractChat {
+    abstract get sessionId(): string;
     abstract get details(): ChatDetails;
     abstract get type(): "Chat" | "ChatRequest" | "AwaitedRequest";
     abstract get lastActive(): number;
@@ -98,8 +100,8 @@ export class ChatRequest extends AbstractChat {
 
     constructor(chatRequestHeader: ChatRequestHeader, clientInterface: ClientChatRequestInterface, viewRequest: ViewChatRequest) {
         super();
-        const { text, messageId, timestamp, profile: { username: otherUser, ...contactDetails } } = viewRequest;
-        this.sessionId = chatRequestHeader.sessionId;
+        const { text, messageId, sessionId, timestamp, profile: { username: otherUser, ...contactDetails } } = viewRequest;
+        this.sessionId = sessionId;
         this.otherUser = otherUser;
         this.lastActive = timestamp;
         this.contactDetails = contactDetails;
@@ -131,36 +133,76 @@ export class ChatRequest extends AbstractChat {
 }
 
 export class Chat extends AbstractChat {
+    readonly type = "Chat";
+    readonly chatId: string;
+    readonly sessionId: string;
+    readonly me: string;
+    readonly otherUser: string;
+    readonly myAlias: string;
+    readonly otherAlias: string;
     private disposed = false;
-    private readonly loadingBatch = 10;
     private isLoading = false;
-    private loadedUpto = Date.now();
-    private createdAt: number;
-    private latestMessageAt: number;
+    private loadedUpto: number;
     private lastActivity: DisplayMessage;
-    private readonly unreadMessagesList: string[] = [];
     private otherTyping: boolean;
     private typingTimeout: number;
     private notify: (event: ChatEvent) => void;
     private notifyActivity: () => void;
-    private readonly messagesList = new Map<string, ChatMessage>();
-    private readonly chatMessageLists = new Map<string, ChatMessageListInternal>();
-    private readonly clientInterface: ClientChatInterface;
-    readonly type = "Chat";
-    readonly sessionId: string;
-    readonly me: string;
-    readonly otherUser: string;
+    private readonly createdAt: number;
+    private readonly loadingBatch = 10;
+    private readonly timeRatio: number;
+    private readonly unreadMessagesList: string[] = [];
     private readonly receivingEvent: string;
     private readonly sendingEvent: string;
     private readonly contactDetails: Omit<Contact, "username">;
+    private readonly messagesList = new Map<string, ChatMessage>();
+    private readonly chatMessageLists = new Map<string, ChatMessageListInternal>();
+    private readonly clientInterface: ClientChatInterface;
     readonly #chattingSession: ChattingSession;
     readonly #encryptionBaseVector: CryptoKey;
     #sessionCrypto: SessionCrypto;
     #socket: Socket;
 
+    private constructor(chatId: string, timeRatio: number, recipientDetails: Contact, encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chattingSession: ChattingSession) {
+        super();
+        this.chatId = chatId;
+        this.#chattingSession = chattingSession;
+        this.timeRatio = timeRatio;
+        this.loadedUpto = Date.now();
+        const { username, ...contactDetails } = recipientDetails;
+        const { me, otherUser, myAlias, otherAlias, sessionId, createdAt } = chattingSession;
+        this.sessionId = sessionId;
+        this.me = me;
+        this.otherUser = otherUser;
+        this.myAlias = myAlias;
+        this.otherAlias = otherAlias;
+        this.createdAt = createdAt;
+        this.receivingEvent = `${otherUser} -> ${me}`;
+        this.sendingEvent = `${me} -> ${otherUser}`;
+        this.contactDetails = contactDetails;
+        this.clientInterface = clientInterface;
+        this.#encryptionBaseVector = encryptionBaseVector;
+    }
+
+    static async instantiate(encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chatData: ChatData, firstMessage?: { messageId: string, text: string, timestamp: number, sentByMe: boolean, deliveredAt?: number }) {
+        const { chatDetails, exportedChattingSession } = chatData;
+        const { chatId, contactDetails, timeRatio }: { chatId: string, contactDetails: Contact, timeRatio: number } = await crypto.deriveDecrypt(chatDetails, encryptionBaseVector, "ChatDetails");
+        const chattingSession = await ChattingSession.importSession(exportedChattingSession, encryptionBaseVector);
+        const chat = new Chat(chatId, timeRatio, contactDetails, encryptionBaseVector, clientInterface, chattingSession);
+        if (firstMessage) {
+            const { messageId, text, timestamp, sentByMe, deliveredAt: deliveredAt } = firstMessage;
+            const delivery = { delivered: deliveredAt, seen: deliveredAt };
+            await chat.encryptStoreMessage({ messageId, text, timestamp, sentByMe, delivery }, null);
+        }
+        await chat.loadUnprocessedMessages();
+        await chat.loadNext();
+        chat.loadAndProcessReceipts();
+        return chat;
+    }
+
     private get hasRoom() { return !!this.#sessionCrypto; }
 
-    get lastActive() { return this.latestMessageAt; }
+    get lastActive() { return this.lastActivity?.timestamp || Date.now() }
 
     get details(): ChatDetails {
         const { otherUser, contactDetails: { displayName, profilePicture, contactName }, lastActivity, otherTyping: isOtherTyping } = this;
@@ -222,38 +264,6 @@ export class Chat extends AbstractChat {
         this.clientInterface.notifyClient();
     }
 
-    private constructor(sessionId: string, me: string, recipientDetails: Contact, encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chattingSession: ChattingSession) {
-        super();
-        this.sessionId = sessionId;
-        this.me = me;
-        const { username: recipient, ...contactDetails } = recipientDetails;
-        this.otherUser = recipient;
-        this.receivingEvent = `${recipient} -> ${me}`;
-        this.sendingEvent = `${me} -> ${recipient}`;
-        this.contactDetails = contactDetails;
-        this.clientInterface = clientInterface;
-        this.#encryptionBaseVector = encryptionBaseVector;
-        this.#chattingSession = chattingSession;
-    }
-
-    static async instantiate(me: string, encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chatData: ChatData, firstMessage?: { messageId: string, text: string, timestamp: number, sentByMe: boolean, deliveredAt?: number }) {
-        const { chatDetails, exportedChattingSession, lastActive, createdAt, sessionId } = chatData;
-        const contactDetails: Contact = await crypto.deriveDecrypt(chatDetails, encryptionBaseVector, "ContactDetails");
-        const chattingSession = await ChattingSession.importSession(exportedChattingSession, encryptionBaseVector);
-        const chat = new Chat(sessionId, me, contactDetails, encryptionBaseVector, clientInterface, chattingSession);
-        chat.latestMessageAt = lastActive;
-        chat.createdAt = createdAt;
-        if (firstMessage) {
-            const { messageId, text, timestamp, sentByMe, deliveredAt: deliveredAt } = firstMessage;
-            const delivery = { delivered: deliveredAt, seen: deliveredAt };
-            await chat.encryptStoreMessage({ messageId, text, timestamp, sentByMe, delivery }, false);
-        }
-        await chat.loadUnprocessedMessages();
-        await chat.loadNext();
-        chat.loadAndProcessReceipts();
-        return chat;
-    }
-
     async establishRoom(sessionCrypto: SessionCrypto, socket: Socket) {
         if (this.disposed) {
             return false;
@@ -306,7 +316,7 @@ export class Chat extends AbstractChat {
             this.lastActivity = chatMessage.displayMessage;
             this.notifyActivity?.();
         }
-        this.encryptStoreMessage(displayMessage, false);
+        this.encryptStoreMessage(displayMessage, null);
         return true;
     }
 
@@ -321,52 +331,50 @@ export class Chat extends AbstractChat {
             return false;
         }
         const sendWithoutRoom = event === "delivered" || event === "seen";
-        if (sendWithoutRoom) this.encryptStoreMessage(this.messagesList.get(reportingAbout).displayMessage, false);
+        if (sendWithoutRoom) this.encryptStoreMessage(this.messagesList.get(reportingAbout).displayMessage, null);
         if (!sendWithoutRoom && !this.hasRoom) return false;
         if (event === "seen" && this.unreadMessagesList.includes(reportingAbout)) {
             _.pull(this.unreadMessagesList, reportingAbout);
             this.notifyActivity?.();  
         }
+        const messageId = getRandomString(15, "hex");
         const sendingMessage: SendingMessage =
             event === "delivered" || event === "seen"
-                ? { timestamp, event, reportingAbout }
-                : { timestamp, event };
+                ? { messageId, timestamp, event, reportingAbout }
+                : { messageId, timestamp, event };
         const result = await this.dispatchSendingMessage(sendingMessage, sendWithoutRoom);
         if (!result) return false;
-        const { messageId, acknowledged } = result;
-        if (sendWithoutRoom && !acknowledged) {
-            const content = await crypto.deriveEncrypt(sendingMessage, this.#encryptionBaseVector, this.sessionId);
-            const encryptedMessage = { messageId, timestamp, content };
-            await this.clientInterface.StoreBackup(encryptedMessage);
-        }
         return true;
     }
 
-    private async dispatchSendingMessage(sendingMessage: SendingMessage, sendWithoutRoom: boolean): Promise<{ messageId: string, acknowledged: boolean }> {
+    private async dispatchSendingMessage(sendingMessage: SendingMessage, sendWithoutRoom: boolean): Promise<{ acknowledged: boolean }> {
         if (!this.clientInterface.isConnected) return null;
         const messageHeader = await this.#chattingSession.sendMessage(sendingMessage, async (exportedChattingSession) => {
-            const result = await this.clientInterface.UpdateChat({ lastActive: this.latestMessageAt, exportedChattingSession });
+            const result = await this.clientInterface.UpdateChat({ chatId: this.chatId, exportedChattingSession });
             return !result.reason;
         });
         if (messageHeader === "Could Not Save") {
             logError(messageHeader);
             return null;
         }
-        const { messageId } = messageHeader;
+        const { sessionId, headerId } = messageHeader;
         if (this.hasRoom) {
             const response = await this.dispatch(messageHeader);
             if (response) {
                 const { signature, bounced } = response;
-                if (!(await this.#chattingSession.verifyReceipt(messageId, signature)) || bounced) {
+                if (!(await this.#chattingSession.verifyReceipt(headerId, signature, bounced)) || bounced) {
                     console.log("Resending.");
                     return this.dispatchSendingMessage(sendingMessage, sendWithoutRoom);
                 }
-                else return { messageId, acknowledged: true };
+                else return { acknowledged: true };
             }
         }
         if (sendWithoutRoom) {
+            const content = await crypto.deriveEncrypt(sendingMessage, this.#encryptionBaseVector, this.sessionId);
+            const encryptedMessage = { sessionId, headerId, content };
+            await this.clientInterface.StoreBackup(encryptedMessage);
             await this.clientInterface.SendMessage(messageHeader);
-            return { messageId, acknowledged: false };
+            return { acknowledged: false };
         }
         else return null;
     }
@@ -386,7 +394,9 @@ export class Chat extends AbstractChat {
 
     async loadNext() {
         await this.performLoad(async () => {
-            const messages = await this.clientInterface.GetMessagesByNumber({ limit: this.loadingBatch, olderThan: this.loadedUpto });
+            const { chatId, loadedUpto, timeRatio, loadingBatch: limit } = this;
+            const olderThanTimemark = loadedUpto / timeRatio;
+            const messages = await this.clientInterface.GetMessagesByNumber({ chatId, limit, olderThanTimemark });
             if ("reason" in messages) {
                 logError(messages);
                 return;
@@ -398,7 +408,10 @@ export class Chat extends AbstractChat {
     async loadUptoId(messageId: string) {
         if (this.messagesList.has(messageId)) return;
         await this.performLoad(async () => {
-            const messages = await this.clientInterface.GetMessagesUptoId({ messageId, olderThan: this.loadedUpto });
+            const { chatId, myAlias, loadedUpto, timeRatio } = this;
+            const olderThanTimemark = loadedUpto / timeRatio;
+            const hashedId = await this.calculateHashedId(messageId);
+            const messages = await this.clientInterface.GetMessagesUptoId({ chatId, hashedId, olderThanTimemark });
             if ("reason" in messages) {
                 logError(messages);
                 return;
@@ -410,7 +423,10 @@ export class Chat extends AbstractChat {
 
     async loadUptoTime(newerThan: number) {
         await this.performLoad(async () => {
-            const messages = await this.clientInterface.GetMessagesUptoTimestamp({ newerThan, olderThan: this.loadedUpto });
+            const { chatId, loadedUpto, timeRatio } = this;
+            const olderThanTimemark = loadedUpto / timeRatio;
+            const newerThanTimemark = newerThan / timeRatio;
+            const messages = await this.clientInterface.GetMessagesUptoTimestamp({ chatId, newerThanTimemark, olderThanTimemark });
             if ("reason" in messages) {
                 logError(messages);
                 return;
@@ -446,7 +462,6 @@ export class Chat extends AbstractChat {
         if (!message.sentByMe) chatMessage.signalEvent("delivered", Date.now());
         if (timestamp >= (this.lastActivity?.timestamp || 0)) {
             this.lastActivity = message;
-            this.latestMessageAt = timestamp;
             this.notify?.("received-new");
             this.notifyActivity?.();
             this.clientInterface.notifyClient();
@@ -495,33 +510,36 @@ export class Chat extends AbstractChat {
         }
     }
 
-    private async encryptStoreMessage(message: DisplayMessage, wasUnprocessed: boolean) {
-        const { messageId, timestamp, sentByMe } = message;
+    private async encryptStoreMessage(message: DisplayMessage, headerId: string) {
+        const { messageId, timestamp } = message;
         const content = await crypto.deriveEncrypt(message, this.#encryptionBaseVector, this.sessionId);
-        const encryptedMessage = { messageId, timestamp, content };
+        const { chatId, sessionId } = this;
+        const hashedId = await this.calculateHashedId(messageId);
+        const timemark = timestamp / this.timeRatio;
+        const encryptedMessage: StoredMessage = { chatId, hashedId, timemark, content };
         await this.clientInterface.StoreMessage(encryptedMessage);
-        if (wasUnprocessed || sentByMe) {
-            await this.clientInterface.MessageProcessed({ messageId });
+        if (headerId) {
+            await this.clientInterface.MessageHeaderProcessed({ sessionId, headerId });
         }
     }
 
     private async processMessageHeader(encryptedMessage: MessageHeader, live: boolean): Promise<{ signature: string, bounced: boolean }> {
-        const { messageId } = encryptedMessage;
-        const addressedTo = this.otherUser;
+        const { sessionId, headerId } = encryptedMessage;
+        const addressedTo = this.otherAlias;
         const [messageBody, signature] = await this.#chattingSession.receiveMessage(encryptedMessage, async (exportedChattingSession) => {
-            const result = await this.clientInterface.UpdateChat({ lastActive: this.latestMessageAt, exportedChattingSession });
+            const result = await this.clientInterface.UpdateChat({ chatId: this.chatId, exportedChattingSession });
             return !result.reason; 
         });
         const sendReceipt = async ({ bounced }: { bounced: boolean }) => {
-            live || await this.clientInterface.MessageProcessed({ messageId });
-            live || await this.clientInterface.SendReceipt({ addressedTo, messageId, signature, bounced });
+            live || await this.clientInterface.MessageHeaderProcessed({ sessionId, headerId });
+            live || await this.clientInterface.SendReceipt({ addressedTo, sessionId, headerId, signature, bounced });
             return { signature, bounced }
         }
         if (typeof messageBody === "string") {
             logError(messageBody);
             return sendReceipt({ bounced: true });
         };
-        const { sender, timestamp } = messageBody;
+        const { sender, timestamp, messageId } = messageBody;
         if (sender !== this.otherUser) {
             return sendReceipt({ bounced: true });
         }
@@ -561,7 +579,7 @@ export class Chat extends AbstractChat {
             displayMessage = { messageId, timestamp, text, replyingToInfo, sentByMe: false };
             this.addMessageToList(displayMessage);
         }
-        await this.encryptStoreMessage(displayMessage, true);
+        await this.encryptStoreMessage(displayMessage, headerId);
         return sendReceipt({ bounced: false });
     }
 
@@ -577,7 +595,8 @@ export class Chat extends AbstractChat {
     private async getMessageById(messageId: string): Promise<DisplayMessage> {
         if (!messageId) return null;
         if (this.messagesList.has(messageId)) return this.messagesList.get(messageId).displayMessage;
-        const fetched = await this.clientInterface.GetMessageById({ messageId });
+        const hashedId = await this.calculateHashedId(messageId);
+        const fetched = await this.clientInterface.GetMessageById({ chatId: this.chatId, hashedId });
         if ("reason" in fetched) {
             logError(fetched);
             return undefined;
@@ -586,7 +605,8 @@ export class Chat extends AbstractChat {
     }
 
     private async loadUnprocessedMessages() {
-        let unprocessedMessages = await this.clientInterface.GetUnprocessedMessages();
+        const { sessionId, myAlias: addressedTo } = this;
+        let unprocessedMessages = await this.clientInterface.GetMessageHeaders({ sessionId, addressedTo });
         if ("reason" in unprocessedMessages) {
             logError(unprocessedMessages);
             return;
@@ -598,37 +618,36 @@ export class Chat extends AbstractChat {
     }
 
     private async loadAndProcessReceipts() {
-        let receipts = await this.clientInterface.GetAllReceipts();
+        const { sessionId, myAlias: addressedTo } = this;
+        let receipts = await this.clientInterface.GetAllReceipts({ sessionId, addressedTo });
         if ("reason" in receipts) {
             logError(receipts);
             return;
         }
         await Promise.all(receipts.map((receipt) => this.processReceipt(receipt)));
-        await this.clientInterface.ClearAllReceipts();
+        await this.clientInterface.ClearAllReceipts({ sessionId, addressedTo });
+    }
+
+    private async calculateHashedId(messageId: string) {
+        return (await crypto.digestToBase64("SHA-256", Buffer.from(`${this.myAlias}${messageId}`, "hex"))).slice(0, 15);
     }
 
     async processReceipt(receipt: Receipt) {
-        const { messageId, signature, bounced } = receipt;
-        if (!(await this.#chattingSession.verifyReceipt(messageId, signature))) return;
+        const { headerId, sessionId, signature, bounced } = receipt;
+        if (!(await this.#chattingSession.verifyReceipt(headerId, signature, bounced))) return;
         if (!bounced) {
-            await this.clientInterface.BackupProcessed({ messageId });
+            await this.clientInterface.BackupProcessed({ sessionId, headerId });
         }
         else {
             let sendingMessage: SendingMessage
-            const backup = await this.clientInterface.GetBackupById({ messageId });
+            const backup = await this.clientInterface.GetBackupById({ sessionId, headerId });
             if ("reason" in backup) {
                 logError(backup);
-                const message = await this.clientInterface.GetMessageById({ messageId });
-                if ("reason" in message) {
-                    logError(backup);
-                    return;
-                }
-                const { text, replyingToInfo: { replyId: replyingTo }, timestamp }: DisplayMessage = await crypto.deriveDecrypt(message.content, this.#encryptionBaseVector, this.sessionId);
-                sendingMessage = { text, replyingTo, timestamp };
+                return;
             }
             else {
-                sendingMessage = await crypto.deriveDecrypt(backup.content, this.#encryptionBaseVector, this.sessionId);
-                await this.clientInterface.BackupProcessed({ messageId });
+                sendingMessage: sendingMessage = await crypto.deriveDecrypt(backup.content, this.#encryptionBaseVector, this.sessionId);
+                await this.clientInterface.BackupProcessed({ sessionId, headerId });
             }
             await this.dispatchSendingMessage(sendingMessage, true);
         }
