@@ -4,10 +4,10 @@ import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
 import { Buffer } from "./node_modules/buffer/";
 import { Buffer as NodeBuffer } from "node:buffer";
-import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PasswordEncryptedData, PublishKeyBundlesRequest, StoredMessage, RegisterNewUserRequest, NewUserData, UserEncryptedData, Receipt, Backup } from "../shared/commonTypes";
+import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PasswordEncryptedData, PublishKeyBundlesRequest, StoredMessage, RegisterNewUserRequest, NewUserData, UserEncryptedData, Receipt, Backup, ChatSessionDetails, Username } from "../shared/commonTypes";
 import * as crypto from "../shared/cryptoOperator";
 import { parseIpReadable } from "./backendserver";
-import { logError } from "../shared/commonFunctions";
+import { allSettledResults, logError } from "../shared/commonFunctions";
 
 const exposedSignedKey = {
     exportedPublicKey: {
@@ -41,21 +41,6 @@ const userEncryptedData = {
         required: true
     }
 };
-
-const ipSchema = {
-    ipRep: {
-        type: Schema.Types.String,
-        required: true,
-        immutable: true,
-        unique: true
-    },
-    ipRead: {
-        type: Schema.Types.String,
-        required: true,
-        immutable: true,
-        unique: true
-    }
-}
 
 const passwordEncryptedData = {
     ciphertext: {
@@ -124,6 +109,112 @@ export class MongoHandlerCentral {
         }
     }), "server_data");
 
+    private static readonly DatabaseAccessKey = mongoose.model("DatabaseAccessKey", new Schema({
+        username: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true,
+            lowercase: true,
+            trim: true,
+            minLength: 3,
+            maxLength: 15,
+            match: /^[a-z0-9_]{3,15}$/
+        },
+        type: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true,
+            enum: ["root", "chat", "session"]
+        },
+        accessKey: {
+            type: Schema.Types.Buffer,
+            required: true,
+            immutable: true
+        }
+    }).pre("validate", async function(next) {
+        if (!this.isNew) next(new Error("Cannot modify record."));
+        else {
+            const previousKeys = await MongoHandlerCentral.DatabaseAccessKey.find({ username: this.username });
+            if (previousKeys.length === 0 && this.type !== "root") next(new Error("First access key created must be of type 'root'."));
+            else if (previousKeys.length > 0 && this.type === "root") next(new Error("Cannot create another root key."));
+            else next();
+        }
+    }), "database_access_keys");
+
+    private static readonly RegisteredSession = mongoose.model("RegisteredSession", new Schema({
+        sessionId: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true,
+            unique: true
+        },
+        alias1: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true
+        },
+        alias2: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true
+        },
+        locked: {
+            type: Schema.Types.Boolean,
+            required: true,
+            default: false
+        }
+    }).pre("validate", function(next) {
+        if (this.alias1 === this.alias2) next(new Error("Both aliases cannot be the same."));
+        else if (this.isNew && this.locked) next(new Error("Cannot create a registered session locked at the beginning."));
+        else if (!this.isNew && !this.locked) next(new Error("Cannot unlock registered session."));
+        else next();
+    }), "registered_sessions");
+
+    private static readonly RegistrationPendingSession = mongoose.model("RegistrationPendingSession", new Schema({
+        sessionId: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true,
+            unique: true
+        },
+        toAlias: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true
+        },
+        fromAlias: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true
+        },
+        initiatorAccessKey: {
+            type: Schema.Types.Buffer,
+            required: true,
+            immutable: true
+        },
+        acceptorAccessKey: {
+            type: Schema.Types.Buffer,
+            default: null
+        },
+        registeredAt: {
+            type: Schema.Types.Date,
+            default: new Date(),
+            immutable: true,
+            expires: 30 * 24 * 60 * 60
+        }
+    }).pre("validate", async function(next) {
+        if (this.isNew) this.registeredAt = new Date();
+        if (this.toAlias === this.fromAlias) next(new Error("Both aliases cannot be the same."));
+        else if (this.isNew && this.acceptorAccessKey) next(new Error("Cannot add acceptorAccessKey to new record."));
+        else if (!this.isNew) {
+            const prevAcceptor = (await MongoHandlerCentral.RegistrationPendingSession.findOne({ sessionId: this.sessionId }).lean()).acceptorAccessKey;
+            if (prevAcceptor) next(new Error("Cannot modify once acceptorAccessKey is set."));
+            else if (!prevAcceptor && !this.acceptorAccessKey) next(new Error("Must add acceptorAccessKey on modify."));
+            else next();
+        }
+        else next();
+    }), "registration_pending_sessions");
+
     private static readonly SavedAuth = mongoose.model("SavedAuth", new Schema({
         saveToken: {
             type: Schema.Types.String,
@@ -131,13 +222,29 @@ export class MongoHandlerCentral {
             immutable: true,
             unique: true
         },
-        ...ipSchema,
+        ipRep: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true,
+            unique: true
+        },
+        ipRead: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true,
+            unique: true
+        },
         savedAuthDetails: userEncryptedData,
         createdAt: {
             type: Schema.Types.Date,
+            immutable: true,
             default: new Date(),
             expires: 10 * 24 * 60 * 60
         }
+    }).pre("validate", function(next) { 
+        if (this.isNew) this.ipRead = parseIpReadable(this.ipRep);
+        this.createdAt = new Date();
+        next(); 
     }), "saved_auth");
 
     private static readonly User = mongoose.model("User_", new Schema({
@@ -172,6 +279,7 @@ export class MongoHandlerCentral {
             x3dhInfo: userEncryptedData,
             chatsData: userEncryptedData
         },
+        databaseAuthKey: passwordEncryptedData,
         keyBundles: {
             defaultKeyBundle: {
                 type: this.keyBundleSchema,
@@ -182,11 +290,6 @@ export class MongoHandlerCentral {
                 required: false,
                 default: []
             },
-        },
-        accessedKeyBundles: {
-            type: [Schema.Types.String],
-            required: false,
-            default: []
         }
     }), "users");
 
@@ -221,7 +324,11 @@ export class MongoHandlerCentral {
             required: true,
             immutable: true,
         }
-    }).index({ username: 1, ipRep: 1, ipRead: 1 }, { unique: true }), "user_retries");
+    }).index({ username: 1, ipRep: 1 }, { unique: true })
+    .pre("validate", function(next) { 
+        if (this.isNew) this.ipRead = parseIpReadable(this.ipRep);
+        next(); 
+    }), "user_retries");
 
     private static readonly ChatRequest = mongoose.model("ChatRequest", new Schema({
         addressedTo: {
@@ -252,11 +359,15 @@ export class MongoHandlerCentral {
     }).index({ addressedTo: "hashed" }), "chat_requests");
 
     private static readonly MessageHeader = mongoose.model("MessageHeader", new Schema({
-        addressedTo: {
+        sessionId: {
             type: Schema.Types.String,
             required: true
         },
-        sessionId: {
+        fromAlias: {
+            type: Schema.Types.String,
+            required: true
+        },
+        toAlias: {
             type: Schema.Types.String,
             required: true
         },
@@ -282,10 +393,10 @@ export class MongoHandlerCentral {
         },
         nextDHRatchetKey: exposedSignedKey,
         messageBody: signedEncryptedData
-    }).index({ addressedTo: 1, sessionId: 1, headerId: 1 }, { unique: true }).index({ sendingRatchetNumber: 1, sendingChainNumber: 1 }, { unique: true }), "message_headers");
+    }).index({ sessionId: 1, toAlias: 1 }).index({ sessionId: 1, headerId: 1 }, { unique: true }).index({ sendingRatchetNumber: 1, sendingChainNumber: 1 }, { unique: true }), "message_headers");
 
     private static readonly Receipt = mongoose.model("Receipt", new Schema({
-        addressedTo: {
+        toAlias: {
             type: Schema.Types.String,
             required: true
         },
@@ -305,7 +416,7 @@ export class MongoHandlerCentral {
             type: Schema.Types.Boolean,
             required: true
         }
-    }).index({ sessionId: 1, headerId: 1 }, { unique: true }), "receipts");
+    }).index({ sessionId: 1, toAlias: 1 }).index({ sessionId: 1, headerId: 1 }, { unique: true }), "receipts");
 
     private static readonly Chat = mongoose.model("Chat", new Schema({
         chatId: {
@@ -315,7 +426,7 @@ export class MongoHandlerCentral {
         },
         chatDetails: userEncryptedData,
         exportedChattingSession: userEncryptedData
-    }).index({ chatId: "hashed" }), "chats");
+    }), "chats");
 
     private static readonly Message = mongoose.model("Message", new Schema({
         chatId: {
@@ -331,9 +442,13 @@ export class MongoHandlerCentral {
             required: true
         },
         content: userEncryptedData
-    }).index({ chatId: "hashed", timemark: -1 }).index({ chatId: 1, hashedId: 1 }, { unique: true }), "messages");
+    }).index({ chatId: 1, timemark: -1 }).index({ chatId: 1, hashedId: 1 }, { unique: true }), "messages");
 
     private static readonly Backup =  mongoose.model("Backup", new Schema({
+        byAlias: {
+            type: Schema.Types.String,
+            required: true
+        },
         sessionId: {
             type: Schema.Types.String,
             required: true
@@ -343,7 +458,7 @@ export class MongoHandlerCentral {
             required: true
         },
         content: userEncryptedData
-    }).index({ sessionId: 1, headerId: 1 }, { unique: true }), "backups");
+    }).index({ byAlias: 1, sessionId: 1, headerId: 1 }, { unique: true }), "backups");
 
     static onError: () => void;
 
@@ -374,10 +489,16 @@ export class MongoHandlerCentral {
         }
     }
 
-    static async createNewUser(user: Omit<RegisterNewUserRequest, "clientEphemeralPublicHex"> & NewUserData) {
+    static async createNewUser(user: Omit<RegisterNewUserRequest, "clientEphemeralPublicHex"> & NewUserData, databaseAuthKey: CryptoKey) {
         try {
+            const { username } = user;
+            if ((await this.DatabaseAccessKey.find({ username, type: "root" })).length > 0) return false;
+            const accessKey = (await crypto.deriveEncrypt({ username }, databaseAuthKey, "DatabaseRootAccessKey", Buffer.alloc(32))).ciphertext;
+            const accessRoot = new this.DatabaseAccessKey(bufferReplaceForMongo({ username, type: "root", accessKey }));
+            if (accessRoot !== await accessRoot.save()) return false;
             const newUser = new this.User(bufferReplaceForMongo(user));
-            return (newUser === await newUser.save());
+            if (newUser !== await newUser.save()) return false;
+            else return true;
         }
         catch (err) {
             logError(err);
@@ -385,9 +506,8 @@ export class MongoHandlerCentral {
         }
     }
 
-    static async getUser(username: string) {
-        const user = await this.User.findOne({ username });
-        return user;
+    static async userExists(username: string) {
+        return !!(await this.User.findOne({ username }));
     }
 
     static async getLeanUser(username: string): Promise<any> {
@@ -395,13 +515,36 @@ export class MongoHandlerCentral {
         return user;
     }
 
+    static async getKeyBundle(username: string): Promise<KeyBundle> {
+        const otherUser = await MongoHandlerCentral.User.findOne({ username });
+        if (!otherUser) return null;
+        let keyBundle: KeyBundle;
+        let saveRequired = false;
+        const { oneTimeKeyBundles, defaultKeyBundle } = otherUser?.keyBundles;
+        if ((oneTimeKeyBundles ?? []).length > 0) {
+            keyBundle = getPOJO(oneTimeKeyBundles.pop());
+            saveRequired = true;
+        }
+        else if (defaultKeyBundle) {
+            keyBundle = getPOJO(defaultKeyBundle);
+        }
+        if (!keyBundle) return null;
+        try {
+            if (saveRequired && otherUser !== await otherUser.save()) return null;
+            return keyBundle;
+        }
+        catch (err) {
+            logError(err);
+            return null;
+        }
+    }
+
     static async setSavedAuth(saveToken: string, ipRep: string, savedAuthDetails: UserEncryptedData) {
         try {
             if ((await this.SavedAuth.findOne({ ipRep }))) {
                 await this.SavedAuth.deleteOne({ ipRep });
             }
-            const ipRead = parseIpReadable(ipRep);
-            return !!(await this.SavedAuth.create(bufferReplaceForMongo({ saveToken, ipRep, ipRead, savedAuthDetails })));
+            return !!(await this.SavedAuth.create(bufferReplaceForMongo({ saveToken, ipRep, savedAuthDetails })));
         }
         catch (err) {
             logError(err);
@@ -419,22 +562,10 @@ export class MongoHandlerCentral {
     }
 
     static async updateUserRetries(username: string, ipRep: string, allowsAt: number, tries: number = null) {
-        const ipRead = parseIpReadable(ipRep);
         const upd = tries !== null ? { tries, allowsAt } : { allowsAt };
-        await this.UserRetries.updateOne({ username, ipRep, ipRead }, upd, { upsert: true });
+        await this.UserRetries.updateOne({ username, ipRep }, upd, { upsert: true });
     }
-
-    static async depositMessage(message: MessageHeader) {
-        try {
-            const newMessage = new this.MessageHeader(bufferReplaceForMongo(message));
-            return (newMessage === await newMessage.save());
-        }
-        catch (err) {
-            logError(err);
-            return false;
-        }
-    }
-
+    
     static async depositChatRequest(chatRequest: ChatRequestHeader) {
         try {
             const newChatRequest = new this.ChatRequest(bufferReplaceForMongo(chatRequest));
@@ -446,131 +577,347 @@ export class MongoHandlerCentral {
         }
     }
 
-    static async depositReceipt(receipt: Receipt) {
+    private static toUserEncrypted = (ciphertext: Buffer) => ({ ciphertext, hSalt: Buffer.alloc(32) });
+
+    static async instantiateUserHandler(username: string, databaseAuthKey: CryptoKey) {
         try {
-            const newReceipt = new this.Receipt(bufferReplaceForMongo(receipt));
-            return (newReceipt === await newReceipt.save());
+            const accessRoot = bufferReplaceFromLean(await this.DatabaseAccessKey.findOne({ username, type: "root" }).lean());
+            if (!accessRoot) return null;
+            const { username: user } = await crypto.deriveDecrypt(this.toUserEncrypted(accessRoot.accessKey), databaseAuthKey, "DatabaseRootAccessKey");
+            if (username !== user) return null;
+            const chatsList = bufferReplaceFromLean(await this.DatabaseAccessKey.find({ username, type: "chat" }).lean());
+            const chats: string[] = await allSettledResults(chatsList.map((c: any) => crypto.deriveDecrypt(this.toUserEncrypted(c.accessKey), databaseAuthKey, "DatabaseChatAccessKey").then((c) => c.chatId)));
+            const sessionsList = bufferReplaceFromLean(await this.DatabaseAccessKey.find({ username, type: "session" }).lean());
+            const sessions: ChatSessionDetails[] = await allSettledResults(sessionsList.map((c: any) => crypto.deriveDecrypt(this.toUserEncrypted(c.accessKey), databaseAuthKey, "DatabaseSessionAccessKey")));
+            return new this.MongoUserHandler(username, databaseAuthKey, chats, sessions);
         }
-        catch (err) {
+        catch(err) {
             logError(err);
+            return null;
+        }
+    }
+
+    static readonly UserHandlerType: typeof this.MongoUserHandler.prototype = null;
+
+    private static readonly MongoUserHandler = class {
+        readonly #username: string;
+        readonly #databaseAuthKey: CryptoKey;
+        readonly #chats: string[];
+        readonly #sessions: Map<string, ChatSessionDetails>;
+
+        constructor (username: string, databaseAuthKey: CryptoKey, chats: string[], sessions: ChatSessionDetails[]) {
+            this.#username = username;
+            this.#databaseAuthKey = databaseAuthKey;
+            this.#chats = chats;
+            this.#sessions = new Map(sessions.map((s) => [s.sessionId, s]));
+        }
+
+        private matchUsername(username: string) {
+            if (username === this.#username) return true;
+            logError(`Unauthorized attempt by ${this.#username} to access records belonging to ${username}`);
             return false;
         }
-    }
 
-    static async getChats(chatIds: string[]): Promise<ChatData[]> {
-        return bufferReplaceFromLean(await this.Chat.find({ chatId: { $in: chatIds } }).lean().exec());
-    }
-
-    static async getAllRequests(addressedTo: string): Promise<ChatRequestHeader[]> {
-        return bufferReplaceFromLean(await this.ChatRequest.find({ addressedTo }).lean().exec());
-    }
-
-    static async getUnprocessedMessages(sessionId: string, addressedTo: string): Promise<MessageHeader[]> {
-        return bufferReplaceFromLean(await this.MessageHeader.find({ sessionId, addressedTo }).lean().exec());
-    }
-
-    static async getMessagesByNumber(chatId: string, limit: number, olderThanTimemark: number): Promise<StoredMessage[]> {
-        return bufferReplaceFromLean(await this.Message.find({ chatId }).lt("timemark", olderThanTimemark).sort({ timemark: -1 }).limit(limit).lean().exec());
-    }
-
-    static async getMessagesUptoTimestamp(chatId: string, newerThanTimemark: number, olderThanTimemark: number): Promise<StoredMessage[]> {
-        return bufferReplaceFromLean(await this.Message.find({ chatId }).lt("timemark", olderThanTimemark).gt("timemark", newerThanTimemark).sort({ timemark: -1 }).lean().exec());
-    }
-
-    static async getMessagesUptoId(chatId: string, hashedId: string, olderThanTimemark: number): Promise<StoredMessage[]> {
-        const message = await this.Message.findOne({ chatId, hashedId }).exec();
-        if (!message) return null;
-        const { timemark } = message;
-        return this.getMessagesUptoTimestamp(chatId, timemark, olderThanTimemark);
-    }
-
-    static async getMessageById(chatId: string, hashedId: string): Promise<StoredMessage> {
-        return bufferReplaceFromLean(await this.Message.findOne({ chatId, hashedId }).lean().exec());
-    }
-
-    static async deleteChatRequest(headerId: string) {
-        try {
-            return (await this.ChatRequest.deleteOne({ headerId })).deletedCount === 1
-        }
-        catch (err) {
-            logError(err);
+        private matchChat(chatId: string) {
+            if (this.#chats.includes(chatId)) return true;
+            logError(`Unauthorized attempt by ${this.#username} to access chat resource #${chatId}`);
             return false;
         }
-    }
 
-    static async storeMessage(message: StoredMessage) {
-        try {
-            const { chatId, hashedId } = message;
-            const upsert = await this.Message.updateOne({ chatId, hashedId }, bufferReplaceForMongo(message), { upsert: true });
-            return (upsert.modifiedCount + upsert.upsertedCount) === 1;
-        }
-        catch (err) {
-            logError(err);
+        private matchSessionMyAlias(sessionId: string, alias: string) {
+            if (alias && this.#sessions.get(sessionId)?.myAlias === alias) return true;
+            logError(`Unauthorized attempt by ${this.#username} to access session resource #${sessionId}%%myAlias:${alias}`);
             return false;
         }
-    }
 
-    static async storeBackup(backup: Backup) {
-        try {
-            const newBackup = new this.Backup(bufferReplaceForMongo(backup));
-            if (newBackup === await newBackup.save()) {
+        private matchSessionOtherAlias(sessionId: string, alias: string) {
+            if (alias && this.#sessions.get(sessionId)?.otherAlias === alias) return true;
+            logError(`Unauthorized attempt by ${this.#username} to access session resource #${sessionId}%%otherAlias:${alias}`);
+            return false;
+        }
+
+        private validateKeyBundleOwner(keyBundles: PublishKeyBundlesRequest): boolean {
+            let { defaultKeyBundle, oneTimeKeyBundles } = keyBundles;
+            return [defaultKeyBundle.owner, ...oneTimeKeyBundles.map((kb) => kb.owner)].every((owner) => owner === this.#username);
+        }
+
+        private async addSessionKey(sessionId: string, myAlias: string, otherAlias: string) {
+            if (this.#sessions.has(sessionId)) return false;
+            const session = { sessionId, myAlias, otherAlias };
+            const accessKey = bufferReplaceForMongo((await crypto.deriveEncrypt(session, this.#databaseAuthKey, "DatabaseSessionAccessKey", Buffer.alloc(32))).ciphertext);
+            if (await (new MongoHandlerCentral.DatabaseAccessKey({ username: this.#username, type: "session", accessKey })).save()) {
+                this.#sessions.set(sessionId, session);
                 return true;
             }
-            return false;
+            else return false;
         }
-        catch (err) {
-            logError(err);
-            return false;
-        }
-    }
 
-    static async getBackupById(sessionId: string, headerId: string): Promise<Backup> {
-        return bufferReplaceFromLean(await this.Backup.findOne({ sessionId, headerId }).lean().exec());
-    }
-
-    static async getAllReceipts(addressedTo: string, sessionId: string): Promise<Receipt[]> {
-        return bufferReplaceFromLean(await this.Receipt.find({ sessionId, addressedTo }).lean().exec());
-    }
-
-    static async clearAllReceipts(addressedTo: string, sessionId: string) {
-        return (await this.Receipt.deleteMany({ addressedTo, sessionId })).deletedCount > 1;
-    }
-
-    static async backupProcessed(sessionId: string, headerId: string) {
-        try {
-            return (await this.Backup.deleteOne({ sessionId, headerId })).deletedCount === 1
-        }
-        catch (err) {
-            logError(err);
-            return false;
-        }
-    }
-
-    static async messageProcessed(sessionId: string, headerId: string) {
-        return (await this.MessageHeader.deleteOne({ sessionId, headerId })).deletedCount === 1;
-    }
-
-    static async createChat(chat: ChatData) {
-        try {
-            const newChat = new this.Chat(bufferReplaceForMongo(chat));
-            if (newChat === await newChat.save()) {
-                return true;
+        private async registerSession(sessionId: string, myAlias: string, otherAlias: string) {
+            try {
+                const pending = bufferReplaceFromLean(await MongoHandlerCentral.RegistrationPendingSession.findOne({ sessionId }).lean());
+                if (!pending || !pending.acceptorAccessKey) return false;
+                const existing = await MongoHandlerCentral.RegisteredSession.findOne({ sessionId });
+                if (existing?.locked) return false;
+                if (existing) {
+                    const { username } = await crypto.deriveDecrypt(MongoHandlerCentral.toUserEncrypted(pending.initiatorAccessKey), this.#databaseAuthKey, "PendingSessionKey");
+                    if (!this.matchUsername(username)) return false;
+                    if (myAlias !== existing.alias2 || otherAlias !== existing.alias1) return false;
+                    existing.locked = true;
+                    if (existing === await existing.save()) {
+                        await MongoHandlerCentral.RegistrationPendingSession.deleteOne({ sessionId });
+                        return await this.addSessionKey(sessionId, myAlias, otherAlias);
+                    }
+                    else return false;
+                }
+                else {
+                    const { username } = await crypto.deriveDecrypt(MongoHandlerCentral.toUserEncrypted(pending.acceptorAccessKey), this.#databaseAuthKey, "PendingSessionKey");
+                    if (!this.matchUsername(username)) return false;
+                    const newRegister = new MongoHandlerCentral.RegisteredSession({ sessionId, alias1: myAlias, alias2: otherAlias });
+                    if (newRegister === await newRegister.save()) {
+                        return await this.addSessionKey(sessionId, myAlias, otherAlias);
+                    }
+                    else return false;
+                }
             }
-            return false;
+            catch(err) {
+                logError(err);
+                return false;
+            }
         }
-        catch (err) {
-            logError(err);
-            return false;
-        }
-    }
 
-    static async updateChat({ chatId, ...chat }: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>) {
-        try {
-            return !!(await this.Chat.findOneAndUpdate({ chatId }, bufferReplaceForMongo(chat)).exec());
+        async registerPendingSession(sessionId: string, myAlias: string, otherAlias: string) {
+            try {
+                if (!!(await MongoHandlerCentral.RegisteredSession.findOne({ sessionId }))) return false;
+                const prevPending = await MongoHandlerCentral.RegistrationPendingSession.findOne({ sessionId });
+                const accessKey = bufferReplaceForMongo(await crypto.deriveEncrypt({ username: this.#username }, this.#databaseAuthKey, "PendingSessionKey", Buffer.alloc(32))).ciphertext;
+                if (!prevPending) {
+                    const newPending = new MongoHandlerCentral.RegistrationPendingSession({ sessionId, toAlias: myAlias, fromAlias: otherAlias, initiatorAccessKey: accessKey });
+                    return (newPending === await newPending.save());
+                }
+                else {
+                    if (prevPending.acceptorAccessKey || myAlias !== prevPending.fromAlias || otherAlias !== prevPending.toAlias) return false;
+                    prevPending.acceptorAccessKey = accessKey;
+                    return (prevPending === await prevPending.save());
+                }
+            }
+            catch (err) {
+                logError(err);
+                return false;
+            }
         }
-        catch (err) {
-            logError(err);
-            return false;
+
+        async publishKeyBundles(keyBundles: PublishKeyBundlesRequest): Promise<boolean> {
+            if (!this.validateKeyBundleOwner(keyBundles)) return false;
+            const user = await MongoHandlerCentral.User.findOne({ username: this.#username });
+            if (!user) return false;
+            let { defaultKeyBundle, oneTimeKeyBundles } = keyBundles;
+            user.keyBundles.defaultKeyBundle = bufferReplaceForMongo(defaultKeyBundle);
+            oneTimeKeyBundles = Array.from(oneTimeKeyBundles.map((kb: any) => bufferReplaceForMongo(kb)));
+            const leanUser = await MongoHandlerCentral.getLeanUser(this.#username);
+            const oldOneTimes = Array.from(leanUser.keyBundles.oneTimeKeyBundles ?? []).map((okb: any) => okb.identifier);
+            const dontAdd = [...(leanUser.accessedKeyBundles ?? []), ...oldOneTimes];
+            for (const oneTime of oneTimeKeyBundles) {
+                if (!dontAdd.includes(oneTime.identifier)) {
+                    user.keyBundles.oneTimeKeyBundles.push(oneTime);
+                }
+            }
+            try {
+                return (user === await user.save());
+            }
+            catch (err) {
+                logError(err);
+                return false;
+            }
+        }
+
+        async updateUserData(userData: Username & { x3dhInfo?: UserEncryptedData, chatsData?: UserEncryptedData }) {
+            const { username, x3dhInfo, chatsData } = userData;
+            if (!this.matchUsername(username)) return false;
+            const user = await MongoHandlerCentral.User.findOne( { username });
+            if (!user) return false;
+            if (x3dhInfo) {
+                user.userData.x3dhInfo = bufferReplaceForMongo(x3dhInfo);
+            }
+            if (chatsData) {
+                user.userData.chatsData = bufferReplaceForMongo(chatsData);
+            }
+            try {
+                const savedUser = await user.save();
+                return savedUser === user;
+            }
+            catch (err) {
+                logError(err);
+                return false;
+            }
+        }
+
+        async depositMessage(message: MessageHeader) {
+            const { toAlias, fromAlias, sessionId } = message;
+            if (!this.matchSessionOtherAlias(sessionId, toAlias)) {
+                if (!(await this.registerSession(sessionId, fromAlias, toAlias))) return false;
+            }
+            try {
+                const newMessage = new MongoHandlerCentral.MessageHeader(bufferReplaceForMongo(message));
+                return (newMessage === await newMessage.save());
+            }
+            catch (err) {
+                logError(err);
+                return false;
+            }
+        }
+    
+        async depositReceipt(receipt: Receipt) {
+            const { toAlias, sessionId } = receipt;
+            if (!this.matchSessionOtherAlias(sessionId, toAlias)) return false;
+            try {
+                const newReceipt = new MongoHandlerCentral.Receipt(bufferReplaceForMongo(receipt));
+                return (newReceipt === await newReceipt.save());
+            }
+            catch (err) {
+                logError(err);
+                return false;
+            }
+        }
+    
+        async getChats(chatIds: string[]): Promise<ChatData[]> {
+            if (chatIds.some((id) => !this.matchChat(id))) return undefined;
+            return bufferReplaceFromLean(await MongoHandlerCentral.Chat.find({ chatId: { $in: chatIds } }).lean().exec());
+        }
+    
+        async getAllRequests(addressedTo: string): Promise<ChatRequestHeader[]> {
+            if (!this.matchUsername(addressedTo)) return undefined;
+            return bufferReplaceFromLean(await MongoHandlerCentral.ChatRequest.find({ addressedTo }).lean().exec());
+        }
+    
+        async getMessageHeaders(sessionId: string, toAlias: string, fromAlias: string): Promise<MessageHeader[]> {
+            if (!this.matchSessionMyAlias(sessionId, toAlias)) {
+                if (!(await this.registerSession(sessionId, toAlias, fromAlias))) return undefined;               
+            }
+            return bufferReplaceFromLean(await MongoHandlerCentral.MessageHeader.find({ sessionId, toAlias }).lean().exec());
+        }
+    
+        async getMessagesByNumber(chatId: string, limit: number, olderThanTimemark: number): Promise<StoredMessage[]> {
+            if (!this.matchChat(chatId)) return undefined;
+            return bufferReplaceFromLean(await MongoHandlerCentral.Message.find({ chatId }).lt("timemark", olderThanTimemark).sort({ timemark: -1 }).limit(limit).lean().exec());
+        }
+    
+        async getMessagesUptoTimestamp(chatId: string, newerThanTimemark: number, olderThanTimemark: number): Promise<StoredMessage[]> {
+            if (!this.matchChat(chatId)) return undefined;
+            return bufferReplaceFromLean(await MongoHandlerCentral.Message.find({ chatId }).lt("timemark", olderThanTimemark).gt("timemark", newerThanTimemark).sort({ timemark: -1 }).lean().exec());
+        }
+    
+        async getMessagesUptoId(chatId: string, hashedId: string, olderThanTimemark: number): Promise<StoredMessage[]> {
+            if (!this.matchChat(chatId)) return undefined;
+            const message = await MongoHandlerCentral.Message.findOne({ chatId, hashedId }).exec();
+            if (!message) return null;
+            const { timemark } = message;
+            return this.getMessagesUptoTimestamp(chatId, timemark, olderThanTimemark);
+        }
+    
+        async getMessageById(chatId: string, hashedId: string): Promise<StoredMessage> {
+            if (!this.matchChat(chatId)) return undefined;
+            return bufferReplaceFromLean(await MongoHandlerCentral.Message.findOne({ chatId, hashedId }).lean().exec());
+        }
+    
+        async deleteChatRequest(headerId: string) {
+            const chatRequest = await MongoHandlerCentral.ChatRequest.findOne({ headerId });
+            if (!this.matchUsername(chatRequest.addressedTo)) return false;
+            try {
+                return (await chatRequest.deleteOne()).deletedCount === 1
+            }
+            catch (err) {
+                logError(err);
+                return false;
+            }
+        }
+    
+        async storeMessage(message: StoredMessage) {
+            try {
+                const { chatId, hashedId } = message;
+                if (!this.matchChat(chatId)) return false;
+                const upsert = await MongoHandlerCentral.Message.updateOne({ chatId, hashedId }, bufferReplaceForMongo(message), { upsert: true });
+                return (upsert.modifiedCount + upsert.upsertedCount) === 1;
+            }
+            catch (err) {
+                logError(err);
+                return false;
+            }
+        }
+    
+        async storeBackup(backup: Backup) {
+            const { byAlias, sessionId } = backup;
+            if (!this.matchSessionMyAlias(sessionId, byAlias)) return false;
+            try {
+                const newBackup = new MongoHandlerCentral.Backup(bufferReplaceForMongo(backup));
+                if (newBackup === await newBackup.save()) {
+                    return true;
+                }
+                return false;
+            }
+            catch (err) {
+                logError(err);
+                return false;
+            }
+        }
+    
+        async getBackupById(byAlias: string, sessionId: string, headerId: string): Promise<Backup> {
+            if (!this.matchSessionMyAlias(sessionId, byAlias)) return undefined;
+            return bufferReplaceFromLean(await MongoHandlerCentral.Backup.findOne({ byAlias, sessionId, headerId }).lean().exec());
+        }
+    
+        async getAllReceipts(toAlias: string, sessionId: string): Promise<Receipt[]> {
+            if (!this.matchSessionMyAlias(sessionId, toAlias)) return undefined;
+            return bufferReplaceFromLean(await MongoHandlerCentral.Receipt.find({ sessionId, toAlias }).lean().exec());
+        }
+    
+        async clearAllReceipts(toAlias: string, sessionId: string) {
+            if (!this.matchSessionMyAlias(sessionId, toAlias)) return false;
+            return (await MongoHandlerCentral.Receipt.deleteMany({ toAlias, sessionId })).deletedCount > 1;
+        }
+    
+        async backupProcessed(byAlias: string, sessionId: string, headerId: string) {
+            if (!this.matchSessionMyAlias(sessionId, byAlias)) return false;
+            try {
+                return (await MongoHandlerCentral.Backup.deleteOne({ byAlias, sessionId, headerId })).deletedCount === 1
+            }
+            catch (err) {
+                logError(err);
+                return false;
+            }
+        }
+    
+        async messageHeaderProcessed(toAlias: string, sessionId: string, headerId: string) {
+            if (!this.matchSessionMyAlias(sessionId, toAlias)) return false;
+            return (await MongoHandlerCentral.MessageHeader.deleteOne({ toAlias, sessionId, headerId })).deletedCount === 1;
+        }
+    
+        async createChat(chat: ChatData) {
+            try {
+                const newChat = new MongoHandlerCentral.Chat(bufferReplaceForMongo(chat));
+                if (newChat === await newChat.save()) {
+                    const { chatId } = chat;
+                    const accessKey = bufferReplaceForMongo(await crypto.deriveEncrypt({ chatId }, this.#databaseAuthKey, "DatabaseChatAccessKey", Buffer.alloc(32))).ciphertext;
+                    await (new MongoHandlerCentral.DatabaseAccessKey({ username: this.#username, type: "chat", accessKey })).save();
+                    this.#chats.push(chatId);
+                    return true;
+                }
+                return false;
+            }
+            catch (err) {
+                logError(err);
+                return false;
+            }
+        }
+    
+        async updateChat({ chatId, ...chat }: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>) {
+            if (!this.#chats.includes(chatId)) return false;
+            try {
+                return !!(await MongoHandlerCentral.Chat.findOneAndUpdate({ chatId }, bufferReplaceForMongo(chat)).exec());
+            }
+            catch (err) {
+                logError(err);
+                return false;
+            }
         }
     }
 }
@@ -644,4 +991,64 @@ export function cleanLean(obj: any): any {
         }
     }
     return obj;
+}
+
+function getPOJO(mongObj: any): any {
+    if (!mongObj) {
+        return null;
+    }
+    if (!isDoc(mongObj)) {
+        return mongObj;
+    }
+    if (typeof mongObj === "object") {
+        mongObj = "_doc" in mongObj ? mongObj._doc : mongObj;
+        if (Object.getPrototypeOf(mongObj).constructor.name === "Buffer" || ArrayBuffer.isView(mongObj)) {
+            return Buffer.from(mongObj);
+        }
+        if (mongObj instanceof Array) {
+            return mongObj.map(o => getPOJO(o));
+        }
+        type Keyed = { [key: string]: any };
+        const newObj: Keyed = {};
+        for (const [key, value] of Object.entries(mongObj)) {
+            if (!key.startsWith("$") && !key.startsWith("_")) {
+                if (value === null) {
+                    newObj[key] = null;
+                }
+                else if (value === undefined) {
+                    newObj[key] = undefined;
+                }
+                else if (Object.getPrototypeOf(value).constructor.name === "Buffer" || ArrayBuffer.isView(value)) {
+                    newObj[key] = Buffer.from(value as Buffer);
+                }
+                else if (isDoc(value)) {
+                    newObj[key] = getPOJO(value);
+                }
+                else {
+                    newObj[key] = value;
+                }
+            }
+        }
+        mongObj = newObj;
+    }
+    return mongObj;
+}
+
+function isDoc(docObj: any): boolean {
+    if (!docObj) {
+        return false;
+    }
+    if (typeof docObj === "object") {
+        if ("_doc" in docObj) {
+            return true;
+        }
+        if (Object.getPrototypeOf(docObj).constructor.name === "Buffer" || ArrayBuffer.isView(docObj)) {
+            return false;
+        }
+        if (docObj instanceof Array) {
+            return docObj.some(v => isDoc(v));
+        }
+        return Object.entries(docObj).some(([_, v]) => isDoc(v));
+    }
+    return false;
 }

@@ -82,7 +82,8 @@ export type DisplayMessage =Readonly<{
 }>;
 
 export type MessageHeader = Readonly<{
-    addressedTo: string;
+    toAlias: string;
+    fromAlias: string;
     sessionId: string;
     headerId: string;
     receivingRatchetNumber: number;
@@ -112,6 +113,7 @@ export type StoredMessage = Readonly<{
 }>;
 
 export type Backup = Readonly<{
+    byAlias: string;
     sessionId: string;
     headerId: string;
     content: UserEncryptedData;
@@ -124,7 +126,7 @@ export type ChatData = Readonly<{
 }>;
 
 export type Receipt = Readonly<{
-    addressedTo: string,
+    toAlias: string,
     sessionId: string,
     headerId: string,
     signature: string,
@@ -151,7 +153,13 @@ export type HeaderIdentifier = Readonly<{
 
 export type SessionIdentifier = Readonly<{ 
     sessionId: string, 
-    addressedTo: string 
+    toAlias: string
+}>;
+
+export type ChatSessionDetails = Readonly<{
+    sessionId: string;
+    myAlias: string;
+    otherAlias: string;
 }>;
 
 export type Failure = Readonly<{
@@ -173,19 +181,22 @@ export type LogInChallenge = Readonly<{
     challengeReference: string,
     verifierSalt: Buffer,
     verifierEntangledHex: string,
-    serverConfirmationCode: Buffer
+    serverConfirmationCode: Buffer,
+    databaseAuthKey: PasswordEncryptedData
 }>
 
-export type RegisterNewUserChallenge = Omit<LogInChallenge, "verifierSalt"> & {
-    readonly serverIdentityVerifyingKey: Buffer
-}
+export type RegisterNewUserChallenge = Omit<LogInChallenge, "verifierSalt" | "databaseAuthKey"> & Readonly<{
+    serverIdentityVerifyingKey: Buffer,
+    databaseAuthKeyEncrypted: UserEncryptedData
+}>;
 
 export type LogInChallengeResponse = Readonly<{
     challengeReference: string,
-    clientConfirmationCode: Buffer
+    clientConfirmationCode: Buffer,
+    databaseAuthKeyBuffer: Buffer
 }>;
 
-export type RegisterNewUserChallengeResponse = LogInChallengeResponse & {
+export type RegisterNewUserChallengeResponse = Omit<LogInChallengeResponse, "databaseAuthKeyBuffer"> & {
     readonly newUserDataSigned: SignedEncryptedData;
 }
 
@@ -200,6 +211,7 @@ export type UserData = Readonly<{
 
 export type NewUserData = Readonly<{ 
     userData: UserData;
+    databaseAuthKey: PasswordEncryptedData;
     keyBundles: PublishKeyBundlesRequest;
 }>;
 
@@ -238,6 +250,7 @@ enum SocketClientSideEventsEnum {
     CreateChat,
     UpdateChat,
 
+    RegisterPendingSession,
     SendChatRequest,
     SendMessage,
     MessageHeaderProcessed,
@@ -280,13 +293,13 @@ type SocketClientRequestParametersMap = {
     InitiateLogIn: LogInRequest,
     ConcludeLogIn: LogInChallengeResponse,
     InitiateLogInSaved: { serverKeyBits: Buffer },
-    ConcludeLogInSaved: { username: string, clientConfirmationCode: Buffer },
+    ConcludeLogInSaved: Omit<LogInChallengeResponse, "challengeReference"> & Username,
     PublishKeyBundles: PublishKeyBundlesRequest,
     UpdateUserData: { x3dhInfo?: UserEncryptedData, chatsData?: UserEncryptedData } & Username,
     RequestKeyBundle: Username,
     GetChats: { chatIds: string[]},
     GetAllRequests: [],
-    GetMessageHeaders: SessionIdentifier,
+    GetMessageHeaders: SessionIdentifier & { fromAlias: string },
     GetMessagesByNumber: ChatIdentifier & { limit: number, olderThanTimemark: number },
     GetMessagesUptoTimestamp: ChatIdentifier & { newerThanTimemark: number, olderThanTimemark: number },
     GetMessagesUptoId: MessageIdentifier & { olderThanTimemark: number },
@@ -294,13 +307,14 @@ type SocketClientRequestParametersMap = {
     StoreMessage: StoredMessage,
     CreateChat: ChatData,
     UpdateChat: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>,
+    RegisterPendingSession: Readonly<{ sessionId: string, myAlias: string, otherAlias: string }>,
     SendChatRequest: ChatRequestHeader,
     SendMessage: MessageHeader,
-    MessageHeaderProcessed: HeaderIdentifier,
+    MessageHeaderProcessed: HeaderIdentifier & SessionIdentifier,
     DeleteChatRequest: { headerId: string },
     StoreBackup: Backup,
-    GetBackupById: HeaderIdentifier,
-    BackupProcessed: HeaderIdentifier,
+    GetBackupById: HeaderIdentifier & { byAlias: string },
+    BackupProcessed: HeaderIdentifier & { byAlias: string },
     SendReceipt: Receipt,
     GetAllReceipts: SessionIdentifier,
     ClearAllReceipts: SessionIdentifier,
@@ -320,7 +334,7 @@ type SocketClientRequestReturnMap = {
     InitiateRegisterNewUser: RegisterNewUserChallenge,
     ConcludeRegisterNewUser: never,
     InitiateLogIn: LogInChallenge,
-    ConcludeLogIn: UserData,
+    ConcludeLogIn: Omit<UserData, "databaseAuthKey">,
     InitiateLogInSaved: { authKeyBits: Buffer },
     ConcludeLogInSaved: { serverConfirmationCode: Buffer, coreKeyBits: Buffer, userData: Pick<UserData, "profileData" | "x3dhInfo" | "chatsData"> },
     PublishKeyBundles: never,
@@ -336,6 +350,7 @@ type SocketClientRequestReturnMap = {
     StoreMessage: never,
     CreateChat: never,
     UpdateChat: never,
+    RegisterPendingSession: never,
     SendChatRequest: never,
     SendMessage: never,
     MessageHeaderProcessed: never,
