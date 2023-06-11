@@ -1,5 +1,4 @@
 import _ from "lodash";
-import { Buffer } from "./node_modules/buffer/";
 
 export type ExposedSignedPublicKey = Readonly<{
     exportedPublicKey: Buffer;

@@ -1,5 +1,4 @@
 import _ from "lodash";
-import { Buffer } from "./node_modules/buffer";
 import { RistrettoPoint } from "@noble/curves/ed25519";
 import { sha3_224, sha3_512 } from "@noble/hashes/sha3";
 import * as crypto from "./cryptoOperator";

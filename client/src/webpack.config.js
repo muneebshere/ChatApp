@@ -1,4 +1,5 @@
 const path = require('path');
+const webpack = require('webpack');
 
 module.exports = {
     mode: 'development',
@@ -9,8 +10,16 @@ module.exports = {
         path: path.resolve(__dirname, '../public'),
     },
     resolve: {
-      extensions: ['.tsx', '.ts', '.js', '.css']
+      extensions: ['.tsx', '.ts', '.js', '.css'],
+      fallback: {
+            buffer: require.resolve('buffer/')
+        },
     },
+    plugins: [
+        new webpack.ProvidePlugin({
+            Buffer: ['buffer', 'Buffer'],
+        }),
+    ],
     module: {
         rules: [
             {

@@ -1,4 +1,3 @@
-import { Buffer } from "./node_modules/buffer";
 import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
 import { ExposedSignedPublicKey, SignedKeyPair, ExportedSignedKeyPair, ExportedSigningKeyPair, KeyBundle, MessageHeader, ChatRequestHeader, UserEncryptedData, Profile, StoredMessage } from "../../shared/commonTypes";

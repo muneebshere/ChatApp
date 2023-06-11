@@ -2,7 +2,6 @@
 
 import BufferReader from "./buffer-reader";
 import BufferWriter from "./buffer-writer";
-import { Buffer } from "../../../node_modules/buffer";
 
 /**
  * Serializer - turn things into Buffers

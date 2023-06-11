@@ -1,7 +1,6 @@
 import { SignedEncryptedData } from "./commonTypes";
 import * as crypto from "./cryptoOperator";
 import { serialize, deserialize } from "./cryptoOperator";
-import { Buffer } from "./node_modules/buffer";
 import { fromBase64, randomFunctions } from "./commonFunctions";
 
 const { getRandomVector } = randomFunctions();

@@ -3,8 +3,6 @@
  * Helper to assist with reading a buffer.  Contains methods that will
  * read specific types that mirror BufferReader.
  */
-
-import { Buffer } from "../../../node_modules/buffer";
 class BufferWriter {
     /**
      * Creates a new BufferWriter, which is essentially an array of

@@ -10,12 +10,11 @@ import express, { Request, Response, NextFunction, CookieOptions } from "express
 import cors, { CorsOptions } from "cors";
 import * as ipaddr from "ipaddr.js";
 import { Server as SocketServer, Socket } from "socket.io";
-import { Buffer } from "./node_modules/buffer";
 import { SessionCrypto } from "../shared/sessionCrypto";
 import * as crypto from "../shared/cryptoOperator";
 import { Failure, ErrorStrings, Username, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, KeyBundle, UserEncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, RegisterNewUserChallenge, RegisterNewUserChallengeResponse, NewUserData, LogInRequest, LogInChallenge, UserData, LogInChallengeResponse, Receipt, MessageIdentifier, ChatIdentifier, SessionIdentifier, HeaderIdentifier, Backup } from "../shared/commonTypes";
 import { allSettledResults, failure, fromBase64, logError, randomFunctions, typedEntries } from "../shared/commonFunctions";
-import { MongoHandlerCentral, bufferReplaceForMongo } from "./MongoHandler";
+import { MongoHandlerCentral } from "./MongoHandler";
 import * as esrp from "../shared/ellipticSRP";
 
 try {
@@ -378,7 +377,7 @@ class SocketHandler {
         return { authKeyBits };
     }
 
-    private async ConcludeLogInSaved({ username, clientConfirmationCode, databaseAuthKeyBuffer }: Omit<LogInChallengeResponse, "challengeReference"> & Username) {
+    private async ConcludeLogInSaved({ username, clientConfirmationCode, databaseAuthKeyBuffer }: Omit<LogInChallengeResponse, "challengeReference"> & Username): Promise<({ serverConfirmationCode: Buffer, coreKeyBits: Buffer, userData: Pick<UserData, "profileData" | "x3dhInfo" | "chatsData"> }) | Failure> {
         if (this.#username) return failure(ErrorStrings.InvalidRequest);
         if (onlineUsers.has(username)) return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
         if (!this.#logInSavedTemp || this.#logInSavedTemp.username !== username) return failure(ErrorStrings.InvalidReference);

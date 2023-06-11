@@ -1,5 +1,4 @@
 import { stringify } from "safe-stable-stringify";
-import { Buffer } from "./node_modules/buffer";
 import { isBrowser, isNode, isWebWorker } from "./node_modules/browser-or-node";
 import { ErrorStrings, Failure } from "./commonTypes";
 

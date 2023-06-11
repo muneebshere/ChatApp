@@ -4,7 +4,6 @@ import { SessionCrypto } from "../../shared/sessionCrypto";
 import { ChattingSession, SendingMessage, ViewChatRequest } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
 import { MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, SocketServerSideEvents, DeliveryInfo, Receipt, Backup  } from "../../shared/commonTypes";
-import { Buffer } from "buffer";
 import { DateTime } from "luxon";
 import { allSettledResults, awaitCallback, logError, randomFunctions, truncateText } from "../../shared/commonFunctions";
 import { ClientChatInterface, ClientChatRequestInterface } from "./client";

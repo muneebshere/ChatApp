@@ -1,5 +1,3 @@
-import { Buffer } from "../../../node_modules/buffer";
-
 export default BufferReader;
 declare class BufferReader {
     /**

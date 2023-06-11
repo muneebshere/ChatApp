@@ -2,7 +2,6 @@ import _ from "lodash";
 import { match } from "ts-pattern";
 import axios, { Axios } from "axios";
 import { io, Socket } from "socket.io-client";
-import { Buffer } from "./node_modules/buffer";
 import { SessionCrypto } from "../../shared/sessionCrypto";
 import {  X3DHUser } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
