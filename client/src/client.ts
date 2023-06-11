@@ -15,6 +15,10 @@ import { AwaitedRequest, Chat, ChatDetails, ChatRequest } from "./chatClasses";
 const { getRandomVector, getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;
 
+const chatMethods = ["SendMessage", "GetMessageHeaders", "GetMessagesByNumber", "GetMessagesUptoTimestamp", "GetMessagesUptoId", "GetMessageById", "StoreMessage", "MessageHeaderProcessed", "UpdateChat", "StoreBackup", "GetBackupById", "BackupProcessed", "SendReceipt", "GetAllReceipts", "ClearAllReceipts"] as const;
+
+type ChatMethods = typeof chatMethods[number];
+
 export enum ClientEvent {
     Disconnected,
     Connecting,
@@ -34,25 +38,7 @@ export enum ClientEvent {
     SignedOut
 }
 
-export type ClientChatInterface = Readonly<{
-    SendMessage: (data: MessageHeader, timeout?: number) => Promise<Failure>,
-    GetMessageHeaders: (data: SessionIdentifier & { fromAlias: string }, timeout?: number) => Promise<MessageHeader[] | Failure>,
-    GetMessagesByNumber: (data: ChatIdentifier & { limit: number, olderThanTimemark: number }, timeout?: number) => Promise<StoredMessage[] | Failure>,
-    GetMessagesUptoTimestamp: (data: ChatIdentifier & { newerThanTimemark: number, olderThanTimemark: number }, timeout?: number) => Promise<StoredMessage[] | Failure>,
-    GetMessagesUptoId: (data: MessageIdentifier & { olderThanTimemark: number }, timeout?: number) => Promise<StoredMessage[] | Failure>,
-    GetMessageById: (data: MessageIdentifier, timeout?: number) => Promise<StoredMessage | Failure>,
-    StoreMessage: (data: StoredMessage, timeout?: number) => Promise<Failure>,
-    MessageHeaderProcessed: (data: SessionIdentifier & HeaderIdentifier, timeout?: number) => Promise<Failure>,
-    UpdateChat: (data: Partial<ChatData> & Omit<ChatData, "chatDetails" | "exportedChattingSession">, timeout?: number) => Promise<Failure>,
-    StoreBackup(data: Backup, timeout?: number): Promise<Failure>,
-    GetBackupById(data: HeaderIdentifier & { byAlias: string }, timeout?: number): Promise<Backup | Failure>,
-    BackupProcessed(data: HeaderIdentifier & { byAlias: string }, timeout?: number): Promise<Failure>,
-    SendReceipt(data: Receipt, timeout?: number): Promise<Failure>,
-    GetAllReceipts(data: SessionIdentifier, timeout?: number): Promise<Receipt[] | Failure>,
-    ClearAllReceipts(data: SessionIdentifier, timeout?: number): Promise<Failure>,
-    isConnected(): boolean,
-    notifyClient: (timeout?: number) => void
-}>;
+export type ClientChatInterface = Pick<RequestMap, ChatMethods> & Readonly<{ isConnected: () => boolean, notifyClient: () => void }>
 
 export type ClientChatRequestInterface = Readonly<{
     rejectRequest: (otherUser: string, sessionId: string, oneTimeKeyId: string) => Promise<boolean>,
@@ -99,6 +85,7 @@ function SocketHandler(socket: () => Socket, sessionCrypto: () => SessionCrypto,
     }
     return requestMap as RequestMap;
 }
+
 export default class Client {
     private readonly responseMap: Map<SocketServerSideEventsKey, any> = new Map([
         [SocketServerSideEvents.RoomRequested, this.roomRequested] as [SocketServerSideEventsKey, any],
@@ -127,56 +114,18 @@ export default class Client {
     private readonly chatList: string[] = [];
     private readonly chatSessionIdsList = new Map<string, Chat | ChatRequest | AwaitedRequest>();
     private readonly chatUsernamesList = new Map<string, Chat | ChatRequest | AwaitedRequest>();
+    
+    private chatInterface: ClientChatInterface;
 
-    private readonly chatInterface: ClientChatInterface = {
-        SendMessage: (data, timeout = 0) => {
-            return this.#socketHandler.SendMessage(data, timeout);
-        },
-        GetMessageHeaders: (data, timeout = 0) => {
-            return this.#socketHandler.GetMessageHeaders(data, timeout);
-        },
-        GetMessagesByNumber: (data, timeout = 0) => {
-            return this.#socketHandler.GetMessagesByNumber(data, timeout);
-        },
-        GetMessagesUptoTimestamp: (data, timeout = 0) => {
-            return this.#socketHandler.GetMessagesUptoTimestamp(data, timeout);
-        },
-        GetMessagesUptoId: (data, timeout = 0) => {
-            return this.#socketHandler.GetMessagesUptoId(data, timeout);
-        },
-        GetMessageById: (data, timeout = 0) => {
-            return this.#socketHandler.GetMessageById(data, timeout);
-        },
-        StoreMessage: (data, timeout = 0) => {
-            return this.#socketHandler.StoreMessage(data, timeout);
-        },
-        MessageHeaderProcessed: (data, timeout?: number) => {
-            return this.#socketHandler.MessageHeaderProcessed(data, timeout);
-        },
-        UpdateChat: (data, timeout = 0) => {
-            return this.#socketHandler.UpdateChat(data, timeout);
-        },
-        StoreBackup: (data, timeout = 0) => {
-            return this.#socketHandler.StoreBackup(data, timeout);
-        },
-        GetBackupById: (data, timeout = 0) => {
-            return this.#socketHandler.GetBackupById(data, timeout);
-        },
-        BackupProcessed: (data, timeout = 0) => {
-            return this.#socketHandler.BackupProcessed(data, timeout);
-        },
-        SendReceipt: (data, timeout = 0) => {
-            return this.#socketHandler.SendReceipt(data, timeout);
-        },
-        GetAllReceipts: (data, timeout = 0) => {
-            return this.#socketHandler.GetAllReceipts(data, timeout);
-        },
-        ClearAllReceipts: (data, timeout = 0) => {
-            return this.#socketHandler.ClearAllReceipts(data, timeout);
-        },
-        isConnected: () => this.isConnected,
-        notifyClient: () => this.notifyChange?.()
-    };
+    private constructChatInterface() {
+        const chatInterface: any = {};
+        for (const method of chatMethods) {
+            chatInterface[method] = this.#socketHandler[method];
+        }
+        chatInterface["isConnected"] = () => this.isConnected;
+        chatInterface["notifyClient"] = () => this.notifyChange?.();
+        return chatInterface as ClientChatInterface;
+    }
 
     private addChat(chat: Chat | ChatRequest | AwaitedRequest) {
         this.chatSessionIdsList.set(chat.sessionId, chat);
@@ -292,6 +241,7 @@ export default class Client {
                         this.#sessionReference = sessionReference;
                         this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBits, signingKey, serverVerifyingKey);
                         this.#socketHandler = SocketHandler(() => this.#socket, () => this.#sessionCrypto, this.#fileHash, () => this.isConnected);
+                        this.chatInterface = this.constructChatInterface();
                         console.log(`Connected with session reference: ${sessionReference} and socketId: ${this.#socket.id}`);
                         if (this.#username) {
                             this.notifyClientEvent?.(ClientEvent.SignedOut);
@@ -374,7 +324,7 @@ export default class Client {
         return result.exists;
     }
 
-    async userLogInPermitted(username: string): Promise<{ tries: number, allowsAt: number, isAlreadyOnline: boolean }> {
+    async userLogInPermitted(username: string): Promise<{ tries: number, allowsAt: number }> {
         const result = await this.#socketHandler.UserLoginPermitted({ username });
         if ("reason" in result) {
             throw "Can't determine if username login is permitted.";

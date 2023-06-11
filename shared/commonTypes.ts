@@ -329,7 +329,7 @@ export type SocketClientRequestParameters = {
 
 type SocketClientRequestReturnMap = {
     UsernameExists: { exists: boolean }, 
-    UserLoginPermitted: { tries: number, allowsAt: number, isAlreadyOnline: boolean }, 
+    UserLoginPermitted: { tries: number, allowsAt: number }, 
     InitiateRegisterNewUser: RegisterNewUserChallenge,
     ConcludeRegisterNewUser: never,
     InitiateLogIn: LogInChallenge,

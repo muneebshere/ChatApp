@@ -249,10 +249,9 @@ class SocketHandler {
         });
     }
 
-    private async UserLoginPermitted({ username }: Username): Promise<{ tries: number, allowsAt: number, isAlreadyOnline: boolean }> {
+    private async UserLoginPermitted({ username }: Username): Promise<{ tries: number, allowsAt: number }> {
         const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username, this.#ipRep);
-        const isAlreadyOnline = onlineUsers.has(username);
-        return allowsAt && allowsAt > Date.now() ? { isAlreadyOnline, tries, allowsAt } : { isAlreadyOnline, tries: null, allowsAt: null };
+        return allowsAt && allowsAt > Date.now() ? { tries, allowsAt } : { tries: null, allowsAt: null };
     }
 
     private async UsernameExists({ username }: Username): Promise<{ exists: boolean }> {
@@ -309,7 +308,6 @@ class SocketHandler {
     private async InitiateLogIn(request: LogInRequest): Promise<LogInChallenge | Failure> {
         if (this.#username) return failure(ErrorStrings.InvalidRequest);
         const { username, clientEphemeralPublicHex } = request;
-        if (onlineUsers.has(username)) return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
         const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username, this.#ipRep);
         if (allowsAt && allowsAt > Date.now()) {
             return failure(ErrorStrings.TooManyWrongTries, { tries, allowsAt });
@@ -325,7 +323,7 @@ class SocketHandler {
         return { challengeReference, serverConfirmationCode, verifierSalt, verifierEntangledHex, databaseAuthKey };
     }
 
-    private async ConcludeLogIn(response: LogInChallengeResponse): Promise<UserData | Failure> {
+    private async ConcludeLogIn(response: LogInChallengeResponse): Promise<UserData | Failure> {    
         if (this.#username) return failure(ErrorStrings.InvalidRequest);
         const { challengeReference, clientConfirmationCode, databaseAuthKeyBuffer } = response;
         if (!this.#logInChallengeTemp || this.#logInChallengeTemp.challengeReference !== challengeReference) return failure(ErrorStrings.InvalidReference);
@@ -371,7 +369,6 @@ class SocketHandler {
         if (!savedAuthDetails) return failure(ErrorStrings.InvalidReference);
         const { username, authKeyBits, coreKeyBits, laterConfirmation }: ServerSavedDetails = await crypto.deriveDecrypt(savedAuthDetails, serverKeyBits, "Saved Auth") ?? {};
         if (!username) return failure(ErrorStrings.IncorrectData);
-        if (onlineUsers.has(username)) return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
         const { clientIdentityVerifyingKey, userData: { profileData, x3dhInfo, chatsData } } = (await MongoHandlerCentral.getLeanUser(username)) ?? {}; 
         const clientVerifyingKey = await crypto.importKey(clientIdentityVerifyingKey, "ECDSA", "public", false);
         this.#logInSavedTemp = { username, coreKeyBits, laterConfirmation, clientVerifyingKey, userData: { profileData, x3dhInfo, chatsData } };
