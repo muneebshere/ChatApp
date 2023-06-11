@@ -288,6 +288,7 @@ class SocketHandler {
             if (await MongoHandlerCentral.createNewUser({ username, clientIdentityVerifyingKey, verifierPointHex, verifierSalt, ...newUserData }, databaseAuthKey)) {
                 this.#mongoHandler = await MongoHandlerCentral.instantiateUserHandler(username, databaseAuthKey);
                 if (!this.#mongoHandler) return failure(ErrorStrings.ProcessFailed);
+                this.#mongoHandler.subscribe(this.notifyMessage.bind(this));
                 console.log(`Saved user: ${username}`);
                 this.awaitSwitchSessionCrypto(sharedKeyBits, clientVerifyingKey).then(async (success) => {
                     if (success) {
@@ -347,6 +348,7 @@ class SocketHandler {
             if (onlineUsers.has(username)) return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
             this.#mongoHandler = await MongoHandlerCentral.instantiateUserHandler(username, databaseAuthKey);
             if (!this.#mongoHandler) return failure(ErrorStrings.ProcessFailed);
+            this.#mongoHandler.subscribe(this.notifyMessage.bind(this));
             this.awaitSwitchSessionCrypto(sharedKeyBits, clientVerifyingKey).then(async (success) => {
                 if (success) {
                     this.#username = username;
@@ -390,6 +392,7 @@ class SocketHandler {
             if (onlineUsers.has(username)) return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
             this.#mongoHandler = await MongoHandlerCentral.instantiateUserHandler(username, databaseAuthKey);
             if (!this.#mongoHandler) return failure(ErrorStrings.ProcessFailed);
+            this.#mongoHandler.subscribe(this.notifyMessage.bind(this));
             this.awaitSwitchSessionCrypto(sharedKeyBits, clientVerifyingKey).then(async (success) => {
                 if (success) {
                     this.#username = username;
@@ -584,8 +587,7 @@ class SocketHandler {
         return { reason: null };
     }
 
-    /* private async notifyMessage(message: MessageHeader | ChatRequestHeader | Receipt) {
-        if (message.toAlias !== this.#username) return;
+    private async notifyMessage(message: MessageHeader | ChatRequestHeader | Receipt) {
         if ("messageBody" in message) {
             await this.request(SocketServerSideEvents.MessageReceived, message);
         }
@@ -595,7 +597,7 @@ class SocketHandler {
         else {
             await this.request(SocketServerSideEvents.ReceiptReceived, message);
         }
-    } */
+    }
 
     private async LogOut({ username }: Username): Promise<Failure> {
         if (this.#username !== username) return failure(ErrorStrings.InvalidRequest);
@@ -613,6 +615,7 @@ class SocketHandler {
     private dispose() {
         console.log(`Disposing connection: session reference ${this.#sessionReference}`);
         this.deregisterSocket();
+        this.#mongoHandler.unsubscribe();
         this.#session = null;
         this.#sessionReference = null;
         this.#sessionCrypto = null;

@@ -10,22 +10,26 @@ import { allSettledResults, logError } from "../shared/commonFunctions";
 const exposedSignedKey = {
     exportedPublicKey: {
         type: Schema.Types.Buffer,
-        required: true
+        required: true,
+        immutable: true
     },
     signature: {
         type: Schema.Types.Buffer,
-        required: true
+        required: true,
+        immutable: true
     }
 };
 
 const signedEncryptedData = {
     ciphertext: {
         type: Schema.Types.Buffer,
-        required: true
+        required: true,
+        immutable: true
     },
     signature: {
         type: Schema.Types.Buffer,
-        required: true
+        required: true,
+        immutable: true
     }
 };
 
@@ -60,6 +64,13 @@ const passwordEncryptedData = {
 };
 
 export class MongoHandlerCentral {
+
+    private static sessionHooks = new Map<string, (message: MessageHeader | ChatRequestHeader | Receipt) => void>();
+
+    private static subscribeChange(id: string, callback: (message: MessageHeader | ChatRequestHeader | Receipt) => void) {
+        if (callback) MongoHandlerCentral.sessionHooks.set(id, callback);
+        else MongoHandlerCentral.sessionHooks.delete(id);
+    }
 
     private static readonly keyBundleSchema = new Schema({
         owner: {
@@ -331,90 +342,110 @@ export class MongoHandlerCentral {
     private static readonly ChatRequest = mongoose.model("ChatRequest", new Schema({
         addressedTo: {
             type: Schema.Types.String,
-            required: true
+            required: true,
+            immutable: true
         },
         headerId: {
             type: Schema.Types.String,
             required: true,
-            unique: true
+            unique: true,
+            immutable: true
         },
         myVerifyingIdentityKey: {
             type: Schema.Types.Buffer,
-            required: true
+            required: true,
+            immutable: true
         },
         myPublicDHIdentityKey: exposedSignedKey,
         myPublicEphemeralKey: exposedSignedKey,
         yourOneTimeKeyIdentifier: {
             type: Schema.Types.String,
             required: false,
-            unique: true
+            unique: true,
+            immutable: true
         },
         yourSignedPreKeyVersion: {
             type: Schema.Types.Number,
-            required: true
+            required: true,
+            immutable: true
         },
         initialMessage: signedEncryptedData
-    }).index({ addressedTo: "hashed" }), "chat_requests");
+    }).index({ addressedTo: "hashed" }).post("save", (doc) => {
+        MongoHandlerCentral.sessionHooks.get(`$user${doc.addressedTo}`)?.(cleanLean(doc.toObject()));
+    }), "chat_requests");
 
     private static readonly MessageHeader = mongoose.model("MessageHeader", new Schema({
         sessionId: {
             type: Schema.Types.String,
-            required: true
+            required: true,
+            immutable: true
         },
         fromAlias: {
             type: Schema.Types.String,
-            required: true
+            required: true,
+            immutable: true
         },
         toAlias: {
             type: Schema.Types.String,
-            required: true
+            required: true,
+            immutable: true
         },
         headerId: {
             type: Schema.Types.String,
-            required: true
+            required: true,
+            immutable: true
         },
         receivingRatchetNumber: {
             type: Schema.Types.Number,
-            required: true
+            required: true,
+            immutable: true
         },
         sendingRatchetNumber: {
             type: Schema.Types.Number,
-            required: true
+            required: true,
+            immutable: true
         },
         sendingChainNumber: {
             type: Schema.Types.Number,
-            required: true
+            required: true,
+            immutable: true
         },
         previousChainNumber: {
             type: Schema.Types.Number,
-            required: true
+            required: true,
+            immutable: true
         },
         nextDHRatchetKey: exposedSignedKey,
         messageBody: signedEncryptedData
-    }).index({ sessionId: 1, toAlias: 1 }).index({ sessionId: 1, headerId: 1 }, { unique: true }).index({ sendingRatchetNumber: 1, sendingChainNumber: 1 }, { unique: true }), "message_headers");
+    }).index({ sessionId: 1, toAlias: 1 }).index({ sessionId: 1, headerId: 1 }, { unique: true }).index({ sendingRatchetNumber: 1, sendingChainNumber: 1 }, { unique: true }).post("save", (doc) => MongoHandlerCentral.sessionHooks.get(`${doc.sessionId}@${doc.toAlias}`)?.(cleanLean(doc.toObject()))), "message_headers");
 
     private static readonly Receipt = mongoose.model("Receipt", new Schema({
         toAlias: {
             type: Schema.Types.String,
-            required: true
+            required: true,
+            immutable: true
         },
         sessionId: {
             type: Schema.Types.String,
-            required: true
+            required: true,
+            immutable: true
         },
         headerId: {
             type: Schema.Types.String,
-            required: true
+            required: true,
+            immutable: true
         },
         signature: {
             type: Schema.Types.String,
-            required: true
+            required: true,
+            immutable: true
         },
         bounced: {
             type: Schema.Types.Boolean,
-            required: true
+            required: true,
+            immutable: true
         }
-    }).index({ sessionId: 1, toAlias: 1 }).index({ sessionId: 1, headerId: 1 }, { unique: true }), "receipts");
+    }).index({ sessionId: 1, toAlias: 1 }).index({ sessionId: 1, headerId: 1 }, { unique: true }).post("save", (doc) => MongoHandlerCentral.sessionHooks.get(`${doc.sessionId}@${doc.toAlias}`)?.(cleanLean(doc.toObject()))), "receipts");
 
     private static readonly Chat = mongoose.model("Chat", new Schema({
         chatId: {
@@ -587,7 +618,7 @@ export class MongoHandlerCentral {
             const chats: string[] = await allSettledResults(chatsList.map((c: any) => crypto.deriveDecrypt(this.toUserEncrypted(c.accessKey), databaseAuthKey, "DatabaseChatAccessKey").then((c) => c.chatId)));
             const sessionsList = cleanLean(await this.DatabaseAccessKey.find({ username, type: "session" }).lean());
             const sessions: ChatSessionDetails[] = await allSettledResults(sessionsList.map((c: any) => crypto.deriveDecrypt(this.toUserEncrypted(c.accessKey), databaseAuthKey, "DatabaseSessionAccessKey")));
-            return new this.MongoUserHandler(username, databaseAuthKey, chats, sessions);
+            return new this.MongoUserHandler(username, databaseAuthKey, chats, sessions, this.subscribeChange);
         }
         catch(err) {
             logError(err);
@@ -602,12 +633,15 @@ export class MongoHandlerCentral {
         readonly #databaseAuthKey: CryptoKey;
         readonly #chats: string[];
         readonly #sessions: Map<string, ChatSessionDetails>;
+        private notify: (message: MessageHeader | ChatRequestHeader | Receipt) => void;
+        private readonly subscribeChange: (id: string, callback: typeof MongoHandlerCentral.UserHandlerType.notify) => void;
 
-        constructor (username: string, databaseAuthKey: CryptoKey, chats: string[], sessions: ChatSessionDetails[]) {
+        constructor (username: string, databaseAuthKey: CryptoKey, chats: string[], sessions: ChatSessionDetails[], subscribeChange: typeof MongoHandlerCentral.UserHandlerType.subscribeChange) {
             this.#username = username;
             this.#databaseAuthKey = databaseAuthKey;
             this.#chats = chats;
             this.#sessions = new Map(sessions.map((s) => [s.sessionId, s]));
+            this.subscribeChange = subscribeChange;
         }
 
         private matchUsername(username: string) {
@@ -645,6 +679,7 @@ export class MongoHandlerCentral {
             const accessKey = (await crypto.deriveEncrypt(session, this.#databaseAuthKey, "DatabaseSessionAccessKey", Buffer.alloc(32))).ciphertext;
             if (await (new MongoHandlerCentral.DatabaseAccessKey({ username: this.#username, type: "session", accessKey })).save()) {
                 this.#sessions.set(sessionId, session);
+                if (this.notify) this.subscribeChange(`${sessionId}@${myAlias}`, this.notify);
                 return true;
             }
             else return false;
@@ -653,13 +688,12 @@ export class MongoHandlerCentral {
         private async registerSession(sessionId: string, myAlias: string, otherAlias: string) {
             try {
                 const pending = cleanLean(await MongoHandlerCentral.RegistrationPendingSession.findOne({ sessionId }).lean());
-                if (!pending || !pending.acceptorAccessKey) return false;
+                if (!pending) return false;
                 const existing = await MongoHandlerCentral.RegisteredSession.findOne({ sessionId });
                 if (existing?.locked) return false;
                 if (existing) {
                     const { username } = await crypto.deriveDecrypt(MongoHandlerCentral.toUserEncrypted(pending.initiatorAccessKey), this.#databaseAuthKey, "PendingSessionKey");
-                    if (!this.matchUsername(username)) return false;
-                    if (myAlias !== existing.alias2 || otherAlias !== existing.alias1) return false;
+                    if (!this.matchUsername(username) || myAlias !== existing.alias2 || otherAlias !== existing.alias1) return false;
                     existing.locked = true;
                     if (existing === await existing.save()) {
                         await MongoHandlerCentral.RegistrationPendingSession.deleteOne({ sessionId });
@@ -668,13 +702,20 @@ export class MongoHandlerCentral {
                     else return false;
                 }
                 else {
-                    const { username } = await crypto.deriveDecrypt(MongoHandlerCentral.toUserEncrypted(pending.acceptorAccessKey), this.#databaseAuthKey, "PendingSessionKey");
-                    if (!this.matchUsername(username)) return false;
-                    const newRegister = new MongoHandlerCentral.RegisteredSession({ sessionId, alias1: myAlias, alias2: otherAlias });
-                    if (newRegister === await newRegister.save()) {
-                        return await this.addSessionKey(sessionId, myAlias, otherAlias);
+                    if (pending.acceptorAccessKey) {
+                        const { username } = await crypto.deriveDecrypt(MongoHandlerCentral.toUserEncrypted(pending.acceptorAccessKey), this.#databaseAuthKey, "PendingSessionKey");
+                        if (!this.matchUsername(username)) return false;
+                        const newRegister = new MongoHandlerCentral.RegisteredSession({ sessionId, alias1: myAlias, alias2: otherAlias });
+                        if (newRegister === await newRegister.save()) {
+                            return await this.addSessionKey(sessionId, myAlias, otherAlias);
+                        }
+                        else return false;
                     }
-                    else return false;
+                    else if (this.notify) {
+                        const { username } = await crypto.deriveDecrypt(MongoHandlerCentral.toUserEncrypted(pending.initiatorAccessKey), this.#databaseAuthKey, "PendingSessionKey");
+                        if (this.matchUsername(username)) this.subscribeChange(`${sessionId}@${myAlias}`, this.notify);
+                        return false;
+                    }
                 }
             }
             catch(err) {
@@ -690,7 +731,11 @@ export class MongoHandlerCentral {
                 const accessKey = (await crypto.deriveEncrypt({ username: this.#username }, this.#databaseAuthKey, "PendingSessionKey", Buffer.alloc(32))).ciphertext;
                 if (!prevPending) {
                     const newPending = new MongoHandlerCentral.RegistrationPendingSession({ sessionId, toAlias: myAlias, fromAlias: otherAlias, initiatorAccessKey: accessKey });
-                    return (newPending === await newPending.save());
+                    if (newPending === await newPending.save()) {
+                        if (this.notify) this.subscribeChange(`${sessionId}@${myAlias}`, this.notify);
+                        return true;
+                    }
+                    else return false;
                 }
                 else {
                     if (prevPending.acceptorAccessKey || myAlias !== prevPending.fromAlias || otherAlias !== prevPending.toAlias) return false;
@@ -916,6 +961,18 @@ export class MongoHandlerCentral {
                 logError(err);
                 return false;
             }
+        }
+
+        subscribe(notify: typeof this.notify) {
+            this.notify = notify;
+            this.subscribeChange(`$user${this.#username}`, notify);
+            for (const [sessionId, { myAlias }] of this.#sessions) this.subscribeChange(`${sessionId}@${myAlias}`, notify);
+        }
+
+        unsubscribe() {
+            this.subscribeChange(`$user${this.#username}`, null);
+            for (const [sessionId, { myAlias }] of this.#sessions) this.subscribeChange(`${sessionId}@${myAlias}`, null);
+            this.notify = null;
         }
     }
 }

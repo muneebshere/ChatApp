@@ -833,7 +833,7 @@ export default class Client {
     }
 
     private async receiveRequestResponse(message: MessageHeader) {
-        const { sessionId, headerId, toAlias } = message;
+        const { sessionId, headerId, toAlias, fromAlias } = message;
         const awaitedRequest = this.chatSessionIdsList.get(sessionId);
         if (!awaitedRequest || awaitedRequest.type !== "AwaitedRequest") {
             return false;
@@ -847,11 +847,8 @@ export default class Client {
             logError(profileResponse);
             return false;
         }
+        await this.#socketHandler.GetMessageHeaders({ sessionId, toAlias, fromAlias });
         const { messageId, text, timestamp } = awaitedRequest.chatMessage.displayMessage;
-        if (typeof profileResponse === "string") {
-            logError(profileResponse);
-            return false;
-        }
         const { profile, respondedAt } = profileResponse;
         const chatId = getRandomString(15, "base64");
         const details = { chatId, contactDetails: profile, timeRatio: _.random(1, 999) };

@@ -1,3 +1,4 @@
+import _ from "lodash";
 import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
 import { ExposedSignedPublicKey, SignedKeyPair, ExportedSignedKeyPair, ExportedSigningKeyPair, KeyBundle, MessageHeader, ChatRequestHeader, UserEncryptedData, Profile, StoredMessage } from "../../shared/commonTypes";
@@ -154,7 +155,7 @@ export class X3DHUser {
     }
 
     public get pendingChatRequests(): ViewPendingRequest[] {
-        return Array.from(this.#waitingChatRequests.values()).map(({ messageId, timestamp, otherUser, text, sessionId, myAlias, otherAlias, headerId }) => ({ messageId, headerId, timestamp, otherUser, text, sessionId, myAlias, otherAlias }));
+        return Array.from(this.#waitingChatRequests.values()).map((req) => _.pick(req, ["messageId", "timestamp", "otherUser", "text", "sessionId", "myAlias", "otherAlias", "headerId"]));
     }
 
     private constructor(username: string,
@@ -481,8 +482,7 @@ export class X3DHUser {
         : Promise<ViewChatRequest | "Incorrectly Addressed" | "PreKey Version Mismatch" | "OneTimeKey Not Found" | "Invalid Identity Signature" | "Invalid Ephemeral Signature" | "Failed To Decrypt Message" | "Problem With Decrypted Message" | "Unknown Error"> {
             const chatRequestResult = await this.processChatRequest(initialMessage);
             if (typeof chatRequestResult === "string") return chatRequestResult;
-            const { sessionId, messageId, profile, text, timestamp } =  chatRequestResult;
-            return { sessionId, messageId, profile, text, timestamp };
+            else return _.pick(chatRequestResult, ["sessionId", "messageId", "profile", "text", "timestamp"]);
     }
 
     async acceptChatRequest(initialMessage: ChatRequestHeader, timestamp: number, profileDetails: Omit<Profile, "username">, saveSession: (arg: UserEncryptedData) => Promise<boolean>)
