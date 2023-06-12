@@ -8,12 +8,16 @@ import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
 import * as esrp from "../../shared/ellipticSRP";
 import { allSettledResults, failure, fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
-import { ErrorStrings, Failure, Username, SocketClientSideEvents, PasswordEncryptedData, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, NewUserData, Profile, RegisterNewUserChallengeResponse, LogInRequest, LogInChallengeResponse, MessageIdentifier, ChatIdentifier, Receipt, UserEncryptedData, SessionIdentifier, HeaderIdentifier, Backup  } from "../../shared/commonTypes";
+import { ErrorStrings, Failure, Username, SocketClientSideEvents, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, NewUserData, Profile, RegisterNewUserChallengeResponse, LogInRequest, LogInChallengeResponse, MessageIdentifier, ChatIdentifier, Receipt, UserEncryptedData, SessionIdentifier, HeaderIdentifier, Backup, PasswordDeriveInfo, PasswordEntangleInfo  } from "../../shared/commonTypes";
 import { noProfilePictureImage } from "./noProfilePictureImage";
 import { AwaitedRequest, Chat, ChatDetails, ChatRequest } from "./chatClasses";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;
+
+const chatMethods = ["SendMessage", "GetMessageHeaders", "GetMessagesByNumber", "GetMessagesUptoTimestamp", "GetMessagesUptoId", "GetMessageById", "StoreMessage", "MessageHeaderProcessed", "UpdateChat", "StoreBackup", "GetBackupById", "BackupProcessed", "SendReceipt", "GetAllReceipts", "ClearAllReceipts"] as const;
+
+type ChatMethods = typeof chatMethods[number];
 
 export enum ClientEvent {
     Disconnected,
@@ -34,25 +38,7 @@ export enum ClientEvent {
     SignedOut
 }
 
-export type ClientChatInterface = Readonly<{
-    SendMessage: (data: MessageHeader, timeout?: number) => Promise<Failure>,
-    GetMessageHeaders: (data: SessionIdentifier & { fromAlias: string }, timeout?: number) => Promise<MessageHeader[] | Failure>,
-    GetMessagesByNumber: (data: ChatIdentifier & { limit: number, olderThanTimemark: number }, timeout?: number) => Promise<StoredMessage[] | Failure>,
-    GetMessagesUptoTimestamp: (data: ChatIdentifier & { newerThanTimemark: number, olderThanTimemark: number }, timeout?: number) => Promise<StoredMessage[] | Failure>,
-    GetMessagesUptoId: (data: MessageIdentifier & { olderThanTimemark: number }, timeout?: number) => Promise<StoredMessage[] | Failure>,
-    GetMessageById: (data: MessageIdentifier, timeout?: number) => Promise<StoredMessage | Failure>,
-    StoreMessage: (data: StoredMessage, timeout?: number) => Promise<Failure>,
-    MessageHeaderProcessed: (data: SessionIdentifier & HeaderIdentifier, timeout?: number) => Promise<Failure>,
-    UpdateChat: (data: Partial<ChatData> & Omit<ChatData, "chatDetails" | "exportedChattingSession">, timeout?: number) => Promise<Failure>,
-    StoreBackup(data: Backup, timeout?: number): Promise<Failure>,
-    GetBackupById(data: HeaderIdentifier & { byAlias: string }, timeout?: number): Promise<Backup | Failure>,
-    BackupProcessed(data: HeaderIdentifier & { byAlias: string }, timeout?: number): Promise<Failure>,
-    SendReceipt(data: Receipt, timeout?: number): Promise<Failure>,
-    GetAllReceipts(data: SessionIdentifier, timeout?: number): Promise<Receipt[] | Failure>,
-    ClearAllReceipts(data: SessionIdentifier, timeout?: number): Promise<Failure>,
-    isConnected(): boolean,
-    notifyClient: (timeout?: number) => void
-}>;
+export type ClientChatInterface = Pick<RequestMap, ChatMethods> & Readonly<{ isConnected: () => boolean, notifyClient: () => void }>
 
 export type ClientChatRequestInterface = Readonly<{
     rejectRequest: (otherUser: string, sessionId: string, oneTimeKeyId: string) => Promise<boolean>,
@@ -99,6 +85,7 @@ function SocketHandler(socket: () => Socket, sessionCrypto: () => SessionCrypto,
     }
     return requestMap as RequestMap;
 }
+
 export default class Client {
     private readonly responseMap: Map<SocketServerSideEventsKey, any> = new Map([
         [SocketServerSideEvents.RoomRequested, this.roomRequested] as [SocketServerSideEventsKey, any],
@@ -117,7 +104,6 @@ export default class Client {
     #socket: Socket;
     #profile: Profile;
     #username: string;
-    #chatIds: string[];
     #x3dhUser: X3DHUser;
     #sessionReference: string;
     #sessionCrypto: SessionCrypto
@@ -127,56 +113,18 @@ export default class Client {
     private readonly chatList: string[] = [];
     private readonly chatSessionIdsList = new Map<string, Chat | ChatRequest | AwaitedRequest>();
     private readonly chatUsernamesList = new Map<string, Chat | ChatRequest | AwaitedRequest>();
+    
+    private chatInterface: ClientChatInterface;
 
-    private readonly chatInterface: ClientChatInterface = {
-        SendMessage: (data, timeout = 0) => {
-            return this.#socketHandler.SendMessage(data, timeout);
-        },
-        GetMessageHeaders: (data, timeout = 0) => {
-            return this.#socketHandler.GetMessageHeaders(data, timeout);
-        },
-        GetMessagesByNumber: (data, timeout = 0) => {
-            return this.#socketHandler.GetMessagesByNumber(data, timeout);
-        },
-        GetMessagesUptoTimestamp: (data, timeout = 0) => {
-            return this.#socketHandler.GetMessagesUptoTimestamp(data, timeout);
-        },
-        GetMessagesUptoId: (data, timeout = 0) => {
-            return this.#socketHandler.GetMessagesUptoId(data, timeout);
-        },
-        GetMessageById: (data, timeout = 0) => {
-            return this.#socketHandler.GetMessageById(data, timeout);
-        },
-        StoreMessage: (data, timeout = 0) => {
-            return this.#socketHandler.StoreMessage(data, timeout);
-        },
-        MessageHeaderProcessed: (data, timeout?: number) => {
-            return this.#socketHandler.MessageHeaderProcessed(data, timeout);
-        },
-        UpdateChat: (data, timeout = 0) => {
-            return this.#socketHandler.UpdateChat(data, timeout);
-        },
-        StoreBackup: (data, timeout = 0) => {
-            return this.#socketHandler.StoreBackup(data, timeout);
-        },
-        GetBackupById: (data, timeout = 0) => {
-            return this.#socketHandler.GetBackupById(data, timeout);
-        },
-        BackupProcessed: (data, timeout = 0) => {
-            return this.#socketHandler.BackupProcessed(data, timeout);
-        },
-        SendReceipt: (data, timeout = 0) => {
-            return this.#socketHandler.SendReceipt(data, timeout);
-        },
-        GetAllReceipts: (data, timeout = 0) => {
-            return this.#socketHandler.GetAllReceipts(data, timeout);
-        },
-        ClearAllReceipts: (data, timeout = 0) => {
-            return this.#socketHandler.ClearAllReceipts(data, timeout);
-        },
-        isConnected: () => this.isConnected,
-        notifyClient: () => this.notifyChange?.()
-    };
+    private constructChatInterface() {
+        const chatInterface: any = {};
+        for (const method of chatMethods) {
+            chatInterface[method] = this.#socketHandler[method];
+        }
+        chatInterface["isConnected"] = () => this.isConnected;
+        chatInterface["notifyClient"] = () => this.notifyChange?.();
+        return chatInterface as ClientChatInterface;
+    }
 
     private addChat(chat: Chat | ChatRequest | AwaitedRequest) {
         this.chatSessionIdsList.set(chat.sessionId, chat);
@@ -292,6 +240,7 @@ export default class Client {
                         this.#sessionReference = sessionReference;
                         this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBits, signingKey, serverVerifyingKey);
                         this.#socketHandler = SocketHandler(() => this.#socket, () => this.#sessionCrypto, this.#fileHash, () => this.isConnected);
+                        this.chatInterface = this.constructChatInterface();
                         console.log(`Connected with session reference: ${sessionReference} and socketId: ${this.#socket.id}`);
                         if (this.#username) {
                             this.notifyClientEvent?.(ClientEvent.SignedOut);
@@ -374,31 +323,12 @@ export default class Client {
         return result.exists;
     }
 
-    async userLogInPermitted(username: string): Promise<{ tries: number, allowsAt: number, isAlreadyOnline: boolean }> {
+    async userLogInPermitted(username: string): Promise<{ tries: number, allowsAt: number }> {
         const result = await this.#socketHandler.UserLoginPermitted({ username });
         if ("reason" in result) {
             throw "Can't determine if username login is permitted.";
         }
         return result;
-    }
-
-    async constructNewUser(profile: Profile, passwordString: string, encryptionBaseVector: Buffer, databaseAuthKeyBuffer: Buffer, clientIdentitySigningKey: PasswordEncryptedData, serverIdentityVerifyingKey: PasswordEncryptedData): Promise<NewUserData> {
-        const { username } = profile;
-        this.#encryptionBaseVector = await crypto.importRaw(encryptionBaseVector);
-        const encryptionBase = await this.passwordEncrypt(passwordString, { encryptionBaseVector }, "Encryption Base");
-        const databaseAuthKey = await this.passwordEncrypt(passwordString, { databaseAuthKeyBuffer }, "DatabaseAuthKey");
-        const x3dhUser = await X3DHUser.new(username, this.#encryptionBaseVector);
-        if (!x3dhUser) {
-            this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
-            throw new Error("Failed to create user");
-        }
-        const keyBundles = await x3dhUser.publishKeyBundles();
-        const x3dhInfo = await x3dhUser.exportUser();
-        const chatIds = this.#chatIds = [];
-        const profileData = await crypto.deriveEncrypt(profile, this.#encryptionBaseVector, "User Profile");
-        const chatsData = await  crypto.deriveEncrypt({ chatIds }, this.#encryptionBaseVector, "Chats Data");
-        this.#x3dhUser = x3dhUser;
-        return { userData: { profileData, encryptionBase, x3dhInfo, clientIdentitySigningKey, serverIdentityVerifyingKey, chatsData }, databaseAuthKey, keyBundles };
     }
 
     async signUp(profile: Profile, password: string, savePassword: boolean) {
@@ -407,18 +337,17 @@ export default class Client {
         try {
             const { username } = profile;
             const passwordString = `${username}#${password}`
-            const { verifierSalt, verifierPointHex } = esrp.generateClientRegistration(passwordString);
-            const { clientEphemeralPublicHex, processAuthChallenge } = await esrp.clientSetupAuthProcess(passwordString);
-            const [identityMasterKeyBits, pInfo] = await crypto.deriveMasterKeyBits(passwordString);
-            const hSalt = crypto.getRandomVector(32);
+            const { verifierPoint, verifierDerive } = await esrp.generateClientRegistration(passwordString);
+            const { clientEphemeralPublic, processAuthChallenge } = await esrp.clientSetupAuthProcess(passwordString);
+            const [encryptionBaseDerive, encryptionBase] = await esrp.entanglePassword(passwordString);
+            const encryptionBaseVector = await crypto.importRaw(encryptionBase);
+            const [databaseAuthKeyDerive, databaseAuthKeyBuffer] = await esrp.entanglePassword(passwordString);
             const identitySigningKeypair = await crypto.generateKeyPair("ECDSA");
-            const { exportedPublicKey: clientIdentityVerifyingKey, wrappedPrivateKey: ciphertext } = await crypto.exportSigningKeyPair(identitySigningKeypair, identityMasterKeyBits, hSalt, "Client Identity Signing Key");
-            const clientIdentitySigningKey: PasswordEncryptedData = { ciphertext, hSalt, ...pInfo };
+            const { exportedPublicKey: clientIdentityVerifyingKey, wrappedPrivateKey: clientIdentitySigning } = await crypto.exportSigningKeyPair(identitySigningKeypair, encryptionBaseVector, "Client Identity Signing Key");
             const registerNewUserRequest: RegisterNewUserRequest = {
                 username,
-                verifierSalt, 
-                verifierPointHex,
-                clientEphemeralPublicHex,
+                verifierPoint,
+                clientEphemeralPublic,
                 clientIdentityVerifyingKey               
             };
             const resultInit = await this.#socketHandler.InitiateRegisterNewUser(registerNewUserRequest);
@@ -427,18 +356,22 @@ export default class Client {
                 logError(resultInit);
                 return resultInit;
             }
-            const { challengeReference, serverConfirmationCode, serverIdentityVerifyingKey, verifierEntangledHex, databaseAuthKeyEncrypted } = resultInit;
-            const { clientConfirmationCode, sharedKeyBits, confirmServer } = await processAuthChallenge(verifierSalt, verifierEntangledHex, "now");
-            const { databaseAuthKeyBuffer } = await crypto.deriveDecrypt(databaseAuthKeyEncrypted, sharedKeyBits, "DatabaseAuthKey");
-            const serverVerifyingKey = await this.passwordEncrypt(passwordString, { serverIdentityVerifyingKey }, "Server Verifying Key");
-            const encryptionBaseVector = getRandomVector(64);
-            const newUserData = await this.constructNewUser(profile, passwordString, encryptionBaseVector, databaseAuthKeyBuffer, clientIdentitySigningKey, serverVerifyingKey);
+            const { challengeReference, serverConfirmationCode, serverIdentityVerifyingKey, verifierEntangled } = resultInit;
+            const { clientConfirmationCode, sharedKeyBits, confirmServer } = await processAuthChallenge(verifierEntangled, verifierDerive, "now");
+            const serverIdentityVerifying = await crypto.deriveEncrypt({ serverIdentityVerifyingKey }, encryptionBaseVector, "Server Identity Verifying Key");
+            const x3dhUser = await X3DHUser.new(username, encryptionBaseVector);
+            if (!x3dhUser) {
+                this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
+                throw new Error("Failed to create user");
+            }
+            const keyBundles = await x3dhUser.publishKeyBundles();
+            const x3dhInfo = await x3dhUser.exportUser();
+            const profileData = await crypto.deriveEncrypt(profile, encryptionBaseVector, "User Profile");
+            const newUserData: NewUserData =  { userData: { encryptionBaseDerive, profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying }, verifierDerive, databaseAuthKeyDerive, keyBundles };
             const newUserDataSigned = await crypto.deriveSignEncrypt(sharedKeyBits, newUserData, Buffer.alloc(32), "New User Data", identitySigningKeypair.privateKey);
-            const concludeRegisterNewUser: RegisterNewUserChallengeResponse = { challengeReference, clientConfirmationCode, newUserDataSigned };
+            const concludeRegisterNewUser: RegisterNewUserChallengeResponse = { challengeReference, clientConfirmationCode, newUserDataSigned, databaseAuthKeyBuffer };
             const resultConc = await this.#socketHandler.ConcludeRegisterNewUser(concludeRegisterNewUser);
             if (resultConc?.reason) {
-                this.#encryptionBaseVector = null;
-                this.#x3dhUser = null;
                 this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
                 logError(resultConc);
                 return resultConc;
@@ -455,17 +388,17 @@ export default class Client {
             });
             if (!switched) {
                 this.#sessionCrypto = null;
-                this.#encryptionBaseVector = null;
                 this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);
                 return failure(ErrorStrings.ProcessFailed);
             }
             this.#username = username;
             this.#profile = profile;
+            this.#encryptionBaseVector = encryptionBaseVector;
+            this.#x3dhUser = x3dhUser;
             this.notifyClientEvent?.(ClientEvent.CreatedNewUser);
             this.notifyClientEvent?.(ClientEvent.SignedIn);
             if (savePassword) {
-                const exportedIdentitySigningKey = await crypto.exportKey(identitySigningKeypair.privateKey);
-                await this.savePassword(username, passwordString, encryptionBaseVector, exportedIdentitySigningKey, serverIdentityVerifyingKey, databaseAuthKeyBuffer);
+                await this.savePassword(username, passwordString, encryptionBase, databaseAuthKeyBuffer);
             }
             return { reason: null };
         }
@@ -481,18 +414,17 @@ export default class Client {
         if (this.username) return failure(ErrorStrings.InvalidRequest);
         try {
             const passwordString = `${username}#${password}`;
-            const { clientEphemeralPublicHex, processAuthChallenge } = await esrp.clientSetupAuthProcess(passwordString);
-            const logInRequest: LogInRequest = { username, clientEphemeralPublicHex };
+            const { clientEphemeralPublic, processAuthChallenge } = await esrp.clientSetupAuthProcess(passwordString);
+            const logInRequest: LogInRequest = { username, clientEphemeralPublic };
             const resultInit = await this.#socketHandler.InitiateLogIn(logInRequest);
             if ("reason" in resultInit) {
                 this.notifyClientEvent?.(ClientEvent.FailedSignIn);
                 logError(resultInit);
                 return resultInit;
             }
-            const { challengeReference, serverConfirmationCode, verifierEntangledHex, verifierSalt, databaseAuthKey } = resultInit;
-            const { clientConfirmationCode, sharedKeyBits, confirmServer } = await processAuthChallenge(verifierSalt, verifierEntangledHex, "now");
-            let { databaseAuthKeyBuffer } = (await this.passwordDecrypt(passwordString, databaseAuthKey, "DatabaseAuthKey")) || {};
-            databaseAuthKeyBuffer ||= Buffer.alloc(64);
+            const { challengeReference, serverConfirmationCode, verifierEntangled, verifierDerive, databaseAuthKeyDerive } = resultInit;
+            const { clientConfirmationCode, sharedKeyBits, confirmServer } = await processAuthChallenge(verifierEntangled, verifierDerive, "now");
+            const databaseAuthKeyBuffer = await esrp.disentanglePasswordToBits(passwordString, databaseAuthKeyDerive);
             const logInChallengeResponse: LogInChallengeResponse = { challengeReference, clientConfirmationCode, databaseAuthKeyBuffer };
             const resultConc = await this.#socketHandler.ConcludeLogIn(logInChallengeResponse);
             if ("reason" in resultConc) {
@@ -500,11 +432,11 @@ export default class Client {
                 logError(resultConc);
                 return resultConc;
             }
-            const { clientIdentitySigningKey: { ciphertext, hSalt, ...pInfo }, encryptionBase, profileData, serverIdentityVerifyingKey: serverIdentityVerifying, x3dhInfo, chatsData } = resultConc;
-            const { encryptionBaseVector } = (await this.passwordDecrypt(passwordString, encryptionBase, "Encryption Base")) ?? {};
-            const { serverIdentityVerifyingKey } = (await this.passwordDecrypt(passwordString, serverIdentityVerifying, "Server Verifying Key")) ?? {};
-            const identityMasterKeyBits = await crypto.deriveMasterKeyBits(passwordString, pInfo);
-            const clientIdentitySigningKey = await crypto.deriveUnwrap(identityMasterKeyBits, ciphertext, hSalt, "ECDSA", "Client Identity Signing Key", false);
+            const { encryptionBaseDerive, clientIdentitySigning, serverIdentityVerifying, profileData, x3dhInfo } = resultConc;
+            const encryptionBase = await esrp.disentanglePasswordToBits(passwordString, encryptionBaseDerive);
+            const encryptionBaseVector = await crypto.importRaw(encryptionBase);
+            const { serverIdentityVerifyingKey } = (await crypto.deriveDecrypt(serverIdentityVerifying, encryptionBaseVector, "Server Identity Verifying Key")) ?? {};
+            const clientIdentitySigningKey = await crypto.deriveUnwrap(encryptionBaseVector, clientIdentitySigning, "ECDSA", "Client Identity Signing Key", false);
             if (!encryptionBaseVector || !serverIdentityVerifyingKey || !clientIdentitySigningKey) {
                 this.notifyClientEvent?.(ClientEvent.FailedSignIn);
                 return failure(ErrorStrings.ProcessFailed);
@@ -512,19 +444,16 @@ export default class Client {
             const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
             const x3dhUser = await X3DHUser.importUser(x3dhInfo, encryptionBaseVector);
             const profile: Profile = await crypto.deriveDecrypt(profileData, encryptionBaseVector, "User Profile");
-            const { chatIds } = await crypto.deriveDecrypt(chatsData, encryptionBaseVector, "Chats Data");
-            if (!serverVerifyingKey || !x3dhUser || !profile || !chatIds) {
+            if (!serverVerifyingKey || !x3dhUser || !profile) {
                 this.notifyClientEvent?.(ClientEvent.FailedSignIn);
                 return failure(ErrorStrings.ProcessFailed);
             }
             if (!(await confirmServer(serverConfirmationCode))) {
                 this.#sessionCrypto = null;
-                this.#encryptionBaseVector = null;
                 this.notifyClientEvent?.(ClientEvent.FailedSignIn);
                 logError(new Error("Server confirmation code incorrect."));
                 return failure(ErrorStrings.ProcessFailed);
             }
-            this.#encryptionBaseVector = encryptionBaseVector;
             this.#sessionCrypto = new SessionCrypto(this.#sessionReference, sharedKeyBits, clientIdentitySigningKey, serverVerifyingKey);
             const switched = await new Promise<boolean>((resolve) => {
                 this.#socket?.emit("SwitchSessionCrypto", this.#sessionReference, (response: boolean) => resolve(response));
@@ -532,17 +461,15 @@ export default class Client {
             });
             if (!switched) {
                 this.#sessionCrypto = null;
-                this.#encryptionBaseVector = null;
                 this.notifyClientEvent?.(ClientEvent.FailedSignIn);
                 return failure(ErrorStrings.ProcessFailed);
             }
             this.#username = username;
             this.#profile = profile;
+            this.#encryptionBaseVector = encryptionBaseVector;
             this.#x3dhUser = x3dhUser;
-            this.#chatIds = chatIds;
             if (savePassword) {
-                const exportedIdentitySigningKey = await crypto.exportKey(await crypto.deriveUnwrap(identityMasterKeyBits, ciphertext, hSalt, "ECDSA", "Client Identity Signing Key", true));
-                await this.savePassword(username, passwordString, encryptionBaseVector, exportedIdentitySigningKey, serverIdentityVerifyingKey, databaseAuthKeyBuffer);
+                await this.savePassword(username, passwordString, encryptionBase, databaseAuthKeyBuffer);
             }
             await this.loadUser();
             this.notifyClientEvent?.(ClientEvent.SignedIn);
@@ -581,23 +508,23 @@ export default class Client {
                 logError(resultConc);
                 return resultConc;
             }
-            const { coreKeyBits, serverConfirmationCode, userData: { x3dhInfo, profileData, chatsData } } = resultConc;
+            const { coreKeyBits, serverConfirmationCode, userData: { x3dhInfo, profileData, clientIdentitySigning, serverIdentityVerifying } } = resultConc;
             if (!(await esrp.processConfirmationData(sharedSecret, serverConfirmationCode, serverConfirmationData))) {
                 this.notifyClientEvent?.(ClientEvent.FailedSignIn);
                 logError(new Error("Server confirmation code incorrect."));
                 return failure(ErrorStrings.ProcessFailed);
             }
-            const { encryptionBaseVector, clientIdentitySigningKey, serverIdentityVerifyingKey } = await crypto.deriveDecrypt(coreData, coreKeyBits, "Core Data");
-            if (!encryptionBaseVector || !serverIdentityVerifyingKey || !clientIdentitySigningKey) {
+            const { encryptionBaseVector } = await crypto.deriveDecrypt(coreData, coreKeyBits, "Core Data");
+            if (!encryptionBaseVector) {
                 this.notifyClientEvent?.(ClientEvent.FailedSignIn);
                 return failure(ErrorStrings.ProcessFailed);
             }
-            const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
-            const clientSigningKey = await crypto.importKey(clientIdentitySigningKey, "ECDSA", "private", false);
             this.#encryptionBaseVector = await crypto.importRaw(encryptionBaseVector);
-            const x3dhUser = await X3DHUser.importUser(x3dhInfo, encryptionBaseVector);
+            const { serverIdentityVerifyingKey } = (await crypto.deriveDecrypt(serverIdentityVerifying, this.#encryptionBaseVector, "Server Identity Verifying Key")) ?? {};
+            const clientSigningKey = await crypto.deriveUnwrap(this.#encryptionBaseVector, clientIdentitySigning, "ECDSA", "Client Identity Signing Key", false);
+            const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
+            const x3dhUser = await X3DHUser.importUser(x3dhInfo, this.#encryptionBaseVector);
             const profile: Profile = await crypto.deriveDecrypt(profileData, encryptionBaseVector, "User Profile");
-            const { chatIds } = await crypto.deriveDecrypt(chatsData, encryptionBaseVector, "Chats Data");
             if (!profile || !x3dhUser) {
                 this.notifyClientEvent?.(ClientEvent.FailedSignIn);
                 return failure(ErrorStrings.ProcessFailed);
@@ -611,7 +538,6 @@ export default class Client {
                 this.#username = username;
                 this.#profile = profile;
                 this.#x3dhUser = x3dhUser;
-                this.#chatIds = chatIds;
                 await this.loadUser();
                 this.notifyClientEvent?.(ClientEvent.SignedIn);
                 return { reason: null };
@@ -706,35 +632,18 @@ export default class Client {
         }
     }
 
-    private async passwordEncrypt(passwordString: string, data: any, purpose: string): Promise<PasswordEncryptedData> {
-        const [masterKeyBits, pInfo] = await crypto.deriveMasterKeyBits(`${passwordString}`);
-        const hSalt = getRandomVector(48);
-        const encrypted = await crypto.deriveSignEncrypt(masterKeyBits, data, hSalt, purpose);
-        return { ...encrypted, ...pInfo, hSalt };
-    }
-
-    private async passwordDecrypt(passwordString: string, data: PasswordEncryptedData, purpose: string): Promise<any> {
-        const { ciphertext, hSalt, ...pInfo } = data;
-        const masterKeyBits = await crypto.deriveMasterKeyBits(`${passwordString}`, pInfo);
-        return await crypto.deriveDecryptVerify(masterKeyBits, { ciphertext }, hSalt, purpose);
-    }
-
-    private async savePassword(username: string, passwordString: string, encryptionBaseVector: Buffer, clientIdentitySigningKey: Buffer, serverIdentityVerifyingKey: Buffer, databaseAuthKeyBuffer: Buffer) {
+    private async savePassword(username: string, passwordString: string, encryptionBaseVector: Buffer, databaseAuthKeyBuffer: Buffer) {
         const coreKeyBits = getRandomVector(32);
         const authKeyBits = getRandomVector(32);
         const serverKeyBits = getRandomVector(32);
-        const coreKeyBitsBase64 = coreKeyBits.toString("base64");
-        const authKeyBitsBase64 = authKeyBits.toString("base64");
-        const serverKeyBitsBase64 = serverKeyBits.toString("base64");
-        const coreData = await crypto.deriveEncrypt({ encryptionBaseVector, clientIdentitySigningKey, serverIdentityVerifyingKey }, coreKeyBits, "Core Data");
-        const { clientEphemeralPublicHex, processAuthChallenge } = await esrp.clientSetupAuthProcess(passwordString);
+        const coreData = await crypto.deriveEncrypt({ encryptionBaseVector }, coreKeyBits, "Core Data");
+        const { clientEphemeralPublic, processAuthChallenge } = await esrp.clientSetupAuthProcess(passwordString);
         const socketId = this.#socket.id;
         const sessionReference = this.#sessionReference;
-        const response = await this.axInstance.post("/savePassword", { socketId, sessionReference, coreKeyBitsBase64, authKeyBitsBase64, serverKeyBitsBase64, clientEphemeralPublicHex });
+        const response = await this.axInstance.post("/savePassword", { payload: serialize({ socketId, sessionReference, coreKeyBits, authKeyBits, serverKeyBits, clientEphemeralPublic }).toString("base64") });
         if (response?.status === 200) {
-            const { verifierSaltBase64, verifierEntangledHex } = response.data;
-            const verifierSalt = Buffer.from(verifierSaltBase64, "base64");
-            const laterConfirmation = await processAuthChallenge(verifierSalt, verifierEntangledHex, "later");
+            const { verifierDerive, verifierEntangled } = deserialize(fromBase64(response.data.payload));
+            const laterConfirmation = await processAuthChallenge(verifierEntangled, verifierDerive, "later");
             const authData = await crypto.deriveEncrypt({ username, laterConfirmation, databaseAuthKeyBuffer }, authKeyBits, "Auth Data");
             const savedAuth = serialize({ serverKeyBits, authData, coreData }).toString("base64");
             window.localStorage.setItem("SavedAuth", savedAuth);
@@ -744,7 +653,7 @@ export default class Client {
     }
 
     private async loadChats() {
-        const chatsData = await this.#socketHandler.GetChats({ chatIds: this.#chatIds });
+        const chatsData = await this.#socketHandler.GetAllChats([]);
         if ("reason" in chatsData) return;
         const chats = await Promise.all(chatsData.map((chatData) => Chat.instantiate(this.#encryptionBaseVector, this.chatInterface, chatData)));
         for (const chat of chats) {
@@ -811,11 +720,10 @@ export default class Client {
         const details = { chatId, contactDetails: profile, timeRatio: _.random(1, 999) };
         const chatDetails = await crypto.deriveEncrypt(details, this.#encryptionBaseVector, "ChatDetails");
         const chatData: ChatData = { chatId, chatDetails, exportedChattingSession };
-        const chatsData = await  crypto.deriveEncrypt({ chatIds: [ ...this.#chatIds, chatId ] }, this.#encryptionBaseVector, "Chats Data");
         await this.#socketHandler.CreateChat(chatData);
         await this.#socketHandler.DeleteChatRequest({ headerId });
-        await this.#socketHandler.UpdateUserData({ username: this.username, chatsData });
-        const newChat = await Chat.instantiate(this.#encryptionBaseVector, this.chatInterface, chatData, { text, messageId, sentByMe: false, timestamp });
+        await this.#socketHandler.UpdateUserData({ username: this.username });
+        const newChat = await Chat.instantiate(this.#encryptionBaseVector, this.chatInterface, chatData, { text, messageId, sentByMe: false, timestamp, respondedAt: respondingAt });
         this.removeChat(sessionId, "sessionId", true);
         this.addChat(newChat);
         return true;
@@ -854,19 +762,18 @@ export default class Client {
         const details = { chatId, contactDetails: profile, timeRatio: _.random(1, 999) };
         const chatDetails = await crypto.deriveEncrypt(details, this.#encryptionBaseVector, "ChatDetails");
         const chatData: ChatData = { chatId, chatDetails, exportedChattingSession };
-        const chatsData = await  crypto.deriveEncrypt({ chatIds: [ ...this.#chatIds, chatId ] }, this.#encryptionBaseVector, "Chats Data");
         const { reason } = await this.#socketHandler.CreateChat(chatData);
         if (reason) {
             logError(reason);
             return false;
         }
         const x3dhInfo = await this.#x3dhUser.deleteWaitingRequest(sessionId);
-        const { reason: r2 } = await this.#socketHandler.UpdateUserData({ chatsData, x3dhInfo, username: this.username });
+        const { reason: r2 } = await this.#socketHandler.UpdateUserData({ x3dhInfo, username: this.username });
         if (r2) {
             logError(r2);
         }
         await this.#socketHandler.MessageHeaderProcessed({ sessionId, headerId, toAlias });
-        const newChat = await Chat.instantiate(this.#encryptionBaseVector, this.chatInterface, chatData, { messageId, text, timestamp, sentByMe: true, deliveredAt: respondedAt });
+        const newChat = await Chat.instantiate(this.#encryptionBaseVector, this.chatInterface, chatData, { messageId, text, timestamp, sentByMe: true, respondedAt });
         this.removeChat(sessionId, "sessionId", true);
         this.addChat(newChat);
         await this.requestRoom(newChat);

@@ -2,7 +2,7 @@ import _ from "lodash";
 import { Binary, DeleteResult } from "mongodb";
 import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
-import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PasswordEncryptedData, PublishKeyBundlesRequest, StoredMessage, RegisterNewUserRequest, NewUserData, UserEncryptedData, Receipt, Backup, ChatSessionDetails, Username } from "../shared/commonTypes";
+import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PublishKeyBundlesRequest, StoredMessage, RegisterNewUserRequest, NewUserData, UserEncryptedData, Receipt, Backup, ChatSessionDetails, Username } from "../shared/commonTypes";
 import * as crypto from "../shared/cryptoOperator";
 import { parseIpReadable } from "./backendserver";
 import { allSettledResults, logError } from "../shared/commonFunctions";
@@ -44,15 +44,18 @@ const userEncryptedData = {
     }
 };
 
-const passwordEncryptedData = {
+const immutableUserEncryptedData = {
     ciphertext: {
-        type: Schema.Types.Buffer,
-        required: true
+        ...userEncryptedData.ciphertext,
+        immutable: true
     },
     hSalt: {
-        type: Schema.Types.Buffer,
-        required: true
-    },
+        ...userEncryptedData.hSalt,
+        immutable: true
+    }
+};
+
+const passwordDeriveInfo = {
     pSalt: {
         type: Schema.Types.Buffer,
         required: true
@@ -62,6 +65,14 @@ const passwordEncryptedData = {
         required: true
     }
 };
+
+const passwordEntangleInfo = {
+    passwordEntangledPoint: {
+        type: Schema.Types.Buffer,
+        required: true
+    },
+    ...passwordDeriveInfo
+}
 
 export class MongoHandlerCentral {
 
@@ -270,25 +281,22 @@ export class MongoHandlerCentral {
         },
         clientIdentityVerifyingKey: {
             type: Schema.Types.Buffer,
-            required: true
+            required: true,
+            immutable: true 
         },
-        verifierPointHex: {
-            type: Schema.Types.String,
-            required: true
-        },
-        verifierSalt: {
+        verifierPoint: {
             type: Schema.Types.Buffer,
             required: true
         },
+        verifierDerive: passwordDeriveInfo,
+        databaseAuthKeyDerive: passwordEntangleInfo,
         userData: {
-            encryptionBase: passwordEncryptedData,
-            serverIdentityVerifyingKey: passwordEncryptedData,
-            clientIdentitySigningKey: passwordEncryptedData,
+            encryptionBaseDerive: passwordEntangleInfo,
+            serverIdentityVerifying: immutableUserEncryptedData,
+            clientIdentitySigning: immutableUserEncryptedData,
             profileData: userEncryptedData,
-            x3dhInfo: userEncryptedData,
-            chatsData: userEncryptedData
+            x3dhInfo: userEncryptedData
         },
-        databaseAuthKey: passwordEncryptedData,
         keyBundles: {
             defaultKeyBundle: {
                 type: this.keyBundleSchema,
@@ -518,7 +526,7 @@ export class MongoHandlerCentral {
         }
     }
 
-    static async createNewUser(user: Omit<RegisterNewUserRequest, "clientEphemeralPublicHex"> & NewUserData, databaseAuthKey: CryptoKey) {
+    static async createNewUser(user: Omit<RegisterNewUserRequest, "clientEphemeralPublic"> & NewUserData, databaseAuthKey: CryptoKey) {
         try {
             const { username } = user;
             if ((await this.DatabaseAccessKey.find({ username, type: "root" })).length > 0) return false;
@@ -773,16 +781,13 @@ export class MongoHandlerCentral {
             }
         }
 
-        async updateUserData(userData: Username & { x3dhInfo?: UserEncryptedData, chatsData?: UserEncryptedData }) {
-            const { username, x3dhInfo, chatsData } = userData;
+        async updateUserData(userData: Username & { x3dhInfo?: UserEncryptedData }) {
+            const { username, x3dhInfo } = userData;
             if (!this.matchUsername(username)) return false;
             const user = await MongoHandlerCentral.User.findOne( { username });
             if (!user) return false;
             if (x3dhInfo) {
                 user.userData.x3dhInfo = x3dhInfo;
-            }
-            if (chatsData) {
-                user.userData.chatsData = chatsData;
             }
             try {
                 const savedUser = await user.save();
@@ -822,9 +827,8 @@ export class MongoHandlerCentral {
             }
         }
     
-        async getChats(chatIds: string[]): Promise<ChatData[]> {
-            if (chatIds.some((id) => !this.matchChat(id))) return undefined;
-            return cleanLean(await MongoHandlerCentral.Chat.find({ chatId: { $in: chatIds } }).lean().exec());
+        async getAllChats(): Promise<ChatData[]> {
+            return cleanLean(await MongoHandlerCentral.Chat.find({ chatId: { $in: this.#chats } }).lean().exec());
         }
     
         async getAllRequests(addressedTo: string): Promise<ChatRequestHeader[]> {

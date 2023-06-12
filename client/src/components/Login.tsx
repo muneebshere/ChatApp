@@ -21,7 +21,7 @@ type LogInData = {
   readonly submitted: boolean;
   readonly warned: boolean;
   readonly usernameExists: (username: string) => Promise<boolean>;
-  readonly userLoginPermitted: (username: string) => Promise<{ tries: number, allowsAt: number, isAlreadyOnline: boolean }>;
+  readonly userLoginPermitted: (username: string) => Promise<{ tries: number, allowsAt: number }>;
   readonly submit: (response: SubmitResponse) => Promise<Failure>;
 }
 
@@ -93,13 +93,7 @@ export default function LogInForm() {
   const decrementTimer = useCallback(() => setTryAgainIn(tryAgainIn - 1000), [tryAgainIn]);
 
   useEffect(() => {
-    usernameExists(username).then(async (exists) => {
-      if (exists) {
-        const { isAlreadyOnline } = await userLoginPermitted(username);
-        setUsernameError(isAlreadyOnline ? "This user is already logged in elsewhere." : "");
-      }
-      else setUsernameError("No such user.");
-    }).catch(() => {});
+    usernameExists(username).then((exists) => setUsernameError(exists ? null: "No such user.")).catch(() => {});
   }, [username]);
 
   useEffect(() => {

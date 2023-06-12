@@ -122,7 +122,7 @@ type ExportedChattingSession = Readonly<{
     maxSkip: number;
     senderSignRecipientVerifyKeys: ExportedSigningKeyPair;
     currentRootKey: Buffer;
-    currentDHRatchetKey: Buffer;
+    currentDHRatchetKey: UserEncryptedData;
     currentDHPublishKey: ExposedSignedPublicKey;
     currentSendingChainKey: Buffer;
     currentReceivingChainKey: Buffer;
@@ -181,13 +181,12 @@ export class X3DHUser {
         const minOneTimeKeys = this.#minOneTimeKeys;
         const maxOneTimeKeys = this.#maxOneTimeKeys;
         const replaceKeyAtInMillis = this.#replaceKeyAtInMillis;
-        const hSalt = getRandomVector(48);
-        const identitySigningKeyPair = await crypto.exportSigningKeyPair(this.#identitySigningKeyPair, this.#encryptionBaseVector, hSalt, "X3DH User Identity");
-        const identityDHKeyPair = await crypto.exportSignedKeyPair(this.#identityDHKeyPair, this.#encryptionBaseVector, hSalt, "X3DH User Identity DH");
-        const signedPreKeyPair = await crypto.exportSignedKeyPair(this.#signedPreKeyPair, this.#encryptionBaseVector, hSalt, "X3DH User PreKey");
+        const identitySigningKeyPair = await crypto.exportSigningKeyPair(this.#identitySigningKeyPair, this.#encryptionBaseVector, "X3DH User Identity");
+        const identityDHKeyPair = await crypto.exportSignedKeyPair(this.#identityDHKeyPair, this.#encryptionBaseVector, "X3DH User Identity DH");
+        const signedPreKeyPair = await crypto.exportSignedKeyPair(this.#signedPreKeyPair, this.#encryptionBaseVector, "X3DH User PreKey");
         const signedOneTimeKeys = new Map<string, ExportedSignedKeyPair>();
         for (const [id, key] of this.#currentOneTimeKeys.entries()) {
-            signedOneTimeKeys.set(id, await crypto.exportSignedKeyPair(key, this.#encryptionBaseVector, hSalt, `X3DH User OneTimeKey ${id}`));
+            signedOneTimeKeys.set(id, await crypto.exportSignedKeyPair(key, this.#encryptionBaseVector, `X3DH User OneTimeKey ${id}`));
         }
         const keyLastReplaced = this.#keyLastReplaced;
         const preKeyVersion = this.#preKeyVersion;
@@ -213,7 +212,7 @@ export class X3DHUser {
             waitingChatRequests,
             keyLastReplaced,
             preKeyVersion };
-        return await crypto.deriveEncrypt(exportedUser, this.#encryptionBaseVector, "Export|Import X3DH User", hSalt);
+        return await crypto.deriveEncrypt(exportedUser, this.#encryptionBaseVector, "Export|Import X3DH User");
     }
 
     static async importUser(encryptedUser: UserEncryptedData, encryptionBaseVector: CryptoKey) : Promise<X3DHUser> {
@@ -238,12 +237,12 @@ export class X3DHUser {
                 preKeyVersion } = importedUser;
             const replaceKeyAtInDays = replaceKeyAtInMillis / (24 * 3600 * 1000);
             const user = new X3DHUser(username, encryptionBaseVector, version + 1, minOneTimeKeys, maxOneTimeKeys, replaceKeyAtInDays);
-            user.#identitySigningKeyPair = await crypto.importSigningKeyPair(exportedidentityKeyPair, encryptionBaseVector, hSalt, "X3DH User Identity");
-            user.#identityDHKeyPair = await crypto.importSignedKeyPair(exportedIdentityDHKeyPair, encryptionBaseVector, hSalt, "X3DH User Identity DH");
-            user.#signedPreKeyPair = await crypto.importSignedKeyPair(exportedSignedPreKeyPair, encryptionBaseVector, hSalt, "X3DH User PreKey");
+            user.#identitySigningKeyPair = await crypto.importSigningKeyPair(exportedidentityKeyPair, encryptionBaseVector, "X3DH User Identity");
+            user.#identityDHKeyPair = await crypto.importSignedKeyPair(exportedIdentityDHKeyPair, encryptionBaseVector, "X3DH User Identity DH");
+            user.#signedPreKeyPair = await crypto.importSignedKeyPair(exportedSignedPreKeyPair, encryptionBaseVector, "X3DH User PreKey");
             const signedOneTimeKeys = new Map<string, SignedKeyPair>();
             for (const [id, key] of exportedSignedOneTimeKeys.entries()) {
-                signedOneTimeKeys.set(id, await crypto.importSignedKeyPair(key, encryptionBaseVector, hSalt, `X3DH User OneTimeKey ${id}`));
+                signedOneTimeKeys.set(id, await crypto.importSignedKeyPair(key, encryptionBaseVector, `X3DH User OneTimeKey ${id}`));
             }
             user.#identitySigningKey = user.#identitySigningKeyPair.privateKey;
             user.#currentOneTimeKeys = signedOneTimeKeys;
@@ -628,7 +627,6 @@ export class ChattingSession {
     }
 
     static async importSession(encryptedSession: UserEncryptedData, encryptionBaseVector: CryptoKey) : Promise<ChattingSession> {
-        const { hSalt } = encryptedSession;
         const decryptedSession = await crypto.deriveDecrypt(encryptedSession, encryptionBaseVector, "Export|Import Chatting Session");
         if (!decryptedSession) {
             return null;
@@ -654,8 +652,8 @@ export class ChattingSession {
                 sendingChainNumber,
                 receivingChainNumber,
                 previousSendingChainNumber }: ExportedChattingSession = decryptedSession;
-            const { publicKey, privateKey } = await crypto.importSigningKeyPair(senderSignRecipientVerifyKeys, encryptionBaseVector, hSalt, "Identity");
-            const unwrappedRatchetKey = await crypto.deriveUnwrap(encryptionBaseVector, currentDHRatchetKey, hSalt, "ECDH", "DH Ratchet Key", true);
+            const { publicKey, privateKey } = await crypto.importSigningKeyPair(senderSignRecipientVerifyKeys, encryptionBaseVector, "Identity");
+            const unwrappedRatchetKey = await crypto.deriveUnwrap(encryptionBaseVector, currentDHRatchetKey, "ECDH", "DH Ratchet Key", true);
             const exportedSession = new ChattingSession(sessionId, encryptionBaseVector, createdAt, lastActivity, sender, recipient, senderAlias, recipientAlias, privateKey, publicKey, currentRootKey, maxSkip);
             exportedSession.#currentDHRatchetKey = unwrappedRatchetKey;
             exportedSession.#currentDHPublishKey = currentDHPublishKey;
@@ -675,7 +673,6 @@ export class ChattingSession {
     }
 
     private async exportSession(): Promise<UserEncryptedData> {
-        const hSalt = getRandomVector(48);
         const sessionId = this.sessionId;
         const createdAt = this.createdAt;
         const lastActivity = this.lastActivityTimestamp;
@@ -687,9 +684,9 @@ export class ChattingSession {
         const signingKeyPair = {
             publicKey: this.#otherVerifyKey,
             privateKey: this.#mySignKey };
-        const senderSignRecipientVerifyKeys = await crypto.exportSigningKeyPair(signingKeyPair, this.#encryptionBaseVector, hSalt, "Identity");
+        const senderSignRecipientVerifyKeys = await crypto.exportSigningKeyPair(signingKeyPair, this.#encryptionBaseVector, "Identity");
         const currentRootKey = this.#currentRootKey;
-        const currentDHRatchetKey = await crypto.deriveWrap(this.#encryptionBaseVector, this.#currentDHRatchetKey, hSalt, "DH Ratchet Key");
+        const currentDHRatchetKey = await crypto.deriveWrap(this.#encryptionBaseVector, this.#currentDHRatchetKey, "DH Ratchet Key");
         const currentDHPublishKey = this.#currentDHPublishKey;
         const currentSendingChainKey = this.#currentSendingChainKey;
         const currentReceivingChainKey = this.#currentReceivingChainKey;
@@ -718,7 +715,7 @@ export class ChattingSession {
             sendingChainNumber,
             receivingChainNumber,
             previousSendingChainNumber };
-        return await crypto.deriveEncrypt(exportedSession, this.#encryptionBaseVector, "Export|Import Chatting Session", hSalt);
+        return await crypto.deriveEncrypt(exportedSession, this.#encryptionBaseVector, "Export|Import Chatting Session");
     }
 
     private constructor(
