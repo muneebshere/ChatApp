@@ -10,7 +10,7 @@ export type SignedKeyPair = ExposedSignedPublicKey & {
 }
 
 export type ExportedSigningKeyPair = Readonly<{
-    wrappedPrivateKey: Buffer;
+    wrappedPrivateKey: UserEncryptedData;
     exportedPublicKey: Buffer;
 }>;
 
@@ -33,6 +33,10 @@ export type PasswordDeriveInfo = Readonly<{
     iterSeed: number;
 }>;
 
+export type PasswordEntangleInfo = PasswordDeriveInfo & {
+    readonly passwordEntangledPoint: Buffer;
+}
+
 export type EncryptInfo = Readonly<{
     encryptKey: CryptoKey;
     iv: Buffer
@@ -47,8 +51,6 @@ export type SignedEncryptedData = EncryptedData & {
 }
 
 export type UserEncryptedData = EncryptedData & { hSalt: Buffer };
-
-export type PasswordEncryptedData = UserEncryptedData & PasswordDeriveInfo;
 
 export type Profile = Readonly<{
     username: string;
@@ -167,26 +169,24 @@ export type Failure = Readonly<{
 }>;
 
 export type LogInRequest = Username & Readonly<{
-    clientEphemeralPublicHex: string;
+    clientEphemeralPublic: Buffer;
 }>;
 
 export type RegisterNewUserRequest = LogInRequest & Readonly<{
-    verifierSalt: Buffer,
-    verifierPointHex: string,
+    verifierPoint: Buffer,
     clientIdentityVerifyingKey: Buffer
 }>
 
 export type LogInChallenge = Readonly<{
     challengeReference: string,
-    verifierSalt: Buffer,
-    verifierEntangledHex: string,
+    verifierDerive: PasswordDeriveInfo,
+    verifierEntangled: Buffer,
     serverConfirmationCode: Buffer,
-    databaseAuthKey: PasswordEncryptedData
+    databaseAuthKeyDerive: PasswordEntangleInfo
 }>
 
-export type RegisterNewUserChallenge = Omit<LogInChallenge, "verifierSalt" | "databaseAuthKey"> & Readonly<{
-    serverIdentityVerifyingKey: Buffer,
-    databaseAuthKeyEncrypted: UserEncryptedData
+export type RegisterNewUserChallenge = Omit<LogInChallenge, "verifierDerive" | "databaseAuthKeyDerive"> & Readonly<{
+    serverIdentityVerifyingKey: Buffer
 }>;
 
 export type LogInChallengeResponse = Readonly<{
@@ -195,22 +195,22 @@ export type LogInChallengeResponse = Readonly<{
     databaseAuthKeyBuffer: Buffer
 }>;
 
-export type RegisterNewUserChallengeResponse = Omit<LogInChallengeResponse, "databaseAuthKeyBuffer"> & {
+export type RegisterNewUserChallengeResponse = LogInChallengeResponse & {
     readonly newUserDataSigned: SignedEncryptedData;
 }
 
 export type UserData = Readonly<{
-    encryptionBase: PasswordEncryptedData,
-    clientIdentitySigningKey: PasswordEncryptedData,
-    serverIdentityVerifyingKey: PasswordEncryptedData,
+    encryptionBaseDerive: PasswordEntangleInfo,
+    clientIdentitySigning: UserEncryptedData,
+    serverIdentityVerifying: UserEncryptedData,
     x3dhInfo: UserEncryptedData,
-    profileData: UserEncryptedData,
-    chatsData: UserEncryptedData
+    profileData: UserEncryptedData
 }>;
 
 export type NewUserData = Readonly<{ 
     userData: UserData;
-    databaseAuthKey: PasswordEncryptedData;
+    verifierDerive: PasswordDeriveInfo,
+    databaseAuthKeyDerive: PasswordEntangleInfo;
     keyBundles: PublishKeyBundlesRequest;
 }>;
 
@@ -237,7 +237,7 @@ enum SocketClientSideEventsEnum {
     UpdateUserData,
     RequestKeyBundle,
 
-    GetChats,
+    GetAllChats,
     GetAllRequests,
     GetMessageHeaders,
     GetMessagesByNumber,
@@ -294,9 +294,9 @@ type SocketClientRequestParametersMap = {
     InitiateLogInSaved: { serverKeyBits: Buffer },
     ConcludeLogInSaved: Omit<LogInChallengeResponse, "challengeReference"> & Username,
     PublishKeyBundles: PublishKeyBundlesRequest,
-    UpdateUserData: { x3dhInfo?: UserEncryptedData, chatsData?: UserEncryptedData } & Username,
+    UpdateUserData: { x3dhInfo?: UserEncryptedData } & Username,
     RequestKeyBundle: Username,
-    GetChats: { chatIds: string[]},
+    GetAllChats: [],
     GetAllRequests: [],
     GetMessageHeaders: SessionIdentifier & { fromAlias: string },
     GetMessagesByNumber: ChatIdentifier & { limit: number, olderThanTimemark: number },
@@ -333,13 +333,13 @@ type SocketClientRequestReturnMap = {
     InitiateRegisterNewUser: RegisterNewUserChallenge,
     ConcludeRegisterNewUser: never,
     InitiateLogIn: LogInChallenge,
-    ConcludeLogIn: Omit<UserData, "databaseAuthKey">,
+    ConcludeLogIn: UserData,
     InitiateLogInSaved: { authKeyBits: Buffer },
-    ConcludeLogInSaved: { serverConfirmationCode: Buffer, coreKeyBits: Buffer, userData: Pick<UserData, "profileData" | "x3dhInfo" | "chatsData"> },
+    ConcludeLogInSaved: { serverConfirmationCode: Buffer, coreKeyBits: Buffer, userData: Omit<UserData, "encryptionBaseDerive"> },
     PublishKeyBundles: never,
     UpdateUserData: never,
     RequestKeyBundle: RequestKeyBundleResponse,
-    GetChats: ChatData[],
+    GetAllChats: ChatData[],
     GetAllRequests: ChatRequestHeader[],
     GetMessageHeaders: MessageHeader[],
     GetMessagesByNumber: StoredMessage[],
