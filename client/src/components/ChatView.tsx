@@ -353,6 +353,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   }, [isScrolledDown]);
 
   useEffect(() => {
+    chat.lastDraft = null;
     chat.subscribe((event) => {
       if (event === "details-change") {
         setChatDetails(chat.details);
@@ -373,6 +374,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
       }
     });
     return () => {
+      chat.lastDraft = messageRef.current;
       setMessage(messageRef.current);
       chat.unsubscribe();
     }
@@ -397,7 +399,9 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
     chat.sendMessage({ text, timestamp, replyId}).then((success) => {
       scrollbar().scrollTo({ top: scrollbar().scrollHeight, behavior: "instant" });
     });
+    chat.sendTyping("stopped-typing", Date.now());
     setReplyTo(null);
+    messageRef.current = "";
     textareaRef.current.value = "";
   }
 

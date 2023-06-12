@@ -20,6 +20,7 @@ export type ChatDetails = Readonly<{
     isOnline: boolean,
     isOtherTyping: boolean,
     unreadMessages: number,
+    draft: string
 }>;
 export abstract class AbstractChat {
     abstract get sessionId(): string;
@@ -67,7 +68,7 @@ export class AwaitedRequest extends AbstractChat {
         const isOnline = false;
         const isOtherTyping = false;
         const unreadMessages = 0
-        this.details = { otherUser, displayName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages };
+        this.details = { otherUser, displayName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages, draft: null };
     }
 
     subscribeActivity() {
@@ -94,7 +95,7 @@ export class ChatRequest extends AbstractChat {
     get details(): ChatDetails {
         const { otherUser, contactDetails: { displayName, profilePicture, contactName }, isOnline, isOtherTyping, unreadMessages } = this;
         const lastActivity = this.chatMessage.displayMessage;
-        return { otherUser, displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages };
+        return { otherUser, displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages, draft: null };
     }
 
     constructor(chatRequestHeader: ChatRequestHeader, clientInterface: ClientChatRequestInterface, viewRequest: ViewChatRequest) {
@@ -145,12 +146,13 @@ export class Chat extends AbstractChat {
     private lastActivity: DisplayMessage;
     private otherTyping: boolean;
     private typingTimeout: number;
+    private draft: string = null;
     private notify: (event: ChatEvent) => void;
     private notifyActivity: () => void;
     private readonly createdAt: number;
     private readonly loadingBatch = 10;
     private readonly timeRatio: number;
-    private readonly unreadMessagesList: string[] = [];
+    private readonly unreadMessagesSet = new Set<string>();
     private readonly receivingEvent: string;
     private readonly sendingEvent: string;
     private readonly contactDetails: Omit<Contact, "username">;
@@ -183,14 +185,14 @@ export class Chat extends AbstractChat {
         this.#encryptionBaseVector = encryptionBaseVector;
     }
 
-    static async instantiate(encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chatData: ChatData, firstMessage?: { messageId: string, text: string, timestamp: number, sentByMe: boolean, deliveredAt?: number }) {
+    static async instantiate(encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chatData: ChatData, firstMessage?: { messageId: string, text: string, timestamp: number, sentByMe: boolean, respondedAt: number }) {
         const { chatDetails, exportedChattingSession } = chatData;
         const { chatId, contactDetails, timeRatio }: { chatId: string, contactDetails: Contact, timeRatio: number } = await crypto.deriveDecrypt(chatDetails, encryptionBaseVector, "ChatDetails");
         const chattingSession = await ChattingSession.importSession(exportedChattingSession, encryptionBaseVector);
         const chat = new Chat(chatId, timeRatio, contactDetails, encryptionBaseVector, clientInterface, chattingSession);
         if (firstMessage) {
-            const { messageId, text, timestamp, sentByMe, deliveredAt: deliveredAt } = firstMessage;
-            const delivery = { delivered: deliveredAt, seen: deliveredAt };
+            const { messageId, text, timestamp, sentByMe, respondedAt } = firstMessage;
+            const delivery = { delivered: respondedAt, seen: respondedAt };
             await chat.encryptStoreMessage({ messageId, text, timestamp, sentByMe, delivery });
         }
         await chat.loadUnprocessedMessages();
@@ -201,13 +203,18 @@ export class Chat extends AbstractChat {
 
     private get hasRoom() { return !!this.#sessionCrypto; }
 
+    set lastDraft(value: string) {
+        this.draft = value;
+        this.notifyActivity?.();
+    }  
+
     get lastActive() { return this.lastActivity?.timestamp || Date.now() }
 
     get details(): ChatDetails {
-        const { otherUser, contactDetails: { displayName, profilePicture, contactName }, lastActivity, otherTyping: isOtherTyping } = this;
+        const { otherUser, contactDetails: { displayName, profilePicture, contactName }, lastActivity, otherTyping: isOtherTyping, draft } = this;
         const isOnline = this.hasRoom;
-        const unreadMessages = this.unreadMessagesList.length;
-        return { otherUser, displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages };
+        const unreadMessages = this.unreadMessagesSet.size;
+        return { otherUser, displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages, draft };
     }
 
     get messages() { 
@@ -315,7 +322,7 @@ export class Chat extends AbstractChat {
             this.lastActivity = chatMessage.displayMessage;
             this.notifyActivity?.();
         }
-        this.encryptStoreMessage(displayMessage);
+        await this.encryptStoreMessage(displayMessage);
         return true;
     }
 
@@ -332,8 +339,8 @@ export class Chat extends AbstractChat {
         const sendWithoutRoom = event === "delivered" || event === "seen";
         if (sendWithoutRoom) this.encryptStoreMessage(this.messagesList.get(reportingAbout).displayMessage);
         if (!sendWithoutRoom && !this.hasRoom) return false;
-        if (event === "seen" && this.unreadMessagesList.includes(reportingAbout)) {
-            _.pull(this.unreadMessagesList, reportingAbout);
+        if (event === "seen" && this.unreadMessagesSet.has(reportingAbout)) {
+            this.unreadMessagesSet.delete(reportingAbout);
             this.notifyActivity?.();  
         }
         const messageId = getRandomString(15, "hex");
@@ -445,8 +452,7 @@ export class Chat extends AbstractChat {
         const { messageId, timestamp } = message;
         const date = DateTime.fromMillis(timestamp).toISODate();
         let chatMessageList = this.chatMessageLists.get(date);
-        const notifyUnread = !message.sentByMe && !message.delivery?.seen; 
-        if (notifyUnread) this.unreadMessagesList.push(messageId);
+        if (!message.sentByMe && !message.delivery?.seen) this.unreadMessagesSet.add(messageId);
         if (chatMessageList) {
             chatMessageList.add(message);
         }
@@ -458,17 +464,16 @@ export class Chat extends AbstractChat {
         }
         const chatMessage = chatMessageList.messageById(messageId);
         this.messagesList.set(messageId, chatMessage);
-        if (!message.sentByMe) chatMessage.signalEvent("delivered", Date.now());
+        if (!message.sentByMe && !message.delivery?.delivered) chatMessage.signalEvent("delivered", Date.now());
         if (timestamp >= (this.lastActivity?.timestamp || 0)) {
             this.lastActivity = message;
             this.notify?.("received-new");
-            this.notifyActivity?.();
             this.clientInterface.notifyClient();
         }
         else if (timestamp < this.loadedUpto) {
             this.loadedUpto = timestamp;
-            if (notifyUnread) this.notifyActivity?.();
         }
+        this.notifyActivity?.();
     }
 
     private async dispatch(messageHeader: MessageHeader) {
@@ -560,7 +565,7 @@ export class Chat extends AbstractChat {
             else {
                 const storedMessage = await this.getMessageById(reportingAbout);
                 if (storedMessage) {
-                    const delivery = calculateDelivery(storedMessage.delivery, event, timestamp);
+                    const delivery = calculateDelivery(storedMessage.delivery, event, timestamp, storedMessage.timestamp);
                     displayMessage = { ...storedMessage, delivery };
                 }
             }
@@ -727,7 +732,7 @@ export class ChatMessage {
                     };
                 }
                 else {
-                    delivery = calculateDelivery(prevDelivery, event, timestamp);
+                    delivery = calculateDelivery(prevDelivery, event, timestamp, this.message.timestamp);
                 }
                 if (!_.isEqual(delivery, prevDelivery)) {
                     this.message = { ...this.message, delivery };
@@ -820,12 +825,12 @@ type MessageContent = Readonly<{
 
 type ChatEvent = "details-change" | "added" | "loading-earlier" | "loaded-earlier" | "received-new";
 
-function calculateDelivery(prevDelivery: DeliveryInfo, event: "delivered" | "seen", timestamp: number) {
+function calculateDelivery(prevDelivery: DeliveryInfo, event: "delivered" | "seen", timestamp: number, messageTimestamp: number): DeliveryInfo {
     const { delivered, seen } = prevDelivery || {};
     let newDelivery: DeliveryInfo;
     if (event === "delivered") {
         newDelivery = {
-            delivered: delivered && delivered < timestamp ? delivered : timestamp,
+            delivered: (delivered && (timestamp >= delivered || timestamp <= messageTimestamp)) ? delivered : timestamp,
             seen: seen || false
         };
     }

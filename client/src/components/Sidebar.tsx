@@ -106,7 +106,7 @@ type ChatCardProps = Readonly<{
 
 function ChatCard({ chat, isCurrent, setCurrent }: ChatCardProps) {
   const [chatDetails, setChatDetails] = useState(chat.details);
-  const { displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages } = chatDetails;
+  const { displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages, draft } = chatDetails;
   const { text, timestamp, sentByMe, delivery } = lastActivity;
   const status = useMemo(() => {
     if (!sentByMe) return null;
@@ -158,7 +158,14 @@ function ChatCard({ chat, isCurrent, setCurrent }: ChatCardProps) {
         <div style={{ display: "flex", flexDirection: "row" }}>
           <DisableSelectTypography sx={{ flexGrow: 1, fontSize: "15px", color: isOtherTyping ? "#1fa855" : "#656565" }}>
             {!isOtherTyping && status}
-            {isOtherTyping ? "typing..." : truncateText(text, 50)}
+            {isOtherTyping 
+              ? "typing..." 
+              : (draft 
+                  ? (<>
+                      <DisableSelectTypography fontWeight="lg" sx={{ color: "#1fa855" }}>Draft: </DisableSelectTypography>
+                      <DisableSelectTypography sx={{ fontStyle: "italic" }}>{draft}</DisableSelectTypography>
+                    </>)
+                  : truncateText(text, 50))}
           </DisableSelectTypography>
           {!!unreadMessages &&
             <div style={{ marginBlock: "auto", 
