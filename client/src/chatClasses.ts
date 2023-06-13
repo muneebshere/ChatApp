@@ -52,7 +52,7 @@ export class AwaitedRequest extends AbstractChat {
         this.otherUser = otherUser;
         this.sessionId = sessionId;
         this.lastActive = timestamp;
-        this.chatMessage = new ChatMessage({ 
+        this.chatMessage = ChatMessage.new({ 
             messageId, 
             text, 
             timestamp,
@@ -61,7 +61,7 @@ export class AwaitedRequest extends AbstractChat {
                 delivered: false, 
                 seen: false 
             } 
-        }, null);
+        }, true)[0];
         const displayName = otherUser;
         const profilePicture = noProfilePictureImage;
         const lastActivity = this.chatMessage.displayMessage;
@@ -105,7 +105,7 @@ export class ChatRequest extends AbstractChat {
         this.otherUser = otherUser;
         this.lastActive = timestamp;
         this.contactDetails = contactDetails;
-        this.chatMessage = new ChatMessage({ messageId, text, timestamp, sentByMe: false }, null);
+        this.chatMessage = ChatMessage.new({ messageId, text, timestamp, sentByMe: false }, true)[0];
         this.chatRequestHeader = chatRequestHeader;
         this.clientInterface = clientInterface;
     }
@@ -316,13 +316,13 @@ export class Chat extends AbstractChat {
         this.addMessageToList(displayMessage);
         const result = await this.dispatchSendingMessage(sendingMessage, true);
         if (!result) return false;
+        await this.encryptStoreMessage(displayMessage);
         const chatMessage = this.messagesList.get(messageId);
         if (chatMessage) {
             chatMessage.signalEvent("sent", Date.now());
             this.lastActivity = chatMessage.displayMessage;
             this.notifyActivity?.();
         }
-        await this.encryptStoreMessage(displayMessage);
         return true;
     }
 
@@ -441,11 +441,17 @@ export class Chat extends AbstractChat {
         });
     }
 
-    async messageReceived(message: MessageHeader) {
-        if (this.disposed) {
-            return false;
+    async loadUnprocessedMessages() {
+        const { sessionId, myAlias, otherAlias } = this;
+        let unprocessedMessages = await this.clientInterface.GetMessageHeaders({ sessionId, toAlias: myAlias, fromAlias: otherAlias });
+        if ("reason" in unprocessedMessages) {
+            logError(unprocessedMessages);
+            return;
         }
-        return await this.processMessageHeader(message, false);
+        unprocessedMessages = _.sortBy(unprocessedMessages, ["sendingRatchetNumber", "sendingChainNumber"]);
+        for (const message of unprocessedMessages) {
+            await this.processMessageHeader(message, false);
+        }
     }
 
     private addMessageToList(message: DisplayMessage) {
@@ -605,35 +611,11 @@ export class Chat extends AbstractChat {
         return await crypto.deriveDecrypt(fetched.content, this.#encryptionBaseVector, this.sessionId);
     }
 
-    private async loadUnprocessedMessages() {
-        const { sessionId, myAlias, otherAlias } = this;
-        let unprocessedMessages = await this.clientInterface.GetMessageHeaders({ sessionId, toAlias: myAlias, fromAlias: otherAlias });
-        if ("reason" in unprocessedMessages) {
-            logError(unprocessedMessages);
-            return;
-        }
-        unprocessedMessages = _.sortBy(unprocessedMessages, ["sendingRatchetNumber", "sendingChainNumber"]);
-        for (const message of unprocessedMessages) {
-            await this.processMessageHeader(message, false);
-        }
-    }
-
-    private async loadAndProcessReceipts() {
-        const { sessionId, myAlias } = this;
-        let receipts = await this.clientInterface.GetAllReceipts({ sessionId, toAlias: myAlias });
-        if ("reason" in receipts) {
-            logError(receipts);
-            return;
-        }
-        await Promise.all(receipts.map((receipt) => this.processReceipt(receipt)));
-        await this.clientInterface.ClearAllReceipts({ sessionId, toAlias: myAlias });
-    }
-
     private async calculateHashedId(messageId: string) {
         return (await crypto.digestToBase64("SHA-256", Buffer.from(`${this.myAlias}${messageId}`, "hex"))).slice(0, 15);
     }
 
-    async processReceipt(receipt: Receipt) {
+    private async processReceipt(receipt: Receipt) {
         const { headerId, sessionId, signature, bounced, toAlias } = receipt;
         if (!(await this.#chattingSession.verifyReceipt(headerId, signature, bounced))) return;
         if (!bounced) {
@@ -653,6 +635,17 @@ export class Chat extends AbstractChat {
             await this.dispatchSendingMessage(sendingMessage, true);
         }
 
+    }
+
+    async loadAndProcessReceipts() {
+        const { sessionId, myAlias } = this;
+        let receipts = await this.clientInterface.GetAllReceipts({ sessionId, toAlias: myAlias });
+        if ("reason" in receipts) {
+            logError(receipts);
+            return;
+        }
+        await Promise.all(receipts.map((receipt) => this.processReceipt(receipt)));
+        await this.clientInterface.ClearAllReceipts({ sessionId, toAlias: myAlias });
     }
 }
 
@@ -682,7 +675,7 @@ export class ChatMessageList {
 
 export class ChatMessage {
     private message: DisplayMessage;
-    private isFirst: null | boolean;
+    private isFirst: boolean;
     private notifyChange: (event: "first" | "sent" | "delivered" | "seen") => void;
     readonly signalEvent: (event: "sent" | "delivered" | "seen", timestamp: number) => void;
 
@@ -698,8 +691,8 @@ export class ChatMessage {
         return this.isFirst === null || this.isFirst;
     }
 
-    public updateFirst(isFirst: boolean) {
-        if (this.isFirst === null || isFirst !== null || this.isFirst !== isFirst) {
+    private updateFirst(isFirst: boolean) {
+        if (this.isFirst !== isFirst) {
             this.isFirst = isFirst;
             this.notifyChange?.("first");
         }
@@ -714,7 +707,7 @@ export class ChatMessage {
         this.notifyChange = null;
     }
 
-    constructor(displayMessage: DisplayMessage, 
+    private constructor(displayMessage: DisplayMessage, 
         isFirst: boolean,
         signalEvent?: (event: "delivered" | "seen", timestamp: number) => void) {
             this.message = displayMessage;
@@ -742,11 +735,16 @@ export class ChatMessage {
                 signaling = false;
             }
     }
+
+    static new(displayMessage: DisplayMessage, isFirst: boolean, signalEvent?: (event: "delivered" | "seen", timestamp: number) => void) {
+        const chatMessage = new ChatMessage(displayMessage, isFirst, signalEvent);
+        return [chatMessage, (isFirst: boolean) => chatMessage.updateFirst(isFirst)] as const;
+    }
 }
 
 class ChatMessageListInternal {
     readonly date: string;
-    private indexedMessages = new Map<string, ChatMessage>();
+    private indexedMessages = new Map<string, [ChatMessage, (isFirst: boolean) => void]>();
     private messages: ChatMessage[] = [];
     private notifyAdded: () => void;
     private sendEvent: (event: "delivered" | "seen", timestamp: number, reportingAbout: string) => void;
@@ -778,7 +776,7 @@ class ChatMessageListInternal {
     }
 
     messageById(messageId: string) {
-        return this.indexedMessages.get(messageId);
+        return this.indexedMessages.get(messageId)[0];
     }
 
     subscribe(notifyAdded: () => void) {
@@ -791,29 +789,34 @@ class ChatMessageListInternal {
 
     add(displayMessage: DisplayMessage) {
         const { messageId, timestamp, sentByMe } = displayMessage;
-        let message: ChatMessage;
+        if (this.indexedMessages.has(messageId)) return;
         const sendEvent = 
             sentByMe 
                 ? null
                 : (event: "delivered" | "seen", timestamp: number) => this.sendEvent(event, timestamp, messageId);
-        if (timestamp < this.earliest) {            
-            message = new ChatMessage(displayMessage, null, sendEvent);
-            const previous = this.messages[0];
-            this.messages.unshift(message);
-            previous?.updateFirst(sentByMe !== previous.displayMessage.sentByMe);
-            this.earliest = timestamp;
-        }
-        else if (timestamp > this.latest) {
-            const lastSentByMe = this.messages.slice(-1)[0].displayMessage.sentByMe;
-            message = new ChatMessage(displayMessage, sentByMe !== lastSentByMe, sendEvent);
-            this.messages.push(message);
+        let index = 0;
+        if (timestamp > this.latest) {
+            index = this.messages.length;
             this.latest = timestamp;
         }
-        if (message) {
-            this.indexedMessages.set(messageId, message);
-            this.notifyAdded?.();
+        else if (timestamp > this.earliest) {
+            index = this.messages.findIndex(({ displayMessage: { timestamp: t }}) => t > timestamp);
         }
-        else logError(new Error("New message cannot be added in the middle."));
+        else {
+            this.earliest = timestamp;
+        }
+        const isFirst = 
+            index === 0
+                ? true
+                : this.messages[index - 1].displayMessage.sentByMe !== sentByMe;
+        if (index < this.messages.length) {
+            const after = this.indexedMessages.get(this.messages[index].messageId);
+            after[1](after[0].displayMessage.sentByMe !== sentByMe);
+        }
+        const [message, updateFirst] = ChatMessage.new(displayMessage, isFirst, sendEvent);
+        this.messages.splice(index, 0, message);
+        this.indexedMessages.set(messageId, [message, updateFirst]);
+        this.notifyAdded?.();
     }
 }
 

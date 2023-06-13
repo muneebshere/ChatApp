@@ -8,7 +8,7 @@ import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
 import * as esrp from "../../shared/ellipticSRP";
 import { allSettledResults, failure, fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
-import { ErrorStrings, Failure, Username, SocketClientSideEvents, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, NewUserData, Profile, RegisterNewUserChallengeResponse, LogInRequest, LogInChallengeResponse, MessageIdentifier, ChatIdentifier, Receipt, UserEncryptedData, SessionIdentifier, HeaderIdentifier, Backup, PasswordDeriveInfo, PasswordEntangleInfo  } from "../../shared/commonTypes";
+import { ErrorStrings, Failure, Username, SocketClientSideEvents, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, NewUserData, Profile, RegisterNewUserChallengeResponse, LogInRequest, LogInChallengeResponse, UserEncryptedData, SessionIdentifier, HeaderIdentifier, Backup, PasswordDeriveInfo, PasswordEntangleInfo  } from "../../shared/commonTypes";
 import { noProfilePictureImage } from "./noProfilePictureImage";
 import { AwaitedRequest, Chat, ChatDetails, ChatRequest } from "./chatClasses";
 
@@ -110,7 +110,7 @@ export default class Client {
     #socketHandler: RequestMap;
     #encryptionBaseVector: CryptoKey;
     #fileHash: Promise<string>;
-    private readonly chatList: string[] = [];
+    private readonly chatList = new Set<string>();
     private readonly chatSessionIdsList = new Map<string, Chat | ChatRequest | AwaitedRequest>();
     private readonly chatUsernamesList = new Map<string, Chat | ChatRequest | AwaitedRequest>();
     
@@ -129,7 +129,7 @@ export default class Client {
     private addChat(chat: Chat | ChatRequest | AwaitedRequest) {
         this.chatSessionIdsList.set(chat.sessionId, chat);
         this.chatUsernamesList.set(chat.otherUser, chat);
-        this.chatList.push(chat.otherUser);
+        this.chatList.add(chat.otherUser);
         this.notifyChange?.();
     }
 
@@ -137,7 +137,7 @@ export default class Client {
         const chat = keyType === "username" ? this.chatUsernamesList.get(key) : this.chatSessionIdsList.get(key);
         this.chatSessionIdsList.delete(chat.sessionId);
         this.chatUsernamesList.delete(chat.otherUser);
-        _.remove(this.chatList, ([user, _]) => user === chat.otherUser);
+        this.chatList.delete(chat.otherUser);
         if (chat.type === "Chat") {
             chat.disconnectRoom();
         }
@@ -149,7 +149,7 @@ export default class Client {
     }
 
     public get chatsList() {
-        return _.orderBy(this.chatList, [(chat) => this.getChatByUser(chat).lastActive], ["desc"]);
+        return _.orderBy(Array.from(this.chatList), [(user) => this.getChatByUser(user).lastActive], ["desc"]).map((user) => this.getChatByUser(user));
     }
 
     public get username(): string {
@@ -556,22 +556,6 @@ export default class Client {
         }
     }
 
-    async loadUser() {
-        for (const { sessionId, myAlias, otherAlias, messageId, timestamp, otherUser, text } of this.#x3dhUser.pendingChatRequests) {
-            const awaited = new AwaitedRequest(otherUser, sessionId, messageId, timestamp, text );
-            this.addChat(awaited);
-            const result = await this.#socketHandler.GetMessageHeaders({ sessionId, toAlias: myAlias, fromAlias: otherAlias });
-            if ("reason" in result) {
-                logError(result.reason);
-                return;
-            }
-            const firstResponse = _.orderBy(result, ["sendingRatchetNumber", "sendingChainNumber"], ["asc"])[0];
-            if (firstResponse) await this.receiveRequestResponse(firstResponse);
-        }
-        await this.loadChats();
-        await this.loadRequests();
-    }
-
     async sendChatRequest(otherUser: string, firstMessage: string, madeAt: number): Promise<Failure> {
         if (!this.isConnected) return failure(ErrorStrings.NoConnectivity);
         if (!(await this.checkUsernameExists(otherUser))) return failure(ErrorStrings.InvalidRequest);
@@ -649,6 +633,35 @@ export default class Client {
             window.localStorage.setItem("SavedAuth", savedAuth);
             return true;
         }
+        else return false;
+    }
+
+    private async loadUser() {
+        for (const { sessionId, myAlias, otherAlias, messageId, timestamp, otherUser, text } of this.#x3dhUser.pendingChatRequests) {
+            if (!(await this.processAwaitedRequest(sessionId, myAlias, otherAlias))) {
+                const awaited = new AwaitedRequest(otherUser, sessionId, messageId, timestamp, text );
+                this.addChat(awaited);
+            }
+        }
+        await this.loadChats();
+        await this.loadRequests();
+    }
+
+    private async processAwaitedRequest(sessionId: string, toAlias?: string, fromAlias?: string) {
+        if (!toAlias) {
+            const pending = this.#x3dhUser.pendingChatRequests.find((r) => r.sessionId === sessionId);
+            if (!pending) return false;
+            const { myAlias, otherAlias } = pending;
+            toAlias = myAlias;
+            fromAlias = otherAlias;
+        }
+        const result = await this.#socketHandler.GetMessageHeaders({ sessionId, toAlias, fromAlias });
+        if ("reason" in result) {
+            logError(result.reason);
+            return false;
+        }
+        const firstResponse = _.orderBy(result, ["sendingRatchetNumber", "sendingChainNumber"], ["asc"])[0];
+        if (firstResponse) return await this.receiveRequestResponse(firstResponse);
         else return false;
     }
 
@@ -843,23 +856,21 @@ export default class Client {
         return { reason: null };
     }
 
-    private async messageReceived(message: MessageHeader) {
-        const { sessionId } = message;
+    private async messageReceived({ sessionId }: { sessionId: string }) {
         return await match(this.chatSessionIdsList.get(sessionId)?.type)
-            .with("Chat", () => (this.chatSessionIdsList.get(sessionId) as Chat)?.messageReceived(message))
-            .with("AwaitedRequest", () => this.receiveRequestResponse(message))
+            .with("Chat", () => (this.chatSessionIdsList.get(sessionId) as Chat)?.loadUnprocessedMessages())
+            .with("AwaitedRequest", () => this.processAwaitedRequest(sessionId))
             .otherwise(async () => false);
     }
 
-    private async receiptReceived(receipt: Receipt) {
-        const { sessionId } = receipt;
+    private async receiptReceived({ sessionId }: { sessionId: string }) {
         const chat = this.chatSessionIdsList.get(sessionId);
         if (chat?.type === "Chat") {
-            await chat.processReceipt(receipt);
+            await chat.loadAndProcessReceipts();
         }
     }
 
-    private async chatRequestReceived(message: ChatRequestHeader) {
-        return await this.loadRequest(message);
+    private async chatRequestReceived() {
+        return await this.loadRequests();
     }
 }

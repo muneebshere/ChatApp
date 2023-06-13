@@ -4,7 +4,7 @@ import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
 import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PublishKeyBundlesRequest, StoredMessage, RegisterNewUserRequest, NewUserData, UserEncryptedData, Receipt, Backup, ChatSessionDetails, Username } from "../shared/commonTypes";
 import * as crypto from "../shared/cryptoOperator";
-import { parseIpReadable } from "./backendserver";
+import { parseIpReadable, Notify } from "./backendserver";
 import { allSettledResults, logError } from "../shared/commonFunctions";
 
 const exposedSignedKey = {
@@ -76,9 +76,9 @@ const passwordEntangleInfo = {
 
 export class MongoHandlerCentral {
 
-    private static sessionHooks = new Map<string, (message: MessageHeader | ChatRequestHeader | Receipt) => void>();
+    private static sessionHooks = new Map<string, (notify: Notify) => void>();
 
-    private static subscribeChange(id: string, callback: (message: MessageHeader | ChatRequestHeader | Receipt) => void) {
+    private static subscribeChange(id: string, callback: (notify: Notify) => void) {
         if (callback) MongoHandlerCentral.sessionHooks.set(id, callback);
         else MongoHandlerCentral.sessionHooks.delete(id);
     }
@@ -378,8 +378,9 @@ export class MongoHandlerCentral {
             immutable: true
         },
         initialMessage: signedEncryptedData
-    }).index({ addressedTo: "hashed" }).post("save", (doc) => {
-        MongoHandlerCentral.sessionHooks.get(`$user${doc.addressedTo}`)?.(cleanLean(doc.toObject()));
+    }).index({ addressedTo: "hashed" }).post("save", (doc, next) => {
+        MongoHandlerCentral.sessionHooks.get(`$user${doc.addressedTo}`)?.({ type: "Request" });
+        next();
     }), "chat_requests");
 
     private static readonly MessageHeader = mongoose.model("MessageHeader", new Schema({
@@ -425,7 +426,10 @@ export class MongoHandlerCentral {
         },
         nextDHRatchetKey: exposedSignedKey,
         messageBody: signedEncryptedData
-    }).index({ sessionId: 1, toAlias: 1 }).index({ sessionId: 1, headerId: 1 }, { unique: true }).index({ sendingRatchetNumber: 1, sendingChainNumber: 1 }, { unique: true }).post("save", (doc) => MongoHandlerCentral.sessionHooks.get(`${doc.sessionId}@${doc.toAlias}`)?.(cleanLean(doc.toObject()))), "message_headers");
+    }).index({ sessionId: 1, toAlias: 1 }).index({ sessionId: 1, headerId: 1 }, { unique: true }).index({ sendingRatchetNumber: 1, sendingChainNumber: 1 }, { unique: true }).post("save", (doc, next) => {
+        MongoHandlerCentral.sessionHooks.get(`${doc.sessionId}@${doc.toAlias}`)?.({ type: "Message", ..._.pick(doc, "sessionId") });
+        next();
+    }), "message_headers");
 
     private static readonly Receipt = mongoose.model("Receipt", new Schema({
         toAlias: {
@@ -453,7 +457,10 @@ export class MongoHandlerCentral {
             required: true,
             immutable: true
         }
-    }).index({ sessionId: 1, toAlias: 1 }).index({ sessionId: 1, headerId: 1 }, { unique: true }).post("save", (doc) => MongoHandlerCentral.sessionHooks.get(`${doc.sessionId}@${doc.toAlias}`)?.(cleanLean(doc.toObject()))), "receipts");
+    }).index({ sessionId: 1, toAlias: 1 }).index({ sessionId: 1, headerId: 1 }, { unique: true }).post("save", (doc, next) => {
+        MongoHandlerCentral.sessionHooks.get(`${doc.sessionId}@${doc.toAlias}`)?.({ type: "Receipt", ..._.pick(doc, "sessionId") });
+        next();
+    }), "receipts");
 
     private static readonly Chat = mongoose.model("Chat", new Schema({
         chatId: {
@@ -641,8 +648,8 @@ export class MongoHandlerCentral {
         readonly #databaseAuthKey: CryptoKey;
         readonly #chats: string[];
         readonly #sessions: Map<string, ChatSessionDetails>;
-        private notify: (message: MessageHeader | ChatRequestHeader | Receipt) => void;
-        private readonly subscribeChange: (id: string, callback: typeof MongoHandlerCentral.UserHandlerType.notify) => void;
+        private notify: (notify: Notify) => void;
+        private readonly subscribeChange: (id: string, callback: (notify: Notify) => void) => void;
 
         constructor (username: string, databaseAuthKey: CryptoKey, chats: string[], sessions: ChatSessionDetails[], subscribeChange: typeof MongoHandlerCentral.UserHandlerType.subscribeChange) {
             this.#username = username;

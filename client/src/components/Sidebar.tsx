@@ -13,7 +13,7 @@ type SidebarProps = {
   currentChatWith: string,
   openChat: (chatWith: string) => void,
   client: Client,
-  chats: string[],
+  chats: (Chat | ChatRequest | AwaitedRequest)[],
   belowXL: boolean
 }
 
@@ -26,7 +26,7 @@ export default function Sidebar({ currentChatWith, openChat, chats, client, belo
   
   async function validateNewChat(username: string) {
     if (!username) return "";
-    if (client.chatsList.some((chatWith) => chatWith.toLowerCase() === username.toLowerCase())) return "There is already an existing chat with this user.";
+    if (client.chatsList.some((chat) => chat.otherUser.toLowerCase() === username.toLowerCase())) return "There is already an existing chat with this user.";
     return (await client.checkUsernameExists(username)) ? (username !== client.username ? "" : "Cannot chat with yourself.") : "No such user.";
   }
 
@@ -88,10 +88,9 @@ export default function Sidebar({ currentChatWith, openChat, chats, client, belo
       <StyledScrollbar>
         <List variant="plain" color="neutral">
           {chats
-            .map((otherUser) => [otherUser, client.getChatByUser(otherUser)] as const)
-            .filter(([, chat]) => !search || chat.matchesName(search))
-            .map(([otherUser, chat]) => (<ListItem key={otherUser}>
-              <ChatCard chat={chat} isCurrent={currentChatWith === otherUser} setCurrent={() => openChat(otherUser) }/>
+            .filter((chat) => !search || chat.matchesName(search))
+            .map((chat) => (<ListItem key={chat.otherUser}>
+              <ChatCard chat={chat} isCurrent={currentChatWith === chat.otherUser} setCurrent={() => openChat(chat.otherUser) }/>
             </ListItem>))}
         </List>            
       </StyledScrollbar>

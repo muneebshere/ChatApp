@@ -307,7 +307,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   const scrollbar = () => scrollRef.current;
   const orientationState = useOrientationState();
   const [replyId, setReplyTo, replyToElement] = useReplyingTo(displayName, setHighlight, belowXL);
-  const [width, ] = useSize(scrollRef);
+  const [width, ] = useSize(scrollRef, "content");
   const toggleScroll = (scrollOn: boolean) => { 
     scrollbar().style.overflowY = scrollOn ? "scroll" : "hidden";
     scrollbar().style.paddingRight = scrollOn ? "8px" : "14px"

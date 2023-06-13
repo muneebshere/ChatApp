@@ -22,6 +22,7 @@ import { ElementRects } from "@floating-ui/react";
 import useSwipeDrag from "./Hooks/useSwipeDrag";
 import { SxProps } from "@mui/material";
 import { ChatMessage } from "../chatClasses";
+import { useSize } from "./Hooks/useSize";
 
 interface HTMLDivElementScroll extends HTMLDivElement {
   scrollIntoViewIfNeeded(centerIfNeeded?: boolean): void;
@@ -40,7 +41,7 @@ export const MessageCardContext = createContext<MessageCardContextData>(null);
 
 const StyledReactMarkdownBody = StyledReactMarkdownVariable(22);
 
-function StatusButton(delivery: DeliveryInfo) {
+function StatusButton({ delivery }: { delivery: DeliveryInfo }) {
   if (!delivery) {
     return <HourglassTop sx={{ color: "gold", rotate: "-90deg", fontSize: "1rem" }}/>;
   }
@@ -104,6 +105,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
   const statusRef = useRef<HTMLDivElement>(null);
   const floatingRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
+  const statusSize = useSize(statusRef, "client");
   const offsetFunc = (rects: ElementRects) => {
     const crossAxis = (-floatingRef.current?.getBoundingClientRect()?.width || 0) + rects.reference.width;
     return { crossAxis }
@@ -148,9 +150,17 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
   }, [darken]);
 
   useLayoutEffect(() => {
+    if (!bodyRef.current) return;
     const bodyElement = bodyRef.current.querySelector("div.react-markdown > p:last-child");
-    const { height, width } = statusRef.current.getBoundingClientRect();
-    bodyElement?.insertAdjacentHTML("beforeend", `<div style="float: right; shape-outside: margin-box; width: ${width}px; height: ${height}px; min-width: ${width}px; min-height: ${height}px; margin: 12px 0px 0px 12px;">&nbsp;</div>`);
+    const calcDist = () => Math.abs(sheetRef.current.getBoundingClientRect().bottom - bodyElement.getBoundingClientRect().top);
+    const [width, height] = statusSize;
+    if (height && width) {
+      const isOneLine = calcDist() <= 28;
+      bodyElement?.insertAdjacentHTML("beforeend", `<div style="float: right; shape-outside: margin-box; width: ${width}px; height: ${height}px; min-width: ${width}px; min-height: ${height}px; margin: ${isOneLine ? 16 : 4}px 0px ${isOneLine ? 0 : 4}px 10px;">&nbsp;</div>`);
+      if (bodyElement && isOneLine && calcDist() > 38) {
+        bodyElement.querySelector("div").style.margin = "4px 0px 0px 10px";
+      }
+    }
   });
 
   useLayoutEffect(() => {
@@ -222,7 +232,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
                   </TooltipContent>
                 </Tooltip>
                 {sentByMe &&
-                  <StatusButton {...delivery}/>
+                  <StatusButton {...{ delivery }}/>
                 }
               </Stack>
             </Stack>

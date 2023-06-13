@@ -21,7 +21,7 @@ export default function Main({ connected, retrying, displayName, client }: MainP
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const typedMessages = useRef(new Map<string, string>());
   const lastScrollPositions = useRef(new Map<string, ScrollState>());
-  const [chats, setChats] = useState<string[]>(client.chatsList);
+  const [chats, setChats] = useState(client.chatsList);
   
   useEffect(() => {
     let currentChatWith = window.history.state?.currentChatWith || window.location.hash.slice(1);

@@ -36,6 +36,8 @@ declare module "http" {
     }
 }
 
+export type Notify = Readonly<{ type: "Message" | "Receipt", sessionId: string } | { type: "Request" }>;
+
 type ResponseMap = Readonly<{
     [E in SocketClientSideEventsKey]: (arg: SocketClientRequestParameters[E]) => Promise<SocketClientRequestReturn[E] | Failure>
 }>
@@ -579,15 +581,15 @@ class SocketHandler {
         return { reason: null };
     }
 
-    private async notifyMessage(message: MessageHeader | ChatRequestHeader | Receipt) {
-        if ("messageBody" in message) {
-            await this.request(SocketServerSideEvents.MessageReceived, message);
+    private async notifyMessage(notify: Notify) {
+        if (notify.type === "Request") {
+            await this.request(SocketServerSideEvents.ChatRequestReceived, []);
         }
-        else if ("initialMessage" in message) {
-            await this.request(SocketServerSideEvents.ChatRequestReceived, message);
+        else if (notify.type === "Message") {
+            await this.request(SocketServerSideEvents.MessageReceived, _.pick(notify, "sessionId"));
         }
         else {
-            await this.request(SocketServerSideEvents.ReceiptReceived, message);
+            await this.request(SocketServerSideEvents.ReceiptReceived, _.pick(notify, "sessionId"));
         }
     }
 
