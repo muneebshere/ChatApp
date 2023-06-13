@@ -55,23 +55,20 @@ type RequestMap = Readonly<{
     [E in SocketClientSideEventsKey]: (arg: SocketClientRequestParameters[E], timeout?: number) => Promise<SocketClientRequestReturn[E] | Failure>
 }>
 
-function SocketHandler(socket: () => Socket, sessionCrypto: () => SessionCrypto, currentFileHash: Promise<string>, isConnected: () => boolean): RequestMap {
+function SocketHandler(socket: () => Socket, sessionCrypto: () => SessionCrypto, isConnected: () => boolean): RequestMap {
 
     async function request(event: SocketClientSideEventsKey, data: any, timeout = 0): Promise<any | Failure> {
         if (!isConnected()) {
             return {};
         }
-        let { fileHash, payload } = await new Promise(async (resolve: (result: any) => void) => {
+        const { payload } = await new Promise(async (resolve: (result: any) => void) => {
             socket().emit(event, (await sessionCrypto().signEncryptToBase64(data, event)),
                 async (response: string) => resolve(response ? await sessionCrypto().decryptVerifyFromBase64(response, event) : {}));
             if (timeout > 0) {
                 window.setTimeout(() => resolve({}), timeout);
             }
-        })
-        if (fileHash !== await currentFileHash) {
-            window.history.go();
-            return {};
-        } else return payload;
+        });
+        return payload || {};
     }
 
     function makeRequest(event: SocketClientSideEventsKey) {
@@ -109,7 +106,6 @@ export default class Client {
     #sessionCrypto: SessionCrypto
     #socketHandler: RequestMap;
     #encryptionBaseVector: CryptoKey;
-    #fileHash: Promise<string>;
     private readonly chatList = new Set<string>();
     private readonly chatSessionIdsList = new Map<string, Chat | ChatRequest | AwaitedRequest>();
     private readonly chatUsernamesList = new Map<string, Chat | ChatRequest | AwaitedRequest>();
@@ -171,7 +167,6 @@ export default class Client {
     constructor(url: string) {
         this.url = url;
         this.axInstance = axios.create({ baseURL: `${this.url}/`, maxRedirects: 0 });
-        this.#fileHash = this.calculateFileHash();
     }
 
     subscribeStatusChange(notifyCallback?: (status: ClientEvent) => void) {
@@ -180,12 +175,6 @@ export default class Client {
 
     subscribeChange(notifyCallback?: () => void) {
         if (notifyCallback) this.notifyChange = notifyCallback;
-    }
-
-    private async calculateFileHash() {
-        const response = await fetch("./main.js");
-        const fileBuffer = await response.arrayBuffer();
-        return crypto.digestToBase64("SHA-256", fileBuffer);
     }
 
     async establishSession() {
@@ -206,26 +195,19 @@ export default class Client {
             const serverVerifyingKey = await crypto.importKey(fromBase64(serverVerifying), "ECDSA", "public", true);
             const serverPublicKeyImported = await crypto.importKey(fromBase64(serverPublicKey), "ECDH", "public", true);
             const sessionKeyBits = await crypto.deriveSymmetricBitsKey(privateKey, serverPublicKeyImported, 512);
-            const fileHash = await this.#fileHash;
             const sessionSigned = await crypto.sign(fromBase64(sessionReference), signingKey);
-            const auth = { sessionReference, sessionSigned, fileHash };
+            const auth = { sessionReference, sessionSigned };
             this.#socket = io(this.url, { auth, withCredentials: true });
             this.#socket.on("disconnect", this.retryConnect.bind(this));
             let nevermind = false;
             let timeout: number = null;
             const success = await new Promise<boolean>((resolve) => {
-                this.#socket.once(SocketServerSideEvents.CompleteHandshake, (ref, latestFileHash, respond) => {
+                this.#socket.once(SocketServerSideEvents.CompleteHandshake, (ref, respond) => {
                     const finalize = (complete: boolean) => {
                         respond(complete);
                         resolve(complete);
                     }
                     try {
-                        if (latestFileHash !== fileHash) {
-                            console.log("Script file outdated.");
-                            window.history.go();
-                            finalize(false);
-                            return;
-                        }
                         if (nevermind) {
                             console.log("Nevermind");
                             console.log(`Connected with session reference: ${sessionReference} and socketId: ${this.#socket.id}`);
@@ -239,7 +221,7 @@ export default class Client {
                         }
                         this.#sessionReference = sessionReference;
                         this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBits, signingKey, serverVerifyingKey);
-                        this.#socketHandler = SocketHandler(() => this.#socket, () => this.#sessionCrypto, this.#fileHash, () => this.isConnected);
+                        this.#socketHandler = SocketHandler(() => this.#socket, () => this.#sessionCrypto, () => this.isConnected);
                         this.chatInterface = this.constructChatInterface();
                         console.log(`Connected with session reference: ${sessionReference} and socketId: ${this.#socket.id}`);
                         if (this.#username) {

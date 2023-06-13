@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useReducer, useCallback, useRef } from "react";
+import React, { useState, useEffect, useReducer } from "react";
 import { createRoot } from "react-dom/client";
-import { useEffectOnce, useEventListener } from "usehooks-ts";
+
 import { Container, CircularProgress } from "@mui/joy";
 import { CssVarsProvider } from "@mui/joy/styles";
 import { Theme, useMediaQuery } from "@mui/material";
@@ -10,6 +10,7 @@ import { LogInContext, defaultLogInDataReducer, defaultLogInData, logInAction } 
 import { SignUpContext, defaultSignUpDataReducer, defaultSignUpData, signUpAction } from "./components/Signup";
 import { Spacer } from "./components/CommonElementStyles";
 import Client, { ClientEvent } from "./client";
+import * as crypto from "../../shared/cryptoOperator";
 import { match } from "ts-pattern";
 import tinycolor from "tinycolor2";
 
@@ -23,6 +24,16 @@ export type SubmitResponse = {
 const PORT = 8080;
 const { hostname, protocol } = window.location;
 const client = new Client(`${protocol}//${hostname}:${PORT}`);
+const generateAvatar = createAvatarGenerator(200, 200);
+const jsHash = calculateJsHash();
+window.setInterval(async () => {
+  const hash = await jsHash;
+  const latestHash = await fetch("./prvJsHash.txt").then((response) => response.text());
+  if (hash !== latestHash) {
+    console.log("js file changed.");
+    window.history.go(); 
+  }
+}, 1000);
 client.establishSession();
 
 if ("virtualKeyboard" in navigator) {
@@ -30,6 +41,12 @@ if ("virtualKeyboard" in navigator) {
 }
 
 createRoot(document.getElementById("root")).render(<Root/>);
+
+async function calculateJsHash() {
+  const response = await fetch("./main.js");
+  const fileBuffer = await response.arrayBuffer();
+  return crypto.digestToBase64("SHA-256", fileBuffer);
+}
 
 function createAvatarGenerator(width: number, height: number) {
   const canvasRef = getCanvas();
@@ -72,8 +89,6 @@ function createAvatarGenerator(width: number, height: number) {
     return canvas.toDataURL();
   }
 }
-
-const generateAvatar = createAvatarGenerator(200, 200);
 
 function Root() {
   return (

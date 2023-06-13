@@ -198,7 +198,7 @@ class SocketHandler {
     private async respond(event: SocketClientSideEventsKey, data: string, responseBy: (arg: SocketClientRequestParameters[typeof event]) => Promise<SocketClientRequestReturn[typeof event] | Failure>, resolve: (arg0: string) => void) {
         const encryptResolve = async (response: SocketClientRequestReturn[typeof event] | Failure) => {
             if (!this.#sessionCrypto) resolve(null);
-            else resolve(await this.#sessionCrypto.signEncryptToBase64({ payload: response, fileHash: await jsHash }, event));
+            else resolve(await this.#sessionCrypto.signEncryptToBase64({ payload: response }, event));
         }
         try {
             if (this.#switchingSessionCrypto) {
@@ -716,32 +716,20 @@ export function parseIpReadable(ipRep: string) {
         : ipv6.toRFC5952String();
 }
 
-let abortController: AbortController = new AbortController();
-async function hashCalculator() {
-    try {
-        const buffer = await fsPromises.readFile(`..\\client\\public\\main.js`, { flag: "r", signal: abortController.signal });
-        const hash = await crypto.digestToBase64("SHA-256", buffer);
-        return hash;
-    }
-    catch (err) {
-        logError(err);
-        return null;
-    }
-};
+async function writeJsHash() {
+    const hash = await crypto.digestToBase64("SHA-256", fs.readFileSync(`..\\client\\public\\main.js`, { flag: "r" }));
+    fs.writeFileSync(`..\\client\\public\\prvJsHash.txt`, hash);
+}
 
-let jsHash = hashCalculator();
 async function watchForFileHashChange() {
     const watcher = fsPromises.watch(`..\\client\\public\\main.js`);
     for await (const { eventType } of watcher) {
         if (eventType === "change") {
-            const prevController = abortController;
-            abortController = new AbortController();
-            jsHash = hashCalculator();
-            prevController.abort();
+            await writeJsHash();
         }
     }
 }
-watchForFileHashChange();
+writeJsHash().then(() => watchForFileHashChange());
 
 const mongoUrl = "mongodb://localhost:27017/chatapp";
 MongoHandlerCentral.connect(mongoUrl);
@@ -850,18 +838,17 @@ io.use((socket: Socket, next) => {
     cookieParserMiddle(socket.request as Request, ((socket.request as any).res || {}) as Response, next as NextFunction)
 });
 io.on("connection", async (socket) => {
-    const fileHashLocal = await jsHash;
     const { session, cookies: { saveTokenCookie }, socket: { remoteAddress } } = socket.request;
     const currentIp = parseIpRepresentation(remoteAddress);
     const { saveToken } = saveTokenCookie ?? {};
-    let { sessionReference, sessionSigned, fileHash } = socket.handshake.auth ?? {};
+    let { sessionReference, sessionSigned } = socket.handshake.auth ?? {};
     const rejectConnection = async () => {
         console.log(`Rejecting sessionReference ${sessionReference}`);
-        socket.emit(SocketServerSideEvents.CompleteHandshake, "", fileHashLocal, () => { });
+        socket.emit(SocketServerSideEvents.CompleteHandshake, "", () => { });
         await sleep(5000);
         socket.disconnect(true);
     }
-    if (!currentIp || !sessionReference || !sessionSigned || fileHash !== fileHashLocal) {
+    if (!currentIp || !sessionReference || !sessionSigned) {
         await rejectConnection();
         return;
     }
@@ -878,7 +865,7 @@ io.on("connection", async (socket) => {
         return;
     }
     const success = await new Promise((resolve) => {
-        socket.emit(SocketServerSideEvents.CompleteHandshake, sessionReference, fileHashLocal, resolve);
+        socket.emit(SocketServerSideEvents.CompleteHandshake, sessionReference, resolve);
         setTimeout(() => resolve(false), 30000);
     })
     if (!success) {
