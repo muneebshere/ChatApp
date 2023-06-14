@@ -104,8 +104,8 @@ type ChatCardProps = Readonly<{
 }>;
 
 function ChatCard({ chat, isCurrent, setCurrent }: ChatCardProps) {
-  const [chatDetails, setChatDetails] = useState(chat.details);
-  const { displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages, draft } = chatDetails;
+  const [refresh, setRefresh] = useState({});
+  const { displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages, draft } = refresh && chat.details; 
   const { text, timestamp, sentByMe, delivery } = lastActivity;
   const status = useMemo(() => {
     if (!sentByMe) return null;
@@ -128,7 +128,7 @@ function ChatCard({ chat, isCurrent, setCurrent }: ChatCardProps) {
   }
 
   useLayoutEffect(() => {
-    chat.subscribeActivity(() => setChatDetails(chat.details));
+    chat.subscribeActivity(() => setRefresh({}));
 
     return () => chat.unsubscribeActivity();
   }, []);

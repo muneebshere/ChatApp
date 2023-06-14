@@ -38,7 +38,7 @@ export enum ClientEvent {
     SignedOut
 }
 
-export type ClientChatInterface = Pick<RequestMap, ChatMethods> & Readonly<{ isConnected: () => boolean, notifyClient: () => void }>
+export type ClientChatInterface = Pick<RequestMap, ChatMethods> & Readonly<{ isConnected: () => boolean, notifyClient: (chat: Chat) => void }>
 
 export type ClientChatRequestInterface = Readonly<{
     rejectRequest: (otherUser: string, sessionId: string, oneTimeKeyId: string) => Promise<boolean>,
@@ -118,7 +118,11 @@ export default class Client {
             chatInterface[method] = this.#socketHandler[method];
         }
         chatInterface["isConnected"] = () => this.isConnected;
-        chatInterface["notifyClient"] = () => this.notifyChange?.();
+        chatInterface["notifyClient"] = (chat: Chat) => {
+            if (this.notifyChange && this.getChatByUser(chat.otherUser) === chat) {
+                this.notifyChange();
+            }
+        }
         return chatInterface as ClientChatInterface;
     }
 
@@ -145,7 +149,7 @@ export default class Client {
     }
 
     public get chatsList() {
-        return _.orderBy(Array.from(this.chatList), [(user) => this.getChatByUser(user).lastActive], ["desc"]).map((user) => this.getChatByUser(user));
+        return _.orderBy(Array.from(this.chatList).map((user) => this.getChatByUser(user)), [(chat) => chat.lastActive], ["desc"]);
     }
 
     public get username(): string {

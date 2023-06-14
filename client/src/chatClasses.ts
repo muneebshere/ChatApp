@@ -267,7 +267,7 @@ export class Chat extends AbstractChat {
         this.#sessionCrypto = null;
         this.notify?.("details-change");
         this.notifyActivity?.();
-        this.clientInterface.notifyClient();
+        this.clientInterface.notifyClient(this);
     }
 
     async establishRoom(sessionCrypto: SessionCrypto, socket: Socket) {
@@ -474,7 +474,7 @@ export class Chat extends AbstractChat {
         if (timestamp >= (this.lastActivity?.timestamp || 0)) {
             this.lastActivity = message;
             this.notify?.("received-new");
-            this.clientInterface.notifyClient();
+            this.clientInterface.notifyClient(this);
         }
         else if (timestamp < this.loadedUpto) {
             this.loadedUpto = timestamp;
