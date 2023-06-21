@@ -4,7 +4,8 @@ import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
 import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PublishKeyBundlesRequest, StoredMessage, SignUpRequest, NewUserData, UserEncryptedData, Receipt, Backup, ChatSessionDetails, Username, NewAuthData } from "../shared/commonTypes";
 import * as crypto from "../shared/cryptoOperator";
-import { parseIpReadable, Notify } from "./backendserver";
+import { parseIpReadable } from "./backendserver";
+import { Notify } from "./SocketHandler";
 import { allSettledResults, logError, randomFunctions } from "../shared/commonFunctions";
 
 const exposedSignedKey = {
