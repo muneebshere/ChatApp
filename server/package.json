@@ -17,7 +17,8 @@
     "safe-stable-stringify": "^2.4.3",
     "socket.io": "4.6.1",
     "ts-node": "^10.9.1",
-    "underscore": "^1.13.6"
+    "underscore": "^1.13.6",
+    "yup": "^1.2.0"
   },
   "name": "chatapp",
   "version": "1.0.0",

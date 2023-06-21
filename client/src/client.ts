@@ -8,7 +8,7 @@ import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
 import * as esrp from "../../shared/ellipticSRP";
 import { allSettledResults, failure, fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
-import { ErrorStrings, Failure, Username, SocketClientSideEvents, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, NewUserData, Profile, RegisterNewUserChallengeResponse, LogInRequest, LogInChallengeResponse, UserEncryptedData, SessionIdentifier, HeaderIdentifier, Backup, PasswordDeriveInfo, PasswordEntangleInfo  } from "../../shared/commonTypes";
+import { ErrorStrings, Failure, Username, SocketClientSideEvents, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, SignUpRequest, NewUserData, Profile, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, UserEncryptedData, SessionIdentifier, HeaderIdentifier, Backup, PasswordDeriveInfo, PasswordEntangleInfo  } from "../../shared/commonTypes";
 import { noProfilePictureImage } from "./noProfilePictureImage";
 import { AwaitedRequest, Chat, ChatDetails, ChatRequest } from "./chatClasses";
 
@@ -330,7 +330,7 @@ export default class Client {
             const [databaseAuthKeyDerive, databaseAuthKeyBuffer] = await esrp.entanglePassword(passwordString);
             const identitySigningKeypair = await crypto.generateKeyPair("ECDSA");
             const { exportedPublicKey: clientIdentityVerifyingKey, wrappedPrivateKey: clientIdentitySigning } = await crypto.exportSigningKeyPair(identitySigningKeypair, encryptionBaseVector, "Client Identity Signing Key");
-            const registerNewUserRequest: RegisterNewUserRequest = {
+            const registerNewUserRequest: SignUpRequest = {
                 username,
                 verifierPoint,
                 clientEphemeralPublic,
@@ -355,7 +355,7 @@ export default class Client {
             const profileData = await crypto.deriveEncrypt(profile, encryptionBaseVector, "User Profile");
             const newUserData: NewUserData =  { userData: { encryptionBaseDerive, profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying }, verifierDerive, databaseAuthKeyDerive, keyBundles };
             const newUserDataSigned = await crypto.deriveSignEncrypt(sharedKeyBits, newUserData, Buffer.alloc(32), "New User Data", identitySigningKeypair.privateKey);
-            const concludeRegisterNewUser: RegisterNewUserChallengeResponse = { challengeReference, clientConfirmationCode, newUserDataSigned, databaseAuthKeyBuffer };
+            const concludeRegisterNewUser: SignUpChallengeResponse = { challengeReference, clientConfirmationCode, newUserDataSigned, databaseAuthKeyBuffer };
             const resultConc = await this.#socketHandler.ConcludeRegisterNewUser(concludeRegisterNewUser);
             if (resultConc?.reason) {
                 this.notifyClientEvent?.(ClientEvent.FailedCreateNewUser);

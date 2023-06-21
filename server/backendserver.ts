@@ -3,36 +3,23 @@ import { DateTime } from "luxon";
 import { config } from "./node_modules/dotenv";
 import { ServerOptions, createServer } from "node:https";
 import fs, { promises as fsPromises } from "node:fs";
-import session, { Session, CookieOptions as SessionCookieOptions, SessionOptions } from "express-session";
 import cookieParser from "cookie-parser";
-import ConnectMongoDBSession from "connect-mongodb-session";
 import express, { Request, Response, NextFunction, CookieOptions } from "express";
 import cors, { CorsOptions } from "cors";
 import * as ipaddr from "ipaddr.js";
 import { Server as SocketServer, Socket } from "socket.io";
 import { SessionCrypto } from "../shared/sessionCrypto";
 import * as crypto from "../shared/cryptoOperator";
-import { Failure, ErrorStrings, Username, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, KeyBundle, UserEncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, RegisterNewUserRequest, RegisterNewUserChallenge, RegisterNewUserChallengeResponse, NewUserData, LogInRequest, LogInChallenge, UserData, LogInChallengeResponse, Receipt, MessageIdentifier, ChatIdentifier, SessionIdentifier, HeaderIdentifier, Backup } from "../shared/commonTypes";
+import { serialize, deserialize } from "../shared/cryptoOperator";
+import { Failure, ErrorStrings, Username, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, UserEncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, SignUpRequest, SignUpChallenge, SignUpChallengeResponse, NewUserData, LogInRequest, LogInChallenge, LogInChallengeResponse, Receipt, MessageIdentifier, ChatIdentifier, SessionIdentifier, HeaderIdentifier, Backup, LogInSavedRequest, SavePasswordRequest, LogInResponse, LogInSavedResponse, PasswordDeriveInfo } from "../shared/commonTypes";
 import { allSettledResults, failure, fromBase64, logError, randomFunctions, typedEntries } from "../shared/commonFunctions";
 import { MongoHandlerCentral } from "./MongoHandler";
 import * as esrp from "../shared/ellipticSRP";
 
-try {
-    config({ debug: true, path: "./config.env" });
-}
-catch (e) {
-    logError(e);
-    console.log("Could not load config.env");
-}
-
-const { getRandomString } = randomFunctions();
-const sleep = (timeInMillis: number) => new Promise((resolve, _) => { setTimeout(resolve, timeInMillis); });
-const PORT = 8080;
-
 declare module "http" {
     interface IncomingMessage {
-        session: Session;
         cookies: any;
+        signedCookies: any;
     }
 }
 
@@ -42,34 +29,12 @@ type ResponseMap = Readonly<{
     [E in SocketClientSideEventsKey]: (arg: SocketClientRequestParameters[E]) => Promise<SocketClientRequestReturn[E] | Failure>
 }>
 
-type ChallengeTemp = Readonly<{ challengeReference: string, confirmClient: (confirmationCode: Buffer) => Promise<boolean>, sharedKeyBits: CryptoKey }>;
-
-type RegisterChallengeTemp = ChallengeTemp & Omit<RegisterNewUserRequest, "clientEphemeralPublic">;
-
-type LogInChallengeTemp = ChallengeTemp & Username & { userData: UserData, clientVerifyingKey: CryptoKey };
-
-type ServerSavedDetails = Readonly<{
-    username: string, 
-    authKeyBits: Buffer, 
-    coreKeyBits: Buffer,
-    laterConfirmation: Omit<esrp.ServerAuthChallengeLater, "verifierEntangled">,
-}>;
-
-type LogInSavedChallengeTemp = Omit<ServerSavedDetails, "authKeyBits"> & {
-    clientVerifyingKey: CryptoKey,
-    userData: Omit<UserData, "encryptionBaseDerive">;
-}
-
 class SocketHandler {
+    private static socketHandlers: Map<string, SocketHandler>;
+    private static onlineUsers: Map<string, { sessionReference: string, ipRep: string }>;
+
     private readonly responseMap: ResponseMap = {
         [SocketClientSideEvents.UsernameExists]: this.UsernameExists,
-        [SocketClientSideEvents.UserLoginPermitted]: this.UserLoginPermitted,
-        [SocketClientSideEvents.InitiateRegisterNewUser]: this.InitiateRegisterNewUser,
-        [SocketClientSideEvents.ConcludeRegisterNewUser]: this.ConcludeRegisterNewUser,
-        [SocketClientSideEvents.InitiateLogIn]: this.InitiateLogIn,
-        [SocketClientSideEvents.ConcludeLogIn]: this.ConcludeLogIn,
-        [SocketClientSideEvents.InitiateLogInSaved]: this.InitiateLogInSaved,
-        [SocketClientSideEvents.ConcludeLogInSaved]: this.ConcludeLogInSaved,
         [SocketClientSideEvents.PublishKeyBundles]: this.PublishKeyBundles,
         [SocketClientSideEvents.UpdateUserData]: this.UpdateUserData,
         [SocketClientSideEvents.RequestKeyBundle]: this.RequestKeyBundle,
@@ -94,95 +59,68 @@ class SocketHandler {
         [SocketClientSideEvents.SendReceipt]: this.SendReceipt,
         [SocketClientSideEvents.GetAllReceipts]: this.GetAllReceipts,
         [SocketClientSideEvents.ClearAllReceipts]: this.ClearAllReceipts,
-        [SocketClientSideEvents.LogOut]: this.LogOut,
-        [SocketClientSideEvents.RequestRoom]: this.RoomRequested,
-        [SocketClientSideEvents.TerminateCurrentSession]: this.TerminateCurrentSession
+        [SocketClientSideEvents.RequestRoom]: this.RoomRequested
     };
-    #saveToken: string;
-    #session: Session;
-    #sessionReference: string;
+    private readonly deleteSelf: () => void;
     #sessionCrypto: SessionCrypto;
     #socket: Socket;
-    #socketId: string;
     #mongoHandler: typeof MongoHandlerCentral.UserHandlerType;
-    #registerChallengeTemp: RegisterChallengeTemp;
-    #logInChallengeTemp: LogInChallengeTemp;
-    #logInSavedTemp: LogInSavedChallengeTemp;
     #openToRoomTemp: Username;
-    #switchingSessionCrypto = false
     #username: string;
-    #accessedBundles = new Map<string, KeyBundle>();
     #disposeRooms: (() => void)[] = [];
-    #ipRep: string;
 
-    constructor(socket: Socket, session: Session, sessionReference: string, ipRep: string, sessionKeyBits: Buffer, sessionKeyBitsImported: CryptoKey, sessionSigningKey: CryptoKey, sessionVerifyingKey: CryptoKey, saveToken?: string, resuming = false) {
-        this.#ipRep = ipRep;
-        this.#saveToken = saveToken;
-        this.#session = session;
-        this.#sessionReference = sessionReference;
-        this.#sessionCrypto = new SessionCrypto(sessionReference, sessionKeyBitsImported, sessionSigningKey, sessionVerifyingKey);
-        this.registerNewSocket(socket);
-        console.log(`Connected: socket#${socket.id} with session reference ${sessionReference}`);
-        console.log(`Session ${session.id} begun.`);
+    static getUsername(sessionReference: string) {
+        const sessionHandler = this.socketHandlers.get(sessionReference);
+        return sessionHandler ? sessionHandler.#username : null;
     }
 
-    async savePassword(sessionReference: string, currentIp: string, saveToken: string, coreKeyBits: Buffer, authKeyBits: Buffer, serverKeyBits: Buffer, clientEphemeralPublic: Buffer) {
-        if (!this.#username || this.#sessionReference !== sessionReference || this.#ipRep !== currentIp) return {};
-        console.log("Attempting save password");
-        const { verifierDerive, verifierPoint } = (await MongoHandlerCentral.getLeanUser(this.#username)) ?? {}; 
-        if (!verifierDerive) return {};
-        const { verifierEntangled, ...laterConfirmation } = await esrp.serverSetupAuthChallenge(verifierPoint, clientEphemeralPublic, "later");
-        const serverSavedDetails: ServerSavedDetails = { username: this.#username, authKeyBits, coreKeyBits, laterConfirmation };
-        const savedAuthDetails = await crypto.deriveEncrypt(serverSavedDetails, serverKeyBits, "Saved Auth");
-        if (await MongoHandlerCentral.setSavedAuth(saveToken, this.#ipRep, savedAuthDetails)) {
-            this.#saveToken = saveToken;
-            return { verifierDerive, verifierEntangled };
-        }
-        else return {};
+    static getUserStatus(username: string, currentIp: string): "ActiveHere" | "ActiveElsewhere" | "Offline" {
+        const { sessionReference, ipRep } = this.onlineUsers.get(username) || {};
+        if (!sessionReference) return "Offline";
+        return currentIp === ipRep ? "ActiveHere" : "ActiveElsewhere";
+    }
+
+    static async registerSocket(sessionReference: string, currentIp: string, authToken: string, authData: string, socket: Socket) {
+        return this.socketHandlers.get(sessionReference)?.registerNewSocket(currentIp, authToken, authData, socket) || false;
+    }
+
+    static disposeSession(username: string) {
+        this.socketHandlers.get(this.onlineUsers.get(username)?.sessionReference)?.dispose();
+    }
+
+    constructor(username: string, sessionReference: string, ipRep: string, mongoHandler: typeof MongoHandlerCentral.UserHandlerType, sessionCrypto: SessionCrypto) {
+        this.#username = username;
+        this.#mongoHandler = mongoHandler;
+        this.#sessionCrypto = sessionCrypto;
+        this.#mongoHandler.subscribe(this.notifyMessage.bind(this));
+        this.deleteSelf = () => SocketHandler.socketHandlers.delete(sessionReference);
+        SocketHandler.socketHandlers.set(sessionReference, this);
+        SocketHandler.onlineUsers.set(username, { sessionReference, ipRep });
     }
 
     private deregisterSocket() {
-        if (this.#socketId) {
-            socketHandlers.delete(this.#socketId);
-            onlineUsers.forEach((value, key, map) => {
-                if (value === this.#socketId) {
-                    map.delete(key);
-                }
-            })
-            this.#socketId = null;
-            this.#socket?.removeAllListeners();
-            this.#socket?.disconnect();
+        if (this.#socket) {
+            console.log(`Disonnected: socket#${this.#socket.id}`);
+            this.#disposeRooms.forEach((disposeRoom) => disposeRoom());
+            this.#socket.removeAllListeners();
+            this.#socket.disconnect();
             this.#socket = null;
         }
     }
 
-    private registerNewSocket(socket: Socket) {
-        if (!this.#sessionReference) {
-            return;
-        }
+    private async registerNewSocket(currentIp: string, authToken: string, authData: string, socket: Socket) {
+        if (!this.#username) return false;
+        if (SocketHandler.onlineUsers.get(this.#username)?.ipRep !== currentIp) return false;
+        const { username, nonce } = await this.#sessionCrypto.decryptVerifyFromBase64(authToken, "Socket Auth") || {};
+        if (username !== this.#username || nonce !== authData) return false;
         this.deregisterSocket();
         this.#socket = socket;
-        this.#socketId = socket.id;
-        socketHandlers.set(socket.id, this);
         for (let [event] of typedEntries(this.responseMap)) {
             const responseBy = this.responseMap[event].bind(this);
             socket.on(event, async (data: string, resolve) => await this.respond(event, data, responseBy, resolve));
         }
-        socket.on(SocketClientSideEvents.TerminateCurrentSession, (_, respond) => {
-            this.TerminateCurrentSession();
-            respond();
-        });
-        socket.on("disconnect", this.onSocketDisconnect.bind(this));
-    }
-
-    private onSocketDisconnect() {
-        if (!this.#socketId) {
-            return;
-        }
-        this.#disposeRooms.forEach((disposeRoom) => disposeRoom());
-        this.deregisterSocket();
-        const sessionId = this.#session.id;
-        console.log(`Disonnected: socket#${this.#socketId}`);
+        socket.on("disconnect", this.deregisterSocket.bind(this));
+        return true;
     }
 
     private async request(event: string, data: any, timeout = 0): Promise<any> {
@@ -201,9 +139,6 @@ class SocketHandler {
             else resolve(await this.#sessionCrypto.signEncryptToBase64({ payload: response }, event));
         }
         try {
-            if (this.#switchingSessionCrypto) {
-                encryptResolve(failure(ErrorStrings.InvalidRequest));
-            }
             const decryptedData = await this.#sessionCrypto.decryptVerifyFromBase64(data, event);
             if (!decryptedData) await encryptResolve(failure(ErrorStrings.DecryptFailure));
             else {
@@ -220,188 +155,8 @@ class SocketHandler {
         }
     }
 
-    private awaitSwitchSessionCrypto(sharedKeyBits: CryptoKey, clientVerifyingKey: CryptoKey): Promise<boolean> {
-        this.#switchingSessionCrypto = true;
-        return new Promise<boolean>((resolve) => {
-            const stop = () => {
-                this.#socket?.off("SwitchSessionCrypto", switchSessionCrypto);
-                this.#switchingSessionCrypto = false;
-                resolve(false);
-                this.TerminateCurrentSession();
-            };
-            let timeout: NodeJS.Timeout = null;
-            const switchSessionCrypto = async (ref: string, respond: (success: boolean) => void) => {
-                if (ref === this.#sessionReference) {
-                    this.#sessionCrypto = new SessionCrypto(this.#sessionReference, sharedKeyBits, (await identityKeys).signingKey, clientVerifyingKey);
-                    this.#switchingSessionCrypto = false;
-                    clearTimeout(timeout);
-                    respond(true);
-                    resolve(true);
-                }
-                else {
-                    respond(false);
-                    stop();
-                }
-            };
-            timeout = setTimeout(stop, 2000);
-            this.#socket.once("SwitchSessionCrypto", switchSessionCrypto);
-        });
-    }
-
-    private async UserLoginPermitted({ username }: Username): Promise<{ tries: number, allowsAt: number }> {
-        const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username, this.#ipRep);
-        return allowsAt && allowsAt > Date.now() ? { tries, allowsAt } : { tries: null, allowsAt: null };
-    }
-
     private async UsernameExists({ username }: Username): Promise<{ exists: boolean }> {
         return { exists: await MongoHandlerCentral.userExists(username) };
-    }
-
-    private async InitiateRegisterNewUser(request: RegisterNewUserRequest): Promise<RegisterNewUserChallenge | Failure> {
-        if (this.#username) return failure(ErrorStrings.InvalidRequest);
-        const { username, clientEphemeralPublic, clientIdentityVerifyingKey, verifierPoint } = request;
-        if ((await this.UsernameExists({ username })).exists) return failure(ErrorStrings.IncorrectData);
-        const { confirmClient, sharedKeyBits, serverConfirmationCode, verifierEntangled } = await esrp.serverSetupAuthChallenge(verifierPoint, clientEphemeralPublic, "now");
-        const challengeReference = getRandomString(15, "base64");
-        this.#registerChallengeTemp = { challengeReference, username, clientIdentityVerifyingKey, confirmClient, verifierPoint, sharedKeyBits };
-        this.#logInChallengeTemp = null;
-        setTimeout(() => { this.#registerChallengeTemp = null; }, 5000);
-        const serverIdentityVerifyingKey = Buffer.from((await identityKeys).verifyingKey, "base64");
-        return { challengeReference, verifierEntangled, serverConfirmationCode, serverIdentityVerifyingKey };
-    }
-
-    private async ConcludeRegisterNewUser(response: RegisterNewUserChallengeResponse): Promise<Failure> {
-        if (this.#username) return failure(ErrorStrings.InvalidRequest);
-        const { challengeReference, clientConfirmationCode, newUserDataSigned, databaseAuthKeyBuffer } = response;
-        if (!this.#registerChallengeTemp || this.#registerChallengeTemp.challengeReference !== challengeReference) return failure(ErrorStrings.InvalidReference);
-        const { username, clientIdentityVerifyingKey, confirmClient, sharedKeyBits, verifierPoint } = this.#registerChallengeTemp;
-        try {
-            if (!(await confirmClient(clientConfirmationCode))) return failure(ErrorStrings.IncorrectData);
-            const clientVerifyingKey = await crypto.importKey(clientIdentityVerifyingKey, "ECDSA", "public", false);
-            const newUserData: NewUserData = await crypto.deriveDecryptVerify(sharedKeyBits, newUserDataSigned, Buffer.alloc(32), "New User Data", clientVerifyingKey);
-            if (!newUserData) return failure(ErrorStrings.IncorrectData);
-            const databaseAuthKey = await crypto.importRaw(databaseAuthKeyBuffer);
-            if (await MongoHandlerCentral.createNewUser({ username, clientIdentityVerifyingKey, verifierPoint, ...newUserData }, databaseAuthKey)) {
-                this.#mongoHandler = await MongoHandlerCentral.instantiateUserHandler(username, databaseAuthKey);
-                if (!this.#mongoHandler) return failure(ErrorStrings.ProcessFailed);
-                this.#mongoHandler.subscribe(this.notifyMessage.bind(this));
-                console.log(`Saved user: ${username}`);
-                this.awaitSwitchSessionCrypto(sharedKeyBits, clientVerifyingKey).then(async (success) => {
-                    if (success) {
-                        this.#username = username;
-                        onlineUsers.set(username, this.#socketId);
-                    }
-                });
-                return { reason: null };
-            }
-            return failure(ErrorStrings.ProcessFailed);
-        }
-        catch (err) {
-            logError(err)
-            return failure(ErrorStrings.ProcessFailed, err);
-        }
-    }
-
-    private async InitiateLogIn(request: LogInRequest): Promise<LogInChallenge | Failure> {
-        if (this.#username) return failure(ErrorStrings.InvalidRequest);
-        const { username, clientEphemeralPublic } = request;
-        const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username, this.#ipRep);
-        if (allowsAt && allowsAt > Date.now()) {
-            return failure(ErrorStrings.TooManyWrongTries, { tries, allowsAt });
-        }
-        const { verifierDerive, verifierPoint, userData, databaseAuthKeyDerive, clientIdentityVerifyingKey } = (await MongoHandlerCentral.getLeanUser(username)) ?? {}; 
-        if (!verifierDerive) return failure(ErrorStrings.IncorrectData);
-        const clientVerifyingKey = await crypto.importKey(clientIdentityVerifyingKey, "ECDSA", "public", false);
-        const { confirmClient, sharedKeyBits, serverConfirmationCode, verifierEntangled } = await esrp.serverSetupAuthChallenge(verifierPoint, clientEphemeralPublic, "now");
-        const challengeReference = getRandomString(15, "base64");
-        this.#logInChallengeTemp = { challengeReference, confirmClient, sharedKeyBits, username, clientVerifyingKey, userData };
-        this.#registerChallengeTemp = null;
-        setTimeout(() => { this.#logInChallengeTemp = null; }, 5000);
-        return { challengeReference, serverConfirmationCode, verifierDerive, verifierEntangled, databaseAuthKeyDerive };
-    }
-
-    private async ConcludeLogIn(response: LogInChallengeResponse): Promise<UserData | Failure> {    
-        if (this.#username) return failure(ErrorStrings.InvalidRequest);
-        const { challengeReference, clientConfirmationCode, databaseAuthKeyBuffer } = response;
-        if (!this.#logInChallengeTemp || this.#logInChallengeTemp.challengeReference !== challengeReference) return failure(ErrorStrings.InvalidReference);
-        const databaseAuthKey = await crypto.importRaw(databaseAuthKeyBuffer);
-        const { confirmClient, sharedKeyBits, username, clientVerifyingKey, userData } = this.#logInChallengeTemp;
-        try {
-            if (!(await confirmClient(clientConfirmationCode))) {
-                let { tries } = await MongoHandlerCentral.getUserRetries(username, this.#ipRep);
-                tries ??= 0;
-                tries++;
-                if (tries >= 5) {
-                    const forbidInterval = 1000 * (30 + 15 * (tries - 5));
-                    const allowsAt = Date.now() + forbidInterval;
-                    await MongoHandlerCentral.updateUserRetries(username, this.#ipRep, allowsAt, tries);
-                    return failure(ErrorStrings.TooManyWrongTries, { tries, allowsAt });
-                }
-                await MongoHandlerCentral.updateUserRetries(username, this.#ipRep, null, tries);
-                return failure(ErrorStrings.IncorrectPassword, { tries });   
-            }
-            if (onlineUsers.has(username)) return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
-            this.#mongoHandler = await MongoHandlerCentral.instantiateUserHandler(username, databaseAuthKey);
-            if (!this.#mongoHandler) return failure(ErrorStrings.ProcessFailed);
-            this.#mongoHandler.subscribe(this.notifyMessage.bind(this));
-            this.awaitSwitchSessionCrypto(sharedKeyBits, clientVerifyingKey).then(async (success) => {
-                if (success) {
-                    this.#username = username;
-                    await MongoHandlerCentral.updateUserRetries(username, this.#ipRep, null, 0);
-                    onlineUsers.set(username, this.#socketId);
-                    console.log(`User ${username} logged in.`);
-                }
-            });
-            return userData;
-        }
-        catch (err) {
-            logError(err)
-            return failure(ErrorStrings.ProcessFailed, err);
-        }
-    }
-
-    private async InitiateLogInSaved({ serverKeyBits }: { serverKeyBits: Buffer }) {
-        if (this.#username || !this.#saveToken) return failure(ErrorStrings.InvalidRequest);
-        const { savedAuthDetails } = await MongoHandlerCentral.getSavedAuth(this.#saveToken, this.#ipRep) ?? {};
-        if (!savedAuthDetails) return failure(ErrorStrings.InvalidReference);
-        const { username, authKeyBits, coreKeyBits, laterConfirmation }: ServerSavedDetails = await crypto.deriveDecrypt(savedAuthDetails, serverKeyBits, "Saved Auth") ?? {};
-        if (!username) return failure(ErrorStrings.IncorrectData);
-        const { clientIdentityVerifyingKey, userData: { profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying } } = (await MongoHandlerCentral.getLeanUser(username)) ?? {}; 
-        const clientVerifyingKey = await crypto.importKey(clientIdentityVerifyingKey, "ECDSA", "public", false);
-        this.#logInSavedTemp = { username, coreKeyBits, laterConfirmation, clientVerifyingKey, userData: { profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying } };
-        setTimeout(() => { this.#logInSavedTemp = null; }, 5000);
-        return { authKeyBits };
-    }
-
-    private async ConcludeLogInSaved({ username, clientConfirmationCode, databaseAuthKeyBuffer }: Omit<LogInChallengeResponse, "challengeReference"> & Username): Promise<({ serverConfirmationCode: Buffer, coreKeyBits: Buffer, userData: Omit<UserData, "encryptionBaseDerive"> }) | Failure> {
-        if (this.#username) return failure(ErrorStrings.InvalidRequest);
-        if (onlineUsers.has(username)) return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
-        if (!this.#logInSavedTemp || this.#logInSavedTemp.username !== username) return failure(ErrorStrings.InvalidReference);
-        const databaseAuthKey = await crypto.importRaw(databaseAuthKeyBuffer);
-        const { laterConfirmation, coreKeyBits, userData, clientVerifyingKey } = this.#logInSavedTemp;
-        const { clientConfirmationData, serverConfirmationCode, sharedSecret } = laterConfirmation;
-        try {
-            if (!(await esrp.processConfirmationData(sharedSecret, clientConfirmationCode, clientConfirmationData))) return failure(ErrorStrings.IncorrectData);
-            const sharedKeyBits = await esrp.getSharedKeyBits(sharedSecret);
-            if (onlineUsers.has(username)) return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
-            this.#mongoHandler = await MongoHandlerCentral.instantiateUserHandler(username, databaseAuthKey);
-            if (!this.#mongoHandler) return failure(ErrorStrings.ProcessFailed);
-            this.#mongoHandler.subscribe(this.notifyMessage.bind(this));
-            this.awaitSwitchSessionCrypto(sharedKeyBits, clientVerifyingKey).then(async (success) => {
-                if (success) {
-                    this.#username = username;
-                    await MongoHandlerCentral.updateUserRetries(username, this.#ipRep, null, 0);
-                    onlineUsers.set(username, this.#socketId);
-                    console.log(`User ${username} logged in.`);
-                }
-            });
-            return { serverConfirmationCode, coreKeyBits, userData };
-        }
-        catch (err) {
-            logError(err)
-            return failure(ErrorStrings.ProcessFailed, err);
-        }
-
     }
 
     private async RegisterPendingSession(param: Readonly<{ sessionId: string, myAlias: string, otherAlias: string }>): Promise<Failure> {
@@ -432,7 +187,7 @@ class SocketHandler {
 
     private async RoomRequested({ username }: Username): Promise<Failure> {
         if (!this.#username || this.#username === username) return failure(ErrorStrings.InvalidRequest);
-        const otherSocketHandler = socketHandlers.get(onlineUsers.get(username));
+        const otherSocketHandler = SocketHandler.socketHandlers.get(SocketHandler.onlineUsers.get(username)?.sessionReference);
         if (!otherSocketHandler) return failure(ErrorStrings.ProcessFailed);
         const response  = await otherSocketHandler.requestRoom(this.#username);
         if (!response?.reason) {
@@ -593,29 +348,12 @@ class SocketHandler {
         }
     }
 
-    private async LogOut({ username }: Username): Promise<Failure> {
-        if (this.#username !== username) return failure(ErrorStrings.InvalidRequest);
-        this.dispose();
-    }
-
-    private async TerminateCurrentSession(): Promise<Failure> {
-        this.#session?.destroy((err) => {
-            console.log(`Session ${this.#session.id} destroyed.`);
-            this.dispose();
-        });
-        return { reason: null }
-    }
-
     private dispose() {
-        console.log(`Disposing connection: session reference ${this.#sessionReference}`);
         this.deregisterSocket();
         this.#mongoHandler.unsubscribe();
-        this.#session = null;
-        this.#sessionReference = null;
+        SocketHandler.onlineUsers.delete(this.#username);
+        this.deleteSelf();
         this.#sessionCrypto = null;
-        this.#registerChallengeTemp = null;
-        this.#logInChallengeTemp = null;
-        this.#switchingSessionCrypto = false;
         this.#username = null;
         this.#mongoHandler = null;
     }
@@ -699,6 +437,205 @@ function halfCreateRoom(roomUser1: RoomUser, messageTimeoutMs = 20000) {
     return (roomUser2: RoomUser) => createRoom(roomUser1, roomUser2, messageTimeoutMs);
 }
 
+type ServerSavedDetails = Readonly<{
+    username: string, 
+    authKeyBits: Buffer, 
+    coreKeyBits: Buffer,
+    laterConfirmation: Omit<esrp.ServerAuthChallengeLater, "verifierEntangled">,
+}>;
+
+type Temp = Readonly<{
+    setAt: number,
+    ipRep: string 
+}>;
+
+type ChallengeTemp = Temp & Readonly<{
+    confirmClient: (confirmationCode: Buffer) => Promise<boolean>, 
+    serverConfirmationCode: Buffer,
+    sharedKeyBits: CryptoKey,
+}>;
+
+type LogInTemp = Temp & Readonly<{ clientReference: string, clientVerifyingKey: CryptoKey }>;
+
+type RegisterChallengeTemp = ChallengeTemp & Omit<SignUpRequest, "clientEphemeralPublic">;
+
+type LogInChallengeTemp = ChallengeTemp & Username & LogInTemp;
+
+type LogInSavedChallengeTemp = Omit<ServerSavedDetails, "authKeyBits"> & LogInTemp;
+
+class AuthHandler {
+    static #authHandler: AuthHandler;
+    readonly #registerChallengeTemp = new Map<string, RegisterChallengeTemp>();
+    readonly #logInChallengeTemp = new Map<string, LogInChallengeTemp>();
+    readonly #logInSavedTemp = new Map<string, LogInSavedChallengeTemp & { readonly setAt: number }>();
+    readonly #serverIdentitySigningKey: CryptoKey;
+    readonly #serverIdentityVerifyingKey: Buffer;
+
+
+    static initiate(serverIdentitySigningKey: CryptoKey, serverIdentityVerifyingKey: Buffer) {
+        this.#authHandler = this.#authHandler || new AuthHandler(serverIdentitySigningKey, serverIdentityVerifyingKey);
+        return this.#authHandler;
+    }
+
+    private constructor(serverIdentitySigningKey: CryptoKey, serverIdentityVerifyingKey: Buffer) {
+        this.#serverIdentitySigningKey = serverIdentitySigningKey;
+        this.#serverIdentityVerifyingKey = serverIdentityVerifyingKey;
+        setInterval(() => {
+            const now = Date.now();
+            this.#registerChallengeTemp.forEach(({ setAt }, ref, map) => {
+                if (now > setAt + 5000) map.delete(ref);
+            });
+            this.#logInChallengeTemp.forEach(({ setAt }, ref, map) => {
+                if (now > setAt + 5000) map.delete(ref);
+            });
+            this.#logInSavedTemp.forEach(({ setAt }, ref, map) => {
+                if (now > setAt + 5000) map.delete(ref);
+            });
+        }, 1000);
+    }
+
+    async userLoginPermitted(username: string, ipRep: string): Promise<{ tries: number, allowsAt: number }> {
+        const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username, ipRep);
+        return allowsAt && allowsAt > Date.now() ? { tries, allowsAt } : { tries: null, allowsAt: null };
+    }
+
+    async initiateSignUp(ipRep: string, challengeReference: string, request: SignUpRequest): Promise<SignUpChallenge | Failure> {
+        const { username, clientReference, clientEphemeralPublic, clientIdentityVerifyingKey, verifierPoint } = request;
+        if (await MongoHandlerCentral.userExists(username)) return failure(ErrorStrings.InvalidRequest);
+        const { confirmClient, sharedKeyBits, serverConfirmationCode, verifierEntangled } = await esrp.serverSetupAuthChallenge(verifierPoint, clientEphemeralPublic, "now");
+        this.#registerChallengeTemp.set(challengeReference, { ipRep, clientReference, username, clientIdentityVerifyingKey, serverConfirmationCode, confirmClient, verifierPoint, sharedKeyBits, setAt: Date.now() });
+        const { #serverIdentityVerifyingKey: serverIdentityVerifyingKey } = this;
+        return { verifierEntangled, serverIdentityVerifyingKey };
+    }
+
+    async concludeSignUp(ipRep: string, challengeReference: string, sessionReference: string, response: SignUpChallengeResponse): Promise<LogInResponse | Failure> {
+        const { clientConfirmationCode, newUserDataSigned, databaseAuthKeyBuffer } = response;
+        const registerChallenge = this.#registerChallengeTemp.get(challengeReference);
+        if (!registerChallenge || registerChallenge.ipRep !== ipRep) return failure(ErrorStrings.InvalidReference);
+        const { username, clientReference, clientIdentityVerifyingKey, serverConfirmationCode, confirmClient, sharedKeyBits, verifierPoint } = registerChallenge;
+        try {
+            if (!(await confirmClient(clientConfirmationCode))) return failure(ErrorStrings.IncorrectData);
+            const clientVerifyingKey = await crypto.importKey(clientIdentityVerifyingKey, "ECDSA", "public", false);
+            const newUserData: NewUserData = await crypto.deriveDecryptVerify(sharedKeyBits, newUserDataSigned, Buffer.alloc(32), "New User Data", clientVerifyingKey);
+            if (!newUserData) return failure(ErrorStrings.IncorrectData);
+            const databaseAuthKey = await crypto.importRaw(databaseAuthKeyBuffer);
+            if (await MongoHandlerCentral.createNewUser({ username, clientIdentityVerifyingKey, verifierPoint, ...newUserData }, databaseAuthKey)) {
+                const mongoHandler = await MongoHandlerCentral.instantiateUserHandler(username, databaseAuthKey);
+                if (!mongoHandler) return failure(ErrorStrings.ProcessFailed);
+                const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, this.#serverIdentitySigningKey, clientVerifyingKey);
+                new SocketHandler(username, sessionReference, ipRep, mongoHandler, sessionCrypto);
+                console.log(`Saved user: ${username}`);
+                return { serverConfirmationCode };
+            }
+            return failure(ErrorStrings.ProcessFailed);
+        }
+        catch (err) {
+            logError(err)
+            return failure(ErrorStrings.ProcessFailed, err);
+        }
+    }
+
+    async initiateLogIn(ipRep: string, challengeReference: string, request: LogInRequest): Promise<LogInChallenge | Failure> {
+        const { username, clientReference, clientEphemeralPublic } = request;
+        if (!(await MongoHandlerCentral.userExists(username))) return failure(ErrorStrings.InvalidRequest);
+        const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username, ipRep);
+        if (allowsAt && allowsAt > Date.now()) {
+            return failure(ErrorStrings.TooManyWrongTries, { tries, allowsAt });
+        }
+        const { verifierDerive, verifierPoint, databaseAuthKeyDerive, clientIdentityVerifyingKey } = (await MongoHandlerCentral.getLeanUser(username)) ?? {}; 
+        if (!verifierDerive) return failure(ErrorStrings.IncorrectData);
+        const clientVerifyingKey = await crypto.importKey(clientIdentityVerifyingKey, "ECDSA", "public", false);
+        const { confirmClient, sharedKeyBits, serverConfirmationCode, verifierEntangled } = await esrp.serverSetupAuthChallenge(verifierPoint, clientEphemeralPublic, "now");
+        this.#logInChallengeTemp.set(challengeReference, { ipRep, serverConfirmationCode, confirmClient, sharedKeyBits, username, clientReference, clientVerifyingKey, setAt: Date.now() });
+        return { verifierDerive, verifierEntangled, databaseAuthKeyDerive };
+    }
+
+    async concludeLogIn(ipRep: string, challengeReference: string, sessionReference: string, response: LogInChallengeResponse): Promise<LogInResponse | Failure> {
+        const { clientConfirmationCode, databaseAuthKeyBuffer } = response;
+        const logInChallenge = this.#logInChallengeTemp.get(challengeReference);
+        if (!logInChallenge || logInChallenge.ipRep !== ipRep) return failure(ErrorStrings.InvalidReference);
+        const { confirmClient, serverConfirmationCode, sharedKeyBits, username, clientVerifyingKey, clientReference } = logInChallenge;
+        const databaseAuthKey = await crypto.importRaw(databaseAuthKeyBuffer);
+        try {
+            if (!(await confirmClient(clientConfirmationCode))) {
+                let { tries } = await MongoHandlerCentral.getUserRetries(username, ipRep);
+                tries ??= 0;
+                tries++;
+                if (tries >= 5) {
+                    const forbidInterval = 1000 * (30 + 15 * (tries - 5));
+                    const allowsAt = Date.now() + forbidInterval;
+                    await MongoHandlerCentral.updateUserRetries(username, ipRep, allowsAt, tries);
+                    return failure(ErrorStrings.TooManyWrongTries, { tries, allowsAt });
+                }
+                await MongoHandlerCentral.updateUserRetries(username, ipRep, null, tries);
+                return failure(ErrorStrings.IncorrectPassword, { tries });   
+            }
+            const status = SocketHandler.getUserStatus(username, ipRep);
+            if (status === "ActiveElsewhere") return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
+            else if (status === "ActiveHere") SocketHandler.disposeSession(username);
+            const mongoHandler = await MongoHandlerCentral.instantiateUserHandler(username, databaseAuthKey);
+            if (!mongoHandler) return failure(ErrorStrings.ProcessFailed);
+            const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, this.#serverIdentitySigningKey, clientVerifyingKey);
+            new SocketHandler(username, sessionReference, ipRep, mongoHandler, sessionCrypto);
+            return { serverConfirmationCode };
+        }
+        catch (err) {
+            logError(err)
+            return failure(ErrorStrings.ProcessFailed, err);
+        }
+    }
+
+    async InitiateLogInSaved(ipRep: string, saveToken: string, request: LogInSavedRequest): Promise<(Username & { authKeyBits: Buffer } | Failure)> {
+        const { savedAuthDetails } = await MongoHandlerCentral.getSavedAuth(saveToken, ipRep) ?? {};
+        if (!savedAuthDetails) return failure(ErrorStrings.InvalidReference);
+        const { clientReference, serverKeyBits } = request;
+        const { username, authKeyBits, coreKeyBits, laterConfirmation }: ServerSavedDetails = await crypto.deriveDecrypt(savedAuthDetails, serverKeyBits, "Saved Auth") ?? {};
+        if (!username) return failure(ErrorStrings.IncorrectData);
+        const { clientIdentityVerifyingKey } = (await MongoHandlerCentral.getLeanUser(username)) ?? {}; 
+        const clientVerifyingKey = await crypto.importKey(clientIdentityVerifyingKey, "ECDSA", "public", false);
+        this.#logInSavedTemp.set(username, { username, ipRep, clientReference, coreKeyBits, laterConfirmation, clientVerifyingKey, setAt: Date.now() });
+        return { username, authKeyBits };
+    }
+
+    async concludeLogInSaved(ipRep: string, sessionReference: string, { username, clientConfirmationCode, databaseAuthKeyBuffer }: LogInChallengeResponse & Username): Promise<LogInSavedResponse | Failure> {
+        const logInSaved = this.#logInSavedTemp.get(username)
+        if (!logInSaved || logInSaved.ipRep !== ipRep) return failure(ErrorStrings.InvalidReference);
+        const { laterConfirmation, coreKeyBits, clientVerifyingKey, clientReference } = logInSaved;
+        const databaseAuthKey = await crypto.importRaw(databaseAuthKeyBuffer);
+        const { clientConfirmationData, serverConfirmationCode, sharedSecret } = laterConfirmation;
+        try {
+            if (!(await esrp.processConfirmationData(sharedSecret, clientConfirmationCode, clientConfirmationData))) return failure(ErrorStrings.IncorrectData);
+            const sharedKeyBits = await esrp.getSharedKeyBits(sharedSecret);
+            const status = SocketHandler.getUserStatus(username, ipRep);
+            if (status === "ActiveElsewhere") return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
+            else if (status === "ActiveHere") SocketHandler.disposeSession(username);
+            const mongoHandler = await MongoHandlerCentral.instantiateUserHandler(username, databaseAuthKey);
+            if (mongoHandler) return failure(ErrorStrings.ProcessFailed);
+            const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, this.#serverIdentitySigningKey, clientVerifyingKey);
+            new SocketHandler(username, sessionReference, ipRep, mongoHandler, sessionCrypto);
+            return { serverConfirmationCode, coreKeyBits };
+        }
+        catch (err) {
+            logError(err)
+            return failure(ErrorStrings.ProcessFailed, err);
+        }
+    }
+
+    async savePassword(username: string, ipRep: string, saveToken: string, request: SavePasswordRequest): Promise<{ verifierDerive: PasswordDeriveInfo, verifierEntangled: Buffer } | Failure> {
+        console.log("Attempting save password");
+        const { serverKeyBits, authKeyBits, coreKeyBits, clientEphemeralPublic } = request;
+        const { verifierDerive, verifierPoint } = (await MongoHandlerCentral.getLeanUser(username)) ?? {};
+        if (!verifierDerive) return failure(ErrorStrings.IncorrectData);
+        const { verifierEntangled, ...laterConfirmation } = await esrp.serverSetupAuthChallenge(verifierPoint, clientEphemeralPublic, "later");
+        const serverSavedDetails: ServerSavedDetails = { username, authKeyBits, coreKeyBits, laterConfirmation };
+        const savedAuthDetails = await crypto.deriveEncrypt(serverSavedDetails, serverKeyBits, "Saved Auth");
+        if (await MongoHandlerCentral.setSavedAuth(saveToken, ipRep, savedAuthDetails)) {
+            return { verifierDerive, verifierEntangled };
+        }
+        else return failure(ErrorStrings.ProcessFailed);
+    }
+}
+
 function parseIpRepresentation(address: string) {
     if (!ipaddr.isValid(address)) return null;
     const ipv4_or_ipv6 = ipaddr.parse(address);
@@ -717,11 +654,12 @@ export function parseIpReadable(ipRep: string) {
 }
 
 async function writeJsHash() {
-    const hash = await crypto.digestToBase64("SHA-256", fs.readFileSync(`..\\client\\public\\main.js`, { flag: "r" }));
-    fs.writeFileSync(`..\\client\\public\\prvJsHash.txt`, hash);
+    const file = await fsPromises.readFile(`..\\client\\public\\main.js`, { flag: "r" });
+    const hash = await crypto.digestToBase64("SHA-256", file);
+    await fsPromises.writeFile(`..\\client\\public\\prvJsHash.txt`, hash);
 }
 
-async function watchForFileHashChange() {
+async function watchForJsHashChange() {
     const watcher = fsPromises.watch(`..\\client\\public\\main.js`);
     for await (const { eventType } of watcher) {
         if (eventType === "change") {
@@ -729,149 +667,194 @@ async function watchForFileHashChange() {
         }
     }
 }
-writeJsHash().then(() => watchForFileHashChange());
 
-const mongoUrl = "mongodb://localhost:27017/chatapp";
-MongoHandlerCentral.connect(mongoUrl);
-const MongoDBStore = ConnectMongoDBSession(session);
-const store = new MongoDBStore({ uri: mongoUrl, collection: "user_sessions" });
-const httpsOptions: ServerOptions = {
-    key: fs.readFileSync(`..\\certificates\\key.pem`),
-    cert: fs.readFileSync(`..\\certificates\\cert.pem`)
-}
-const cookie: SessionCookieOptions = { httpOnly: true, sameSite: "strict", secure: false }
-const sessionOptions: SessionOptions = {
-    secret: getRandomString(20, "base64"),
-    cookie,
-    genid(req) {
-        return `${getRandomString(10, "base64")}-${req.socket.remoteAddress}`;
-    },
-    name: "chatapp.session.id",
-    resave: true,
-    store,
-    unset: "destroy",
-    saveUninitialized: true
-};
-const corsOptions: CorsOptions = { origin: /.*/, methods: ["GET", "POST"], exposedHeaders: ["set-cookie"], allowedHeaders: ["content-type"], credentials: true };
-const sessionMiddleware = session(sessionOptions);
-const cookieParserMiddle = cookieParser();
-const app = express().use(cors(corsOptions)).use(sessionMiddleware).use(cookieParserMiddle).use(express.json());
-const httpsServer = createServer(httpsOptions, app);
-const socketHandlers = new Map<string, SocketHandler>();
-const onlineUsers = new Map<string, string>();
-const registeredKeys = new Map<string, { ipRep: string, sessionId: string, sessionKeyBits: Buffer, signingKey: CryptoKey, clientVerifyingKey: CryptoKey, timeout: NodeJS.Timeout }>();
+async function main() {
+    
+    const PORT = 8080;
+    const mongoUrl = "mongodb://localhost:27017/chatapp";
+    const httpsOptions: ServerOptions = {
+        key: fs.readFileSync(`..\\certificates\\key.pem`),
+        cert: fs.readFileSync(`..\\certificates\\cert.pem`)
+    }
+    const corsOptions: CorsOptions = { origin: /.*/, methods: ["GET", "POST"], exposedHeaders: ["set-cookie"], allowedHeaders: ["content-type"], credentials: true };
+    const { getRandomString, getRandomVector } = randomFunctions();
 
-async function getIdentityKeys() {
-    const { privateKey: signingKey, publicKey } = await MongoHandlerCentral.setupIdentity();
-    const verifyingKey = (await crypto.exportKey(publicKey)).toString("base64");
-    return { signingKey, verifyingKey };
-}
+    try {
+        config({ debug: true, path: "./config.env" });
+    }
+    catch (e) {
+        logError(e);
+        console.log("Could not load config.env");
+    }
 
-const identityKeys = getIdentityKeys();
+    await writeJsHash(); 
+    watchForJsHashChange();
+    MongoHandlerCentral.connect(mongoUrl);
+    const { signingKey, verifyingKey, cookieSign } = await MongoHandlerCentral.setupIdentity();
+    const authHandler = AuthHandler.initiate(signingKey, verifyingKey);
+    const cookieParserMiddle = cookieParser(cookieSign);
+    const cookieOptions: CookieOptions = { httpOnly: true, secure: true, sameSite: "strict", signed: true };
+    const app = express().use(cors(corsOptions)).use(cookieParserMiddle).use(express.json());
+    const httpsServer = createServer(httpsOptions, app);
+    
+    
+    const io = new SocketServer(httpsServer, {
+        cors: {
+            origin: /.*/,
+            methods: ["GET", "POST"],
+            credentials: true
+        }
+    });
 
-const io = new SocketServer(httpsServer, {
-    cors: {
-        origin: /.*/,
-        methods: ["GET", "POST"],
-        credentials: true
-    }
-});
-
-app.post("/savePassword", async (req, res) => {
-    const { payload } = req.body || {};
-    const { socket: { remoteAddress } } = req;
-    const currentIp = parseIpRepresentation(remoteAddress);
-    const { socketId, sessionReference, coreKeyBits, authKeyBits, serverKeyBits, clientEphemeralPublic } = crypto.deserialize(fromBase64(payload));
-    const saveToken = getRandomString(15, "base64");
-    if (!currentIp) {
-        res.status(400).end();
-        return;
-    }
-    const socketHandler = socketHandlers.get(socketId);
-    if (socketHandler) {
-        const { verifierDerive, verifierEntangled }= await socketHandler.savePassword(sessionReference, currentIp, saveToken, coreKeyBits, authKeyBits, serverKeyBits, clientEphemeralPublic); 
-        if (verifierDerive) {
-            const cookieOptions: CookieOptions = { httpOnly: true, secure: true, maxAge: 10 * 24 * 60 * 60 * 1000, sameSite: "strict", expires: DateTime.now().plus({ days: 10 }).toJSDate() };
-            res.cookie("saveTokenCookie", { saveToken }, cookieOptions)
-                .json({ payload: crypto.serialize({ verifierDerive, verifierEntangled }).toString("base64") })
-                .status(200)
-                .end();
-            return;
-        }       
-    }
-    res.status(403).end();
-});
-
-app.get("/verifyingKey", async (req, res) => {
-    const { verifyingKey } = await identityKeys;
-    res.json({ verifyingKey }).status(200).end();
-});
-
-app.post("/registerKeys", async (req, res) => {
-    const { sessionReference, publicDHKey, publicVerifyingKey } = req.body;
-    const { socket: { remoteAddress }, session } = req;
-    session.save();
-    const ipRep = parseIpRepresentation(remoteAddress);
-    if (!ipRep) {
-        res.status(400).end();
-        return;
-    }
-    const sessionId = session.id;
-    console.log(`Keys registered from ip ${parseIpReadable(ipRep)} with sessionReference ${sessionReference} and sessionID ${sessionId}`);
-    const { signingKey, verifyingKey } = await identityKeys;
-    const { privateKey, publicKey } = await crypto.generateKeyPair("ECDH");
-    const clientVerifyingKey = await crypto.importKey(fromBase64(publicVerifyingKey), "ECDSA", "public", true);
-    const clientPublicKey = await crypto.importKey(fromBase64(publicDHKey), "ECDH", "public", true);
-    const sessionKeyBits = await crypto.deriveSymmetricBits(privateKey, clientPublicKey, 512);
-    const serverPublicKey = (await crypto.exportKey(publicKey)).toString("base64");
-    const timeout = setTimeout(() => registeredKeys.delete(sessionReference), 10_000);
-    registeredKeys.set(sessionReference, { ipRep, sessionId, sessionKeyBits, signingKey, clientVerifyingKey, timeout });
-    res.json({ serverPublicKey, verifyingKey, sessionId }).status(200).end();
-});
-
-store.on("error", (err) => logError(err));
-httpsServer.listen(PORT, () => console.log(`listening on *:${PORT}`));
-io.use((socket: Socket, next) => {
-    sessionMiddleware(socket.request as Request, ((socket.request as any).res || {}) as Response, next as NextFunction)
-});
-io.use((socket: Socket, next) => {
-    cookieParserMiddle(socket.request as Request, ((socket.request as any).res || {}) as Response, next as NextFunction)
-});
-io.on("connection", async (socket) => {
-    const { session, cookies: { saveTokenCookie }, socket: { remoteAddress } } = socket.request;
-    const currentIp = parseIpRepresentation(remoteAddress);
-    const { saveToken } = saveTokenCookie ?? {};
-    let { sessionReference, sessionSigned } = socket.handshake.auth ?? {};
-    const rejectConnection = async () => {
-        console.log(`Rejecting sessionReference ${sessionReference}`);
-        socket.emit(SocketServerSideEvents.CompleteHandshake, "", () => { });
-        await sleep(5000);
-        socket.disconnect(true);
-    }
-    if (!currentIp || !sessionReference || !sessionSigned) {
-        await rejectConnection();
-        return;
-    }
-    console.log(`Socket connected from ip ${parseIpReadable(currentIp)} with sessionReference ${sessionReference} and session.id ${session.id} and sessionID ${(socket.request as any).sessionID}`);
-    if (!registeredKeys.has(sessionReference)) {
-        await rejectConnection();
-        return;
-    }
-    const { ipRep, sessionId, sessionKeyBits, clientVerifyingKey, signingKey, timeout } = registeredKeys.get(sessionReference);
-    clearTimeout(timeout);
-    registeredKeys.delete(sessionReference);
-    if (ipRep !== currentIp || sessionId !== session.id || !(await crypto.verify(fromBase64(sessionReference), fromBase64(sessionSigned), clientVerifyingKey))) {
-        await rejectConnection();
-        return;
-    }
-    const success = await new Promise((resolve) => {
-        socket.emit(SocketServerSideEvents.CompleteHandshake, sessionReference, resolve);
-        setTimeout(() => resolve(false), 30000);
+    app.get("/userLogInPermitted", async (req, res) => {
+        const ipRep = parseIpRepresentation(req.socket.remoteAddress);
+        const { payload } = req.body;
+        if (!ipRep || payload !== "string") return res.status(400).end();
+        const { username } = deserialize(fromBase64(payload));
+        const result = await authHandler.userLoginPermitted(username, ipRep);
+        return res.json({ payload: serialize(result).toString("base64") }).status(200).end();
     })
-    if (!success) {
-        socket.disconnect(true);
-        return;
-    }
-    const sessionKeyBitsImported = await crypto.importRaw(sessionKeyBits);
-    new SocketHandler(socket, session, sessionReference, ipRep, sessionKeyBits, sessionKeyBitsImported, signingKey, clientVerifyingKey, saveToken);
-});
+    
+    app.get("/initiateSignUp", async (req, res) => {
+        const ipRep = parseIpRepresentation(req.socket.remoteAddress);
+        const { payload } = req.body;
+        if (!ipRep || payload !== "string") return res.status(400).end();
+        const request: SignUpRequest = deserialize(fromBase64(payload));
+        const challengeReference = getRandomString(16, "base64");
+        const result = await authHandler.initiateSignUp(ipRep, challengeReference, request);
+        res.json({ payload: serialize(result).toString("base64") });
+        if (!("reason" in result)) {
+            res.cookie("signUpInit", { challengeReference }, { ...cookieOptions, maxAge: 5000 });
+        }
+        return res.status(200).end();
+    });
+    
+    app.connect("/concludeSignUp", async (req, res) => {
+        const ipRep = parseIpRepresentation(req.socket.remoteAddress);
+        const { challengeReference } = req.signedCookies?.signUpInit || {};
+        res.clearCookie("signUpInit");
+        const { payload } = req.body;
+        if (!ipRep || payload !== "string") return res.status(400).end();
+        const request: SignUpChallengeResponse= deserialize(fromBase64(payload));
+        const sessionReference = getRandomString(16, "base64");
+        const result = await authHandler.concludeSignUp(ipRep, challengeReference, sessionReference, request);
+        res.json({ payload: serialize(result).toString("base64") });
+        if (!("reason" in result)) {
+            res.cookie("authenticated", { sessionReference }, cookieOptions);
+        }
+        return res.status(200).end();
+    });
+    
+    app.get("/initiateLogIn", async (req, res) => {
+        const ipRep = parseIpRepresentation(req.socket.remoteAddress);
+        const { payload } = req.body;
+        if (!ipRep || payload !== "string") return res.status(400).end();
+        const request: LogInRequest = deserialize(fromBase64(payload));
+        const challengeReference = getRandomString(16, "base64");
+        const result = await authHandler.initiateLogIn(ipRep, challengeReference, request);
+        res.json({ payload: serialize(result).toString("base64") });
+        if (!("reason" in result)) {
+            res.cookie("logInInit", { challengeReference }, { ...cookieOptions, maxAge: 5000 });
+        }
+        return res.status(200).end();
+    });
+    
+    app.connect("/concludeLogIn", async (req, res) => {
+        const ipRep = parseIpRepresentation(req.socket.remoteAddress);
+        const { challengeReference } = req.signedCookies?.logInInit || {};
+        res.clearCookie("logInInit");
+        const { payload } = req.body;
+        if (!ipRep || payload !== "string") return res.status(400).end();
+        const request: LogInChallengeResponse= deserialize(fromBase64(payload));
+        const sessionReference = getRandomString(16, "base64");
+        const result = await authHandler.concludeLogIn(ipRep, challengeReference, sessionReference, request);
+        res.json({ payload: serialize(result).toString("base64") });
+        if (!("reason" in result)) {
+            res.cookie("authenticated", { sessionReference }, cookieOptions);
+        }
+        return res.status(200).end();
+    });
+    
+    app.get("/initiateLogInSaved", async (req, res) => {
+        const ipRep = parseIpRepresentation(req.socket.remoteAddress);
+        const { saveToken } = req.signedCookies?.passwordSaved || {};
+        const { payload } = req.body;
+        if (!ipRep || payload !== "string") return res.status(400).end();
+        const request: LogInSavedRequest = deserialize(fromBase64(payload));
+        const challengeReference = getRandomString(16, "base64");
+        const result = await authHandler.InitiateLogInSaved(ipRep, saveToken, request)
+        res.json({ payload: serialize("reason" in result ? result : _.pick(result, "authKeyBits")).toString("base64") });
+        if (!("reason" in result)) {
+            const { username } = result;
+            res.cookie("logInSavedInit", { username }, { ...cookieOptions, maxAge: 5000 });
+        }
+        return res.status(200).end();
+    });
+    
+    app.connect("/concludeLogInSaved", async (req, res) => {
+        const ipRep = parseIpRepresentation(req.socket.remoteAddress);
+        const { username } = req.signedCookies?.logInSavedInit || {};
+        res.clearCookie("logInSavedInit");
+        const { payload } = req.body;
+        if (!ipRep || payload !== "string") return res.status(400).end();
+        const request: LogInChallengeResponse= deserialize(fromBase64(payload));
+        const sessionReference = getRandomString(16, "base64");
+        const result = await authHandler.concludeLogInSaved(ipRep, sessionReference, { ...request, username });
+        res.json({ payload: serialize(result).toString("base64") });
+        if (!("reason" in result)) {
+            res.cookie("authenticated", { sessionReference }, cookieOptions);
+        }
+        return res.status(200).end();
+    });
+    
+    app.post("/savePassword", async (req, res) => {
+        const ipRep = parseIpRepresentation(req.socket.remoteAddress);
+        const { sessionReference } = req.signedCookies?.authenticated || {};
+        const { payload } = req.body || {};
+        if (!ipRep || payload !== "string") return res.status(400).end();
+        const request: SavePasswordRequest = crypto.deserialize(fromBase64(payload));
+        const username = SocketHandler.getUsername(sessionReference);
+        const saveToken = getRandomString(16, "base64");
+        const result = await authHandler.savePassword(username, ipRep, saveToken, request);
+        res.json({ payload: serialize(result).toString("base64") });
+        if (!("reason" in result)) {
+            res.cookie("passwordSaved", { saveToken }, { ...cookieOptions, maxAge: 10 * 24 * 60 * 60 * 1000, expires: DateTime.now().plus({ days: 10 }).toJSDate() });
+        }
+        return res.status(200).end();
+    });
+    
+    app.get("/authNonce", async (req, res) => {
+        const ipRep = parseIpRepresentation(req.socket.remoteAddress);
+        const { sessionReference } = req.signedCookies?.authenticated || {};
+        if (!ipRep || !sessionReference) return res.status(400).end();
+        const nonce = getRandomVector(64).toString("base64");
+        const payload = Buffer.concat([fromBase64(ipRep), fromBase64(sessionReference), fromBase64(nonce)]).toString("base64");
+        res.json({ payload });
+        res.cookie("authNonce", { nonce }, { ...cookieOptions, maxAge: 5000 });
+        return res.status(200).end();
+    });
+    
+    io.use((socket: Socket, next) => {
+        cookieParserMiddle(socket.request as Request, ((socket.request as any).res || {}) as Response, next as NextFunction)
+    });
+
+    io.on("connection", async (socket) => {
+        try {
+            const ipRep = parseIpRepresentation(socket.request.socket.remoteAddress);
+            const { authenticated: { sessionReference }, authNonce: { nonce } } = socket.request.signedCookies;
+            const { authToken } = socket.handshake.auth ?? {};
+            const authData = Buffer.concat([fromBase64(ipRep), fromBase64(sessionReference), fromBase64(nonce)]).toString("base64");
+            console.log(`Socket connected from ip ${parseIpReadable(ipRep)} with sessionReference ${sessionReference}.`);
+            if (!(await SocketHandler.registerSocket(sessionReference, ipRep, authToken, authData, socket))) {
+                socket.disconnect(true);
+            }
+        }
+        catch (err) {
+            socket.disconnect(true);
+        }
+    });
+
+    httpsServer.listen(PORT, () => console.log(`listening on *:${PORT}`));
+}
+
+main();

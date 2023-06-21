@@ -2,10 +2,10 @@ import _ from "lodash";
 import { Binary, DeleteResult } from "mongodb";
 import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
-import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PublishKeyBundlesRequest, StoredMessage, RegisterNewUserRequest, NewUserData, UserEncryptedData, Receipt, Backup, ChatSessionDetails, Username } from "../shared/commonTypes";
+import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PublishKeyBundlesRequest, StoredMessage, SignUpRequest, NewUserData, UserEncryptedData, Receipt, Backup, ChatSessionDetails, Username, NewAuthData } from "../shared/commonTypes";
 import * as crypto from "../shared/cryptoOperator";
 import { parseIpReadable, Notify } from "./backendserver";
-import { allSettledResults, logError } from "../shared/commonFunctions";
+import { allSettledResults, logError, randomFunctions } from "../shared/commonFunctions";
 
 const exposedSignedKey = {
     exportedPublicKey: {
@@ -123,6 +123,12 @@ export class MongoHandlerCentral {
         },
         serverIdentityVerifyingKey: {
             type: Schema.Types.Buffer,
+            required: true,
+            immutable: true,
+            unique: true
+        },
+        cookieSign: {
+            type: Schema.Types.String,
             required: true,
             immutable: true,
             unique: true
@@ -517,23 +523,24 @@ export class MongoHandlerCentral {
     }
 
     static async setupIdentity() {
-        const serverData = await this.ServerData.find();
+        const serverData = cleanLean(await this.ServerData.find().lean());
         if (serverData.length === 0) {
             const keyPair = await crypto.generateKeyPair("ECDSA");
             const serverIdentitySigningKey = await crypto.exportKey(keyPair.privateKey);
             const serverIdentityVerifyingKey = await crypto.exportKey(keyPair.publicKey);
-            this.ServerData.create({ serverIdentitySigningKey, serverIdentityVerifyingKey });
-            return keyPair;
+            const cookieSign = randomFunctions().getRandomString(20, "base64");
+            this.ServerData.create({ serverIdentitySigningKey, serverIdentityVerifyingKey, cookieSign });
+            return { signingKey: keyPair.privateKey, verifyingKey: serverIdentityVerifyingKey, cookieSign };
         }
         else {
-            const { serverIdentitySigningKey, serverIdentityVerifyingKey } = serverData[0];
-            const privateKey = await crypto.importKey(serverIdentitySigningKey, "ECDSA", "private", false);
-            const publicKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", true);
-            return { privateKey, publicKey };
+            const { serverIdentitySigningKey, serverIdentityVerifyingKey, cookieSign } = serverData[0];
+            const signingKey = await crypto.importKey(serverIdentitySigningKey, "ECDSA", "private", false);
+            const verifyingKey: Buffer = serverIdentityVerifyingKey;
+            return { signingKey, verifyingKey, cookieSign };
         }
     }
 
-    static async createNewUser(user: Omit<RegisterNewUserRequest, "clientEphemeralPublic"> & NewUserData, databaseAuthKey: CryptoKey) {
+    static async createNewUser(user: Username & NewAuthData & NewUserData, databaseAuthKey: CryptoKey) {
         try {
             const { username } = user;
             if ((await this.DatabaseAccessKey.find({ username, type: "root" })).length > 0) return false;

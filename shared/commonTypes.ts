@@ -169,34 +169,55 @@ export type Failure = Readonly<{
 }>;
 
 export type LogInRequest = Username & Readonly<{
+    clientReference: string;
     clientEphemeralPublic: Buffer;
 }>;
 
-export type RegisterNewUserRequest = LogInRequest & Readonly<{
+export type LogInSavedRequest = Readonly<{
+    clientReference: string;
+    serverKeyBits: Buffer;
+}>;
+
+export type SavePasswordRequest = Readonly<{
+    coreKeyBits: Buffer, 
+    authKeyBits: Buffer, 
+    serverKeyBits: Buffer, 
+    clientEphemeralPublic: Buffer
+}>;
+
+export type NewAuthData = Readonly<{
     verifierPoint: Buffer,
     clientIdentityVerifyingKey: Buffer
-}>
+}>;
 
-export type LogInChallenge = Readonly<{
-    challengeReference: string,
-    verifierDerive: PasswordDeriveInfo,
+export type SignUpRequest = LogInRequest & NewAuthData;
+
+export type SignUpChallenge = Readonly<{
     verifierEntangled: Buffer,
-    serverConfirmationCode: Buffer,
-    databaseAuthKeyDerive: PasswordEntangleInfo
-}>
-
-export type RegisterNewUserChallenge = Omit<LogInChallenge, "verifierDerive" | "databaseAuthKeyDerive"> & Readonly<{
     serverIdentityVerifyingKey: Buffer
 }>;
 
+export type LogInChallenge = Omit<SignUpChallenge, "serverIdentityVerifyingKey"> & Readonly<{
+    verifierEntangled: Buffer,
+    verifierDerive: PasswordDeriveInfo,
+    databaseAuthKeyDerive: PasswordEntangleInfo
+}>;
+
 export type LogInChallengeResponse = Readonly<{
-    challengeReference: string,
     clientConfirmationCode: Buffer,
     databaseAuthKeyBuffer: Buffer
 }>;
 
-export type RegisterNewUserChallengeResponse = LogInChallengeResponse & {
+export type SignUpChallengeResponse = LogInChallengeResponse & {
     readonly newUserDataSigned: SignedEncryptedData;
+};
+
+export type LogInResponse = { 
+    readonly serverConfirmationCode: Buffer 
+};
+
+export type LogInSavedResponse = LogInResponse & {
+    readonly coreKeyBits: Buffer;
 }
 
 export type UserData = Readonly<{
@@ -223,16 +244,9 @@ export type RequestKeyBundleResponse = {
     keyBundle: KeyBundle;
 };
 
-enum SocketClientSideEventsEnum {
-    UsernameExists, 
-    UserLoginPermitted,
-    InitiateRegisterNewUser,
-    ConcludeRegisterNewUser,
-    InitiateLogIn,
-    ConcludeLogIn,
-    InitiateLogInSaved,
-    ConcludeLogInSaved,
 
+enum SocketClientSideEventsEnum {
+    UsernameExists,
     PublishKeyBundles,
     UpdateUserData,
     RequestKeyBundle,
@@ -263,9 +277,7 @@ enum SocketClientSideEventsEnum {
     GetAllReceipts,
     ClearAllReceipts,
 
-    LogOut,
     RequestRoom,
-    TerminateCurrentSession
 }
 
 export type SocketClientSideEventsKey = Exclude<keyof typeof SocketClientSideEventsEnum, number>
@@ -285,14 +297,7 @@ function constructSocketClientSideEvents() {
 export const SocketClientSideEvents = constructSocketClientSideEvents();
 
 type SocketClientRequestParametersMap = {
-    UsernameExists: Username, 
-    UserLoginPermitted: Username, 
-    InitiateRegisterNewUser: RegisterNewUserRequest,
-    ConcludeRegisterNewUser: RegisterNewUserChallengeResponse,
-    InitiateLogIn: LogInRequest,
-    ConcludeLogIn: LogInChallengeResponse,
-    InitiateLogInSaved: { serverKeyBits: Buffer },
-    ConcludeLogInSaved: Omit<LogInChallengeResponse, "challengeReference"> & Username,
+    UsernameExists: Username,
     PublishKeyBundles: PublishKeyBundlesRequest,
     UpdateUserData: { x3dhInfo?: UserEncryptedData } & Username,
     RequestKeyBundle: Username,
@@ -317,25 +322,15 @@ type SocketClientRequestParametersMap = {
     SendReceipt: Receipt,
     GetAllReceipts: SessionIdentifier,
     ClearAllReceipts: SessionIdentifier,
-    LogOut: Username,
     RequestRoom: Username,
-    TerminateCurrentSession: []
 }
 
 export type SocketClientRequestParameters = {
     [E in SocketClientSideEventsKey]: SocketClientRequestParametersMap[E];
 }
 
-
 type SocketClientRequestReturnMap = {
-    UsernameExists: { exists: boolean }, 
-    UserLoginPermitted: { tries: number, allowsAt: number }, 
-    InitiateRegisterNewUser: RegisterNewUserChallenge,
-    ConcludeRegisterNewUser: never,
-    InitiateLogIn: LogInChallenge,
-    ConcludeLogIn: UserData,
-    InitiateLogInSaved: { authKeyBits: Buffer },
-    ConcludeLogInSaved: { serverConfirmationCode: Buffer, coreKeyBits: Buffer, userData: Omit<UserData, "encryptionBaseDerive"> },
+    UsernameExists: { exists: boolean },
     PublishKeyBundles: never,
     UpdateUserData: never,
     RequestKeyBundle: RequestKeyBundleResponse,
@@ -360,9 +355,7 @@ type SocketClientRequestReturnMap = {
     SendReceipt: never,
     GetAllReceipts: Receipt[],
     ClearAllReceipts: never,
-    LogOut: never,
     RequestRoom: never,
-    TerminateCurrentSession: never
 }
 
 export type SocketClientRequestReturn = {
