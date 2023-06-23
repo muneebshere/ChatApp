@@ -52,6 +52,10 @@ export type SignedEncryptedData = EncryptedData & {
 
 export type UserEncryptedData = EncryptedData & { hSalt: Buffer };
 
+export type LogInPermitted = { 
+    readonly login: false | { tries: number, allowsAt: number } 
+};
+
 export type Profile = Readonly<{
     username: string;
     displayName: string;
@@ -185,6 +189,11 @@ export type SavePasswordRequest = Readonly<{
     clientEphemeralPublic: Buffer
 }>;
 
+export type SavePasswordResponse = Readonly<{ 
+    verifierDerive: PasswordDeriveInfo, 
+    verifierEntangled: Buffer 
+}>;
+
 export type NewAuthData = Readonly<{
     verifierPoint: Buffer,
     clientIdentityVerifyingKey: Buffer
@@ -212,11 +221,11 @@ export type SignUpChallengeResponse = LogInChallengeResponse & {
     readonly newUserDataSigned: SignedEncryptedData;
 };
 
-export type LogInResponse = { 
+export type LogInResponse = UserData & { 
     readonly serverConfirmationCode: Buffer 
 };
 
-export type LogInSavedResponse = LogInResponse & {
+export type LogInSavedResponse = Omit<LogInResponse, "encryptionBaseDerive"> & {
     readonly coreKeyBits: Buffer;
 }
 

@@ -6,7 +6,7 @@ import { SubmitResponse } from "../App";
 import { DisableSelectTypography, StyledJoySwitch } from "./CommonElementStyles";
 import ControlledTextField from "./ControlledTextField";
 import WarnSavePassword from "./WarnSavePassword";
-import { ErrorStrings, Failure } from "../../../shared/commonTypes";
+import { ErrorStrings, Failure, LogInPermitted } from "../../../shared/commonTypes";
 
 type LogInData = {
   readonly username: string;
@@ -20,8 +20,7 @@ type LogInData = {
   readonly failed: boolean;
   readonly submitted: boolean;
   readonly warned: boolean;
-  readonly usernameExists: (username: string) => Promise<boolean>;
-  readonly userLoginPermitted: (username: string) => Promise<{ tries: number, allowsAt: number }>;
+  readonly userLoginPermitted: (username: string) => Promise<LogInPermitted>;
   readonly submit: (response: SubmitResponse) => Promise<Failure>;
 }
 
@@ -75,7 +74,7 @@ export const defaultLogInDataReducer: LogInDataReducer = (data, action) => {
 export const LogInContext = createContext<LogInContextType>(null);
 
 export default function LogInForm() {
-  const { logInData: { username, usernameEntered, password, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, failed, submitted, warned, usernameExists, userLoginPermitted, submit },  logInDispatch } = useContext(LogInContext);
+  const { logInData: { username, usernameEntered, password, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, failed, submitted, warned, userLoginPermitted, submit },  logInDispatch } = useContext(LogInContext);
   const [usernameError, setUsernameError] = useState("");
   const setUsername = (username: string) => logInDispatch(logInAction("username", username));
   const setUsernameEntered = (usernameEntered: boolean) => logInDispatch(logInAction("usernameEntered", usernameEntered));
@@ -93,7 +92,7 @@ export default function LogInForm() {
   const decrementTimer = useCallback(() => setTryAgainIn(tryAgainIn - 1000), [tryAgainIn]);
 
   useEffect(() => {
-    usernameExists(username).then((exists) => setUsernameError(exists ? null: "No such user.")).catch(() => {});
+    username && userLoginPermitted(username).then(({ login }) => setUsernameError(login ? null: "No such user.")).catch(() => {});
   }, [username]);
 
   useEffect(() => {
@@ -104,15 +103,17 @@ export default function LogInForm() {
     else if (timerRef.current) window.clearInterval(timerRef.current);
   }, [tryAgainIn]);
 
-  function onUsernameEntered() {
+  async function onUsernameEntered() {
     if (!usernameError) {
       setUsernameEntered(true);
-      userLoginPermitted(username).then((({ tries, allowsAt }) => {
+      const { login } = await userLoginPermitted(username);
+      if (login) {
+        const { tries, allowsAt } = login;
         if (tries && allowsAt) {
           setTryCount(tries);
           setTryAgainIn(allowsAt - Date.now());
         }
-      }));
+      }
     }
   }
 

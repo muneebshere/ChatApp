@@ -1,7 +1,7 @@
 import _ from "lodash";
 import { Socket } from "socket.io";
 import { SessionCrypto } from "../shared/sessionCrypto";
-import { Failure, ErrorStrings, Username, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, UserEncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Receipt, MessageIdentifier, ChatIdentifier, SessionIdentifier, HeaderIdentifier, Backup } from "../shared/commonTypes";
+import { Failure, ErrorStrings, Username, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, UserEncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Receipt, MessageIdentifier, ChatIdentifier, SessionIdentifier, HeaderIdentifier, Backup, UserData } from "../shared/commonTypes";
 import { allSettledResults, failure, logError, typedEntries } from "../shared/commonFunctions";
 import { MongoHandlerCentral } from "./MongoHandler";
 
@@ -90,8 +90,8 @@ function halfCreateRoom(roomUser1: RoomUser, messageTimeoutMs = 20000) {
 }
 
 export default class SocketHandler {
-    private static socketHandlers: Map<string, SocketHandler>;
-    private static onlineUsers: Map<string, { sessionReference: string, ipRep: string }>;
+    private static socketHandlers = new Map<string, SocketHandler>();
+    private static onlineUsers = new Map<string, { sessionReference: string, ipRep: string }>();
 
     private readonly responseMap: ResponseMap = {
         [SocketClientSideEvents.UsernameExists]: this.UsernameExists,
@@ -140,12 +140,16 @@ export default class SocketHandler {
         return currentIp === ipRep ? "ActiveHere" : "ActiveElsewhere";
     }
 
-    static async registerSocket(sessionReference: string, currentIp: string, authToken: string, authData: string, socket: Socket) {
-        return this.socketHandlers.get(sessionReference)?.registerNewSocket(currentIp, authToken, authData, socket) || false;
+    static async registerSocket(sessionReference: string, ipRep: string, authToken: string, authData: string, socket: Socket) {
+        return this.socketHandlers.get(sessionReference)?.registerNewSocket(ipRep, authToken, authData, socket) || false;
     }
 
-    static disposeSession(username: string) {
+    static disposeUserSessions(username: string) {
         this.socketHandlers.get(this.onlineUsers.get(username)?.sessionReference)?.dispose();
+    }
+
+    static disposeSession(sessionReference: string) {
+        this.socketHandlers.get(sessionReference)?.dispose();
     }
 
     constructor(username: string, sessionReference: string, ipRep: string, mongoHandler: typeof MongoHandlerCentral.UserHandlerType, sessionCrypto: SessionCrypto) {
@@ -168,11 +172,11 @@ export default class SocketHandler {
         }
     }
 
-    private async registerNewSocket(currentIp: string, authToken: string, authData: string, socket: Socket) {
+    private async registerNewSocket(ipRep: string, authToken: string, authData: string, socket: Socket) {
         if (!this.#username) return false;
-        if (SocketHandler.onlineUsers.get(this.#username)?.ipRep !== currentIp) return false;
-        const { username, nonce } = await this.#sessionCrypto.decryptVerifyFromBase64(authToken, "Socket Auth") || {};
-        if (username !== this.#username || nonce !== authData) return false;
+        if (SocketHandler.onlineUsers.get(this.#username)?.ipRep !== ipRep) return false;
+        const { username, authNonce } = await this.#sessionCrypto.decryptVerifyFromBase64(authToken, "Socket Auth") || {};
+        if (username !== this.#username || authNonce !== authData) return false;
         this.deregisterSocket();
         this.#socket = socket;
         for (let [event] of typedEntries(this.responseMap)) {
@@ -186,9 +190,9 @@ export default class SocketHandler {
     private async request(event: string, data: any, timeout = 0): Promise<any> {
         return await new Promise(async (resolve: (result: any) => void) => {
             this.#socket?.emit(event, await this.#sessionCrypto.signEncryptToBase64(data, event),
-                async (response: string) => resolve(response ? await this.#sessionCrypto.decryptVerifyFromBase64(response, event) : {}));
+                async (response: string) => resolve(response ? await this.#sessionCrypto.decryptVerifyFromBase64(response, event) : failure(ErrorStrings.DecryptFailure)));
             if (timeout > 0) {
-                setTimeout(() => resolve({}), timeout);
+                setTimeout(() => resolve(failure(ErrorStrings.NoConnectivity)), timeout);
             }
         }).catch((err) => console.log(`${err}\n${err.stack}`));
     }
@@ -261,27 +265,6 @@ export default class SocketHandler {
         return response;
     }
 
-    private async requestRoom(username: string): Promise<Failure> {
-        if (!this.#username || this.#username === username) return failure(ErrorStrings.InvalidRequest);
-        const response: Failure = await this.request(SocketServerSideEvents.RoomRequested, { username });
-        if (!response?.reason) {
-            this.#openToRoomTemp = { username };
-            setTimeout(() => { this.#openToRoomTemp = null; }, 5000);
-        }
-        return response;
-    }
-
-    private async establishRoom(username: string, halfRoom: (roomUser2: RoomUser) => Promise<() => void>): Promise<(() => void)> 
-    {
-        if (!this.#openToRoomTemp || this.#openToRoomTemp.username !== username) return null;
-        return halfRoom([this.#username, this.#socket, this.#sessionCrypto]).then((dispose) => {
-            if (dispose) {
-                this.#disposeRooms.push(dispose);
-            }
-            return dispose;
-        });
-    }
-
     private async SendChatRequest(chatRequest: ChatRequestHeader): Promise<Failure> {
         if (!this.#username || this.#username === chatRequest.addressedTo) return failure(ErrorStrings.InvalidRequest);
         if (!(await MongoHandlerCentral.depositChatRequest(chatRequest))) return failure(ErrorStrings.ProcessFailed);
@@ -293,7 +276,7 @@ export default class SocketHandler {
         if (!(await this.#mongoHandler.depositMessage(message))) return failure(ErrorStrings.ProcessFailed);
         else return { reason: null };
     }
-
+ 
     private async GetAllChats(): Promise<ChatData[] | Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         return await this.#mongoHandler.getAllChats();
@@ -394,6 +377,27 @@ export default class SocketHandler {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.clearAllReceipts(toAlias, sessionId))) return failure(ErrorStrings.ProcessFailed);
         return { reason: null };
+    }
+
+    private async requestRoom(username: string): Promise<Failure> {
+        if (!this.#username || this.#username === username) return failure(ErrorStrings.InvalidRequest);
+        const response: Failure = await this.request(SocketServerSideEvents.RoomRequested, { username }, 2000);
+        if (!response?.reason) {
+            this.#openToRoomTemp = { username };
+            setTimeout(() => { this.#openToRoomTemp = null; }, 5000);
+        }
+        return response;
+    }
+
+    private async establishRoom(username: string, halfRoom: (roomUser2: RoomUser) => Promise<() => void>): Promise<(() => void)> 
+    {
+        if (!this.#openToRoomTemp || this.#openToRoomTemp.username !== username) return null;
+        return halfRoom([this.#username, this.#socket, this.#sessionCrypto]).then((dispose) => {
+            if (dispose) {
+                this.#disposeRooms.push(dispose);
+            }
+            return dispose;
+        });
     }
 
     private async notifyMessage(notify: Notify) {

@@ -1,4 +1,5 @@
 import _ from "lodash";
+import xor from "buffer-xor";
 import { DateTime } from "luxon";
 import { config } from "./node_modules/dotenv";
 import { ServerOptions, createServer } from "node:https";
@@ -93,151 +94,164 @@ async function main() {
         }
     });
 
-    app.get("/userLogInPermitted", async (req, res) => {
+    app.get("/userLogInPermitted/:username", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
-        const { payload } = req.body;
-        if (!ipRep || payload !== "string") return res.status(400).end();
-        const { username } = deserialize(fromBase64(payload));
-        const result = await authHandler.userLoginPermitted(username, ipRep);
-        return res.json({ payload: serialize(result).toString("base64") }).status(200).end();
-    })
+        if (!ipRep) return res.status(400).end();
+        const { login } = await authHandler.userLoginPermitted(req.params.username, ipRep);
+        return res.json({ login });
+    });
+
+    app.get("/userExists/:username", async (req, res) => {
+        const { exists } = await authHandler.userExists(req.params.username);
+        return res.json({ exists });
+    });
     
-    app.get("/initiateSignUp", async (req, res) => {
+    app.post("/initiateSignUp", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { payload } = req.body;
-        if (!ipRep || payload !== "string") return res.status(400).end();
+        if (!ipRep || typeof payload !== "string") return res.status(400).end();
         const request: SignUpRequest = deserialize(fromBase64(payload));
         const challengeReference = getRandomString(16, "base64");
         const result = await authHandler.initiateSignUp(ipRep, challengeReference, request);
-        res.json({ payload: serialize(result).toString("base64") });
         if (!("reason" in result)) {
             res.cookie("signUpInit", { challengeReference }, { ...cookieOptions, maxAge: 5000 });
         }
-        return res.status(200).end();
+        return res.json({ payload: serialize(result).toString("base64") });
     });
     
-    app.connect("/concludeSignUp", async (req, res) => {
+    app.post("/concludeSignUp", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { challengeReference } = req.signedCookies?.signUpInit || {};
         res.clearCookie("signUpInit");
         const { payload } = req.body;
-        if (!ipRep || payload !== "string") return res.status(400).end();
+        if (!ipRep || typeof payload !== "string") return res.status(400).end();
         const request: SignUpChallengeResponse= deserialize(fromBase64(payload));
         const sessionReference = getRandomString(16, "base64");
         const result = await authHandler.concludeSignUp(ipRep, challengeReference, sessionReference, request);
-        res.json({ payload: serialize(result).toString("base64") });
         if (!("reason" in result)) {
-            res.cookie("authenticated", { sessionReference }, cookieOptions);
+            res.cookie("authenticated", { sessionReference, sessionIp: ipRep }, cookieOptions);
         }
-        return res.status(200).end();
+        return res.json({ payload: serialize(result).toString("base64") });
     });
     
-    app.get("/initiateLogIn", async (req, res) => {
+    app.post("/initiateLogIn", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { payload } = req.body;
-        if (!ipRep || payload !== "string") return res.status(400).end();
+        if (!ipRep || typeof payload !== "string") return res.status(400).end();
         const request: LogInRequest = deserialize(fromBase64(payload));
         const challengeReference = getRandomString(16, "base64");
         const result = await authHandler.initiateLogIn(ipRep, challengeReference, request);
-        res.json({ payload: serialize(result).toString("base64") });
         if (!("reason" in result)) {
             res.cookie("logInInit", { challengeReference }, { ...cookieOptions, maxAge: 5000 });
         }
-        return res.status(200).end();
+        return res.json({ payload: serialize(result).toString("base64") }).status(200).end();
     });
     
-    app.connect("/concludeLogIn", async (req, res) => {
+    app.post("/concludeLogIn", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { challengeReference } = req.signedCookies?.logInInit || {};
         res.clearCookie("logInInit");
         const { payload } = req.body;
-        if (!ipRep || payload !== "string") return res.status(400).end();
+        if (!ipRep || typeof payload !== "string") return res.status(400).end();
         const request: LogInChallengeResponse= deserialize(fromBase64(payload));
         const sessionReference = getRandomString(16, "base64");
         const result = await authHandler.concludeLogIn(ipRep, challengeReference, sessionReference, request);
-        res.json({ payload: serialize(result).toString("base64") });
         if (!("reason" in result)) {
-            res.cookie("authenticated", { sessionReference }, cookieOptions);
+            res.cookie("authenticated", { sessionReference, sessionIp: ipRep }, cookieOptions);
         }
-        return res.status(200).end();
+        return res.json({ payload: serialize(result).toString("base64") });
     });
     
-    app.get("/initiateLogInSaved", async (req, res) => {
+    app.post("/initiateLogInSaved", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { saveToken } = req.signedCookies?.passwordSaved || {};
         const { payload } = req.body;
-        if (!ipRep || payload !== "string") return res.status(400).end();
+        if (!ipRep || typeof payload !== "string") return res.status(400).end();
         const request: LogInSavedRequest = deserialize(fromBase64(payload));
-        const challengeReference = getRandomString(16, "base64");
-        const result = await authHandler.InitiateLogInSaved(ipRep, saveToken, request)
-        res.json({ payload: serialize("reason" in result ? result : _.pick(result, "authKeyBits")).toString("base64") });
+        const result = await authHandler.InitiateLogInSaved(ipRep, saveToken, request);
         if (!("reason" in result)) {
             const { username } = result;
             res.cookie("logInSavedInit", { username }, { ...cookieOptions, maxAge: 5000 });
         }
-        return res.status(200).end();
+        return res.json({ payload: serialize("reason" in result ? result : _.pick(result, "authKeyBits")).toString("base64") });
     });
     
-    app.connect("/concludeLogInSaved", async (req, res) => {
+    app.post("/concludeLogInSaved", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { username } = req.signedCookies?.logInSavedInit || {};
         res.clearCookie("logInSavedInit");
         const { payload } = req.body;
-        if (!ipRep || payload !== "string") return res.status(400).end();
+        if (!ipRep || typeof payload !== "string") return res.status(400).end();
         const request: LogInChallengeResponse= deserialize(fromBase64(payload));
         const sessionReference = getRandomString(16, "base64");
         const result = await authHandler.concludeLogInSaved(ipRep, sessionReference, { ...request, username });
-        res.json({ payload: serialize(result).toString("base64") });
         if (!("reason" in result)) {
-            res.cookie("authenticated", { sessionReference }, cookieOptions);
+            res.cookie("authenticated", { sessionReference, sessionIp: ipRep }, cookieOptions);
         }
-        return res.status(200).end();
+        return res.json({ payload: serialize(result).toString("base64") });
     });
     
     app.post("/savePassword", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { sessionReference } = req.signedCookies?.authenticated || {};
         const { payload } = req.body || {};
-        if (!ipRep || payload !== "string") return res.status(400).end();
+        if (!ipRep || typeof payload !== "string") return res.status(400).end();
         const request: SavePasswordRequest = crypto.deserialize(fromBase64(payload));
         const username = SocketHandler.getUsername(sessionReference);
         const saveToken = getRandomString(16, "base64");
         const result = await authHandler.savePassword(username, ipRep, saveToken, request);
-        res.json({ payload: serialize(result).toString("base64") });
         if (!("reason" in result)) {
             res.cookie("passwordSaved", { saveToken }, { ...cookieOptions, maxAge: 10 * 24 * 60 * 60 * 1000, expires: DateTime.now().plus({ days: 10 }).toJSDate() });
         }
-        return res.status(200).end();
+        return res.json({ payload: serialize(result).toString("base64") });
+    });
+    
+    app.post("/userLogOut", async (req, res) => {
+        const { sessionReference } = req.signedCookies?.authenticated || {};
+        SocketHandler.disposeSession(sessionReference);
+        return res.clearCookie("authenticated").clearCookie("savedPassword").status(200).end();
+    });
+    
+    app.post("/terminateCurrentSession", async (req, res) => {
+        const { sessionReference } = req.signedCookies?.authenticated || {};
+        SocketHandler.disposeSession(sessionReference);
+        return res.clearCookie("authenticated").status(200).end();
     });
     
     app.get("/authNonce", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
+        const { sessionReference, sessionIp } = req.signedCookies?.authenticated || {};
+        if (!ipRep || !sessionReference || !sessionIp || sessionIp !== ipRep) return res.status(400).end();
+        const nonceVector = getRandomVector(64);
+        const nonce = nonceVector.toString("base64");
+        const authNonce = xor(Buffer.concat([fromBase64(ipRep), fromBase64(sessionReference), nonceVector]), nonceVector).toString("base64");
+        return res.cookie("authNonce", { nonce }, { ...cookieOptions, maxAge: 5000 }).json({ authNonce });
+    });
+    
+    app.get("/isLoggedIn", async (req, res) => {
+        const ipRep = parseIpRepresentation(req.socket.remoteAddress);
+        if (!ipRep) return res.status(400).end();
         const { sessionReference } = req.signedCookies?.authenticated || {};
-        if (!ipRep || !sessionReference) return res.status(400).end();
-        const nonce = getRandomVector(64).toString("base64");
-        const payload = Buffer.concat([fromBase64(ipRep), fromBase64(sessionReference), fromBase64(nonce)]).toString("base64");
-        res.json({ payload });
-        res.cookie("authNonce", { nonce }, { ...cookieOptions, maxAge: 5000 });
-        return res.status(200).end();
+        const loggedIn = !!sessionReference;
+        return res.json({ loggedIn });
     });
     
     io.use((socket: Socket, next) => {
         cookieParserMiddle(socket.request as Request, ((socket.request as any).res || {}) as Response, next as NextFunction)
     });
 
-    io.on("connection", async (socket) => {
+    io.use(async (socket: Socket, next) => {
         try {
             const ipRep = parseIpRepresentation(socket.request.socket.remoteAddress);
             const { authenticated: { sessionReference }, authNonce: { nonce } } = socket.request.signedCookies;
             const { authToken } = socket.handshake.auth ?? {};
-            const authData = Buffer.concat([fromBase64(ipRep), fromBase64(sessionReference), fromBase64(nonce)]).toString("base64");
+            const nonceVector = fromBase64(nonce);
+            const authData = xor(Buffer.concat([fromBase64(ipRep), fromBase64(sessionReference), nonceVector]), nonceVector).toString("base64");
             console.log(`Socket connected from ip ${parseIpReadable(ipRep)} with sessionReference ${sessionReference}.`);
-            if (!(await SocketHandler.registerSocket(sessionReference, ipRep, authToken, authData, socket))) {
-                socket.disconnect(true);
-            }
+            next(await SocketHandler.registerSocket(sessionReference, ipRep, authToken, authData, socket) ? undefined : new Error(("Registering socket failed.")));
         }
         catch (err) {
-            socket.disconnect(true);
+            next(new Error(err.toString()));
         }
     });
 

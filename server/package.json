@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "browser-or-node": "^2.1.1",
+    "buffer-xor": "^2.0.2",
     "connect-mongodb-session": "^3.1.1",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
@@ -30,6 +31,7 @@
   "author": "Muneeb Shere",
   "license": "The Unlicense",
   "devDependencies": {
+    "@types/buffer-xor": "^2.0.0",
     "@types/connect-mongodb-session": "^2.4.4",
     "@types/cookie-parser": "^1.4.3",
     "@types/cors": "^2.8.13",

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useReducer } from "react";
+import React, { useState, useEffect, useReducer, useRef } from "react";
 import { createRoot } from "react-dom/client";
 
 import { Container, CircularProgress } from "@mui/joy";
@@ -13,6 +13,7 @@ import Client, { ClientEvent } from "./client";
 import * as crypto from "../../shared/cryptoOperator";
 import { match } from "ts-pattern";
 import tinycolor from "tinycolor2";
+import AuthClient from "./AuthClient";
 
 export type SubmitResponse = {
   displayName?: string;
@@ -21,9 +22,6 @@ export type SubmitResponse = {
   savePassword: boolean;
 }
 
-const PORT = 8080;
-const { hostname, protocol } = window.location;
-const client = new Client(`${protocol}//${hostname}:${PORT}`);
 const generateAvatar = createAvatarGenerator(200, 200);
 const jsHash = calculateJsHash();
 window.setInterval(async () => {
@@ -33,8 +31,7 @@ window.setInterval(async () => {
     console.log("js file changed.");
     window.history.go(); 
   }
-}, 1000);
-client.establishSession();
+}, 10000);
 
 if ("virtualKeyboard" in navigator) {
   (navigator.virtualKeyboard as any).overlaysContent = true;
@@ -99,114 +96,80 @@ function Root() {
 
 function App() {
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
-  const [logInData, logInDispatch] = useReducer(defaultLogInDataReducer, { ...defaultLogInData, usernameExists, userLoginPermitted, submit: logIn });
+  const [logInData, logInDispatch] = useReducer(defaultLogInDataReducer, { ...defaultLogInData, userLoginPermitted, submit: logIn });
   const [signUpData, signUpDispatch] = useReducer(defaultSignUpDataReducer, { ...defaultSignUpData, usernameExists, submit: signUp });
-  const [connected, setConnected] = useState(false);
-  const [retrying, setRetrying] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
-  const [displayName, setDisplayName] = useState("");
   const [currentTab, setCurrentTab] = useState(0);
   const [visualHeight, setVisualHeight] = useState(window.visualViewport.height);
-
-  const notifyStatus = (status: ClientEvent) => {
-    match(status)
-      .with(ClientEvent.Disconnected,
-        ClientEvent.FailedToConnect, () => setConnected(false))
-      .with(ClientEvent.Connecting,
-        ClientEvent.Reconnecting, () => {
-          setConnected(false);
-          setRetrying(true);
-        })
-      .with(ClientEvent.Connected, () => {
-        if (window.localStorage.getItem("SavedAuth")) {
-          client.logInSaved().then(({ reason }) => {
-            setConnected(true);
-            if (!reason) {
-              setSignedIn(true);
-            }
-          })
-        }
-        else setConnected(true);
-      })
-      .with(ClientEvent.SigningIn,
-        ClientEvent.FailedSignIn,
-        ClientEvent.ReAuthenticating,
-        ClientEvent.FailedReAuthentication,
-        ClientEvent.CreatingNewUser,
-        ClientEvent.FailedCreateNewUser,
-        ClientEvent.CreatedNewUser,
-        ClientEvent.SigningOut, () => { })
-      .with(ClientEvent.SignedIn,
-        ClientEvent.CreatedNewUser, () => {
-          setSignedIn(true);
-          setDisplayName(client.profile.displayName);
-        })
-      .with(ClientEvent.SignedOut, () => {
-        setSignedIn(false);
-        setDisplayName("");
-      })
-      .with(ClientEvent.ServerUnavailable, () => {
-        setConnected(false);
-        setRetrying(false);
-      })
-      .otherwise(() => { });
-  }
+  const clientRef = useRef<Client>(null);
 
   useEffect(() => {
-    const terminate = () => client.terminateCurrentSession();
     const updateHeight = () => setVisualHeight(window.visualViewport.height - (navigator as any).virtualKeyboard.boundingRect.height);
-    client.subscribeStatusChange(notifyStatus);
-    window.addEventListener("beforeunload", terminate, { capture: true, once: true });
+    window.addEventListener("beforeunload", (e) => {
+      e.preventDefault();
+      AuthClient.terminateCurrentSession();
+      return false;
+    }, { capture: true, once: true });
     window.visualViewport.addEventListener("resize", updateHeight);
+    logInSaved().then(() => setLoaded(true));
     return () => {
-      window.removeEventListener("beforeunload", terminate);
       window.visualViewport.removeEventListener("resize", updateHeight);
     }
   }, []);
 
-  useEffect(() => {
-    if (!connected && !signedIn) {
-      logInDispatch(logInAction("submitted", false));
-      signUpDispatch(signUpAction("submitted", false));
-    }
-  }, [connected]);
-
   function usernameExists(username: string) {
-    return client.checkUsernameExists(username);
+    return AuthClient.userExists(username);
   }
 
   function userLoginPermitted(username: string) {
-    return client.userLogInPermitted(username);
+    return AuthClient.userLogInPermitted(username);
   }
 
-  function logIn({ username, password, savePassword }: SubmitResponse) {
-    return client.logIn(username, password, savePassword);
-  }
-
-  function signUp({ displayName, username, password, savePassword }: SubmitResponse) {
+  async function signUp({ displayName, username, password, savePassword }: SubmitResponse) {
     const profilePicture = generateAvatar(displayName, username);
     displayName ||= username;
-    return client.signUp({ username, displayName, profilePicture, description: "Hey there! I am using ChatApp." }, password, savePassword);
+    const clientResult = await AuthClient.signUp({ username, displayName, profilePicture, description: "Hey there! I am using ChatApp." }, password, savePassword);
+    if ("reason" in clientResult) return clientResult;
+    clientRef.current = clientResult;
+    setSignedIn(true);
+    return { reason: null };
+  }
+
+  async function logIn({ username, password, savePassword }: SubmitResponse) {
+    const clientResult = await AuthClient.logIn(username, password, savePassword);
+    if ("reason" in clientResult) return clientResult;
+    clientRef.current = clientResult;
+    setSignedIn(true);
+    return { reason: null };
+  }
+
+  async function logInSaved() {
+    const clientResult = await AuthClient.logInSaved();
+    if ("reason" in clientResult) return clientResult;
+    clientRef.current = clientResult;
+    setSignedIn(true);
+    return { reason: null };
   }
 
   return (
     <Container maxWidth={false} disableGutters={true} sx={{ position: "relative", top: 0, height: `${visualHeight}px`, width: belowXL ? "90vw" : "100vw", overflow: "clip", display: "flex", flexDirection: "column"}}>
-      {(!connected && !signedIn) &&
+      {!loaded &&
         <React.Fragment>
           <Spacer units={2} />
           <div style={{ display: "flex", justifyContent: "center" }}>
             <CircularProgress size="lg" variant="soft" />
           </div>
         </React.Fragment>}
-      {connected && !signedIn &&
+      {loaded && !signedIn &&
         <LogInContext.Provider value={{ logInData, logInDispatch }}>
           <SignUpContext.Provider value={{ signUpData, signUpDispatch }}>
             <LogInSignUp currentTab={currentTab} setCurrentTab={setCurrentTab} />
           </SignUpContext.Provider>
         </LogInContext.Provider>
       }
-      {signedIn &&
-        <Main client={client} connected={connected} retrying={retrying} displayName={displayName} />
+      {loaded && signedIn &&
+        <Main client={clientRef.current}/>
       }
     </Container>);
 }

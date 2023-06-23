@@ -9,14 +9,8 @@ import Client from "../client";
 import { ChatRequestView } from "./ChatRequestView";
 import { AwaitedRequestView } from "./AwaitedRequestView";
 
-type MainProps = { 
-  connected: boolean, 
-  retrying: boolean, 
-  displayName: string, 
-  client: Client 
-};
-
-export default function Main({ connected, retrying, displayName, client }: MainProps) {
+export default function Main({ client }: { client: Client }) {
+  const { isConnected: connected, profile: { displayName } } = client;
   const [currentChatWith, setCurrentChatWith] = useState(null);
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const typedMessages = useRef(new Map<string, string>());
@@ -71,7 +65,7 @@ export default function Main({ connected, retrying, displayName, client }: MainP
 
   return (
   <Grid container direction="column" sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column", paddingTop: "12px" }}>
-    <DisconnectedAlert connected={connected} retrying={retrying} client={client}/>
+    <DisconnectedAlert connected={connected} retrying={false} reconnect={() => {}}/>
     <Grid 
       container 
       xs={12} 
@@ -88,7 +82,13 @@ export default function Main({ connected, retrying, displayName, client }: MainP
   </Grid>)
 }
 
-function DisconnectedAlert({ connected, retrying, client }: Pick<MainProps, "connected" | "retrying" | "client">) {
+type DisconnectedProps = { 
+  connected: boolean, 
+  retrying: boolean, 
+  reconnect: () => void
+};
+
+function DisconnectedAlert({ connected, retrying, reconnect }: DisconnectedProps) {
   const fuseBorder: SxProps = retrying ? { borderBottomRightRadius: 0, borderBottomLeftRadius: 0 } : {};
   return !connected
     ? (<Grid xs={12} sx={{ flex: 0, flexBasis: "content" }}>
@@ -105,7 +105,7 @@ function DisconnectedAlert({ connected, retrying, client }: Pick<MainProps, "con
                   Disconnected. {retrying ? "Reconnecting..." : ""}
                 </DisableSelectTypography>
                 {!retrying && 
-                  <IconButton color="danger" sx={{ width: "fit-content", placeContent: "center", padding: "4px" }} onClick={ () => client.establishSession() }>
+                  <IconButton color="danger" sx={{ width: "fit-content", placeContent: "center", padding: "4px" }} onClick={reconnect}>
                     <Stack direction="column" spacing={0.2} sx={{ flexWrap: "wrap", alignItems: "center" }}>
                       <ReplayCircleFilledSharp sx={{ fontSize: "2rem" }}/>
                       <DisableSelectTypography textAlign="center" color="danger" level="body3" sx={{ width: "min-content" }}>

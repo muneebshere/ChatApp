@@ -250,8 +250,8 @@ function useScrollRestore(scrollbar: () => HTMLDivElement,
   }, []);
 
   useLayoutEffect(() => {
-    const top = lastScrolledTo && calculateScrollPosition(lastScrolledTo) || scrollbar().scrollHeight;
-    scrollbar().scrollTo({ top, behavior: "instant" });
+    const top = (lastScrolledTo && calculateScrollPosition(lastScrolledTo)) || (scrollbar().scrollHeight + 100);
+    window.setTimeout(() => scrollbar().scrollTo({ top, behavior: "instant" }), 10);
     window.screen.orientation.addEventListener("change", onOrientationChange);
 
     return () => {

@@ -549,8 +549,7 @@ export class MongoHandlerCentral {
             const accessRoot = new this.DatabaseAccessKey({ username, type: "root", accessKey });
             if (accessRoot !== await accessRoot.save()) return false;
             const newUser = new this.User(user);
-            if (newUser !== await newUser.save()) return false;
-            else return true;
+            return newUser === await newUser.save();
         }
         catch (err) {
             logError(err);
@@ -562,7 +561,7 @@ export class MongoHandlerCentral {
         return !!(await this.User.findOne({ username }));
     }
 
-    static async getLeanUser(username: string): Promise<any> {
+    static async getLeanUser(username: string): Promise<Username & NewAuthData & NewUserData> {
         const user = cleanLean(await this.User.findOne({ username }).lean());
         return user;
     }
@@ -608,14 +607,14 @@ export class MongoHandlerCentral {
         return cleanLean(await this.SavedAuth.findOne({ saveToken, ipRep }).lean());
     }
 
-    static async getUserRetries(username: string, ipRep: string): Promise<{ tries: number, allowsAt?: number }> {
+    static async getUserRetries(username: string, ipRep: string): Promise<{ tries?: number, allowsAt?: number }> {
         const retries = cleanLean(await this.UserRetries.findOne({ username, ipRep }).lean());
-        return retries ?? {};
+        return retries || {};
     }
 
     static async updateUserRetries(username: string, ipRep: string, allowsAt: number, tries: number = null) {
-        const upd = tries !== null ? { tries, allowsAt } : { allowsAt };
-        await this.UserRetries.updateOne({ username, ipRep }, upd, { upsert: true });
+        tries ??= 1;
+        await this.UserRetries.updateOne({ username, ipRep }, { tries, allowsAt }, { upsert: true });
     }
     
     static async depositChatRequest(chatRequest: ChatRequestHeader) {
@@ -781,9 +780,8 @@ export class MongoHandlerCentral {
             oneTimeKeyBundles = Array.from(oneTimeKeyBundles.map((kb: any) => kb));
             const leanUser = await MongoHandlerCentral.getLeanUser(this.#username);
             const oldOneTimes = Array.from(leanUser.keyBundles.oneTimeKeyBundles ?? []).map((okb: any) => okb.identifier);
-            const dontAdd = [...(leanUser.accessedKeyBundles ?? []), ...oldOneTimes];
             for (const oneTime of oneTimeKeyBundles) {
-                if (!dontAdd.includes(oneTime.identifier)) {
+                if (!oldOneTimes.includes(oneTime.identifier)) {
                     user.keyBundles.oneTimeKeyBundles.push(oneTime);
                 }
             }

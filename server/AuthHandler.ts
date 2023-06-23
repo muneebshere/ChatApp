@@ -1,6 +1,6 @@
 import _ from "lodash";
 import * as crypto from "../shared/cryptoOperator";
-import { Failure, ErrorStrings, Username, SignUpRequest, SignUpChallenge, SignUpChallengeResponse, NewUserData, LogInRequest, LogInChallenge, UserData, LogInChallengeResponse, LogInSavedRequest, SavePasswordRequest, LogInResponse, LogInSavedResponse, PasswordDeriveInfo } from "../shared/commonTypes";
+import { Failure, ErrorStrings, Username, SignUpRequest, SignUpChallenge, SignUpChallengeResponse, NewUserData, LogInRequest, LogInChallenge, UserData, LogInChallengeResponse, LogInSavedRequest, SavePasswordRequest, LogInResponse, LogInSavedResponse, PasswordDeriveInfo, SavePasswordResponse, LogInPermitted } from "../shared/commonTypes";
 import { failure, fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
 import { MongoHandlerCentral } from "./MongoHandler";
 import * as esrp from "../shared/ellipticSRP";
@@ -25,7 +25,7 @@ type ChallengeTemp = Temp & Readonly<{
     sharedKeyBits: CryptoKey,
 }>;
 
-type LogInTemp = Temp & Readonly<{ clientReference: string, clientVerifyingKey: CryptoKey }>;
+type LogInTemp = Temp & Readonly<{ clientReference: string, clientVerifyingKey: CryptoKey, userData: UserData }>;
 
 type RegisterChallengeTemp = ChallengeTemp & Omit<SignUpRequest, "clientEphemeralPublic">;
 
@@ -64,9 +64,17 @@ export default class AuthHandler {
         }, 1000);
     }
 
-    async userLoginPermitted(username: string, ipRep: string): Promise<{ tries: number, allowsAt: number }> {
-        const { tries, allowsAt } = await MongoHandlerCentral.getUserRetries(username, ipRep);
-        return allowsAt && allowsAt > Date.now() ? { tries, allowsAt } : { tries: null, allowsAt: null };
+    async userExists(username: string): Promise<{ exists: boolean }> {
+        const exists = await MongoHandlerCentral.userExists(username);
+        return { exists };
+    }
+
+    async userLoginPermitted(username: string, ipRep: string): Promise<LogInPermitted> {
+        const exists = await MongoHandlerCentral.userExists(username);
+        if (!exists) return { login: false };
+        const retries = await MongoHandlerCentral.getUserRetries(username, ipRep);
+        const { tries, allowsAt } = retries;
+        return { login: { tries, allowsAt } }
     }
 
     async initiateSignUp(ipRep: string, challengeReference: string, request: SignUpRequest): Promise<SignUpChallenge | Failure> {
@@ -74,11 +82,11 @@ export default class AuthHandler {
         if (await MongoHandlerCentral.userExists(username)) return failure(ErrorStrings.InvalidRequest);
         const { confirmClient, sharedKeyBits, serverConfirmationCode, verifierEntangled } = await esrp.serverSetupAuthChallenge(verifierPoint, clientEphemeralPublic, "now");
         this.#registerChallengeTemp.set(challengeReference, { ipRep, clientReference, username, clientIdentityVerifyingKey, serverConfirmationCode, confirmClient, verifierPoint, sharedKeyBits, setAt: Date.now() });
-        const { #serverIdentityVerifyingKey: serverIdentityVerifyingKey } = this;
+        const serverIdentityVerifyingKey = this.#serverIdentityVerifyingKey;
         return { verifierEntangled, serverIdentityVerifyingKey };
     }
 
-    async concludeSignUp(ipRep: string, challengeReference: string, sessionReference: string, response: SignUpChallengeResponse): Promise<LogInResponse | Failure> {
+    async concludeSignUp(ipRep: string, challengeReference: string, sessionReference: string, response: SignUpChallengeResponse): Promise<Pick<LogInResponse, "serverConfirmationCode"> | Failure> {
         const { clientConfirmationCode, newUserDataSigned, databaseAuthKeyBuffer } = response;
         const registerChallenge = this.#registerChallengeTemp.get(challengeReference);
         if (!registerChallenge || registerChallenge.ipRep !== ipRep) return failure(ErrorStrings.InvalidReference);
@@ -112,11 +120,11 @@ export default class AuthHandler {
         if (allowsAt && allowsAt > Date.now()) {
             return failure(ErrorStrings.TooManyWrongTries, { tries, allowsAt });
         }
-        const { verifierDerive, verifierPoint, databaseAuthKeyDerive, clientIdentityVerifyingKey } = (await MongoHandlerCentral.getLeanUser(username)) ?? {}; 
+        const { verifierDerive, verifierPoint, databaseAuthKeyDerive, clientIdentityVerifyingKey, userData } = (await MongoHandlerCentral.getLeanUser(username)) ?? {}; 
         if (!verifierDerive) return failure(ErrorStrings.IncorrectData);
         const clientVerifyingKey = await crypto.importKey(clientIdentityVerifyingKey, "ECDSA", "public", false);
         const { confirmClient, sharedKeyBits, serverConfirmationCode, verifierEntangled } = await esrp.serverSetupAuthChallenge(verifierPoint, clientEphemeralPublic, "now");
-        this.#logInChallengeTemp.set(challengeReference, { ipRep, serverConfirmationCode, confirmClient, sharedKeyBits, username, clientReference, clientVerifyingKey, setAt: Date.now() });
+        this.#logInChallengeTemp.set(challengeReference, { ipRep, serverConfirmationCode, confirmClient, sharedKeyBits, username, clientReference, clientVerifyingKey, userData, setAt: Date.now() });
         return { verifierDerive, verifierEntangled, databaseAuthKeyDerive };
     }
 
@@ -124,7 +132,7 @@ export default class AuthHandler {
         const { clientConfirmationCode, databaseAuthKeyBuffer } = response;
         const logInChallenge = this.#logInChallengeTemp.get(challengeReference);
         if (!logInChallenge || logInChallenge.ipRep !== ipRep) return failure(ErrorStrings.InvalidReference);
-        const { confirmClient, serverConfirmationCode, sharedKeyBits, username, clientVerifyingKey, clientReference } = logInChallenge;
+        const { confirmClient, serverConfirmationCode, sharedKeyBits, username, clientVerifyingKey, userData, clientReference } = logInChallenge;
         const databaseAuthKey = await crypto.importRaw(databaseAuthKeyBuffer);
         try {
             if (!(await confirmClient(clientConfirmationCode))) {
@@ -140,14 +148,15 @@ export default class AuthHandler {
                 await MongoHandlerCentral.updateUserRetries(username, ipRep, null, tries);
                 return failure(ErrorStrings.IncorrectPassword, { tries });   
             }
+            else await MongoHandlerCentral.updateUserRetries(username, ipRep, null);
             const status = SocketHandler.getUserStatus(username, ipRep);
             if (status === "ActiveElsewhere") return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
-            else if (status === "ActiveHere") SocketHandler.disposeSession(username);
+            else if (status === "ActiveHere") SocketHandler.disposeUserSessions(username);
             const mongoHandler = await MongoHandlerCentral.instantiateUserHandler(username, databaseAuthKey);
             if (!mongoHandler) return failure(ErrorStrings.ProcessFailed);
             const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, this.#serverIdentitySigningKey, clientVerifyingKey);
             new SocketHandler(username, sessionReference, ipRep, mongoHandler, sessionCrypto);
-            return { serverConfirmationCode };
+            return { serverConfirmationCode, ...userData };
         }
         catch (err) {
             logError(err)
@@ -161,16 +170,16 @@ export default class AuthHandler {
         const { clientReference, serverKeyBits } = request;
         const { username, authKeyBits, coreKeyBits, laterConfirmation }: ServerSavedDetails = await crypto.deriveDecrypt(savedAuthDetails, serverKeyBits, "Saved Auth") ?? {};
         if (!username) return failure(ErrorStrings.IncorrectData);
-        const { clientIdentityVerifyingKey } = (await MongoHandlerCentral.getLeanUser(username)) ?? {}; 
+        const { clientIdentityVerifyingKey, userData } = (await MongoHandlerCentral.getLeanUser(username)) ?? {}; 
         const clientVerifyingKey = await crypto.importKey(clientIdentityVerifyingKey, "ECDSA", "public", false);
-        this.#logInSavedTemp.set(username, { username, ipRep, clientReference, coreKeyBits, laterConfirmation, clientVerifyingKey, setAt: Date.now() });
+        this.#logInSavedTemp.set(username, { username, ipRep, clientReference, coreKeyBits, laterConfirmation, clientVerifyingKey, userData, setAt: Date.now() });
         return { username, authKeyBits };
     }
 
     async concludeLogInSaved(ipRep: string, sessionReference: string, { username, clientConfirmationCode, databaseAuthKeyBuffer }: LogInChallengeResponse & Username): Promise<LogInSavedResponse | Failure> {
         const logInSaved = this.#logInSavedTemp.get(username)
         if (!logInSaved || logInSaved.ipRep !== ipRep) return failure(ErrorStrings.InvalidReference);
-        const { laterConfirmation, coreKeyBits, clientVerifyingKey, clientReference } = logInSaved;
+        const { laterConfirmation, coreKeyBits, clientVerifyingKey, userData, clientReference } = logInSaved;
         const databaseAuthKey = await crypto.importRaw(databaseAuthKeyBuffer);
         const { clientConfirmationData, serverConfirmationCode, sharedSecret } = laterConfirmation;
         try {
@@ -178,12 +187,12 @@ export default class AuthHandler {
             const sharedKeyBits = await esrp.getSharedKeyBits(sharedSecret);
             const status = SocketHandler.getUserStatus(username, ipRep);
             if (status === "ActiveElsewhere") return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
-            else if (status === "ActiveHere") SocketHandler.disposeSession(username);
+            else if (status === "ActiveHere") SocketHandler.disposeUserSessions(username);
             const mongoHandler = await MongoHandlerCentral.instantiateUserHandler(username, databaseAuthKey);
-            if (mongoHandler) return failure(ErrorStrings.ProcessFailed);
+            if (!mongoHandler) return failure(ErrorStrings.ProcessFailed);
             const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, this.#serverIdentitySigningKey, clientVerifyingKey);
             new SocketHandler(username, sessionReference, ipRep, mongoHandler, sessionCrypto);
-            return { serverConfirmationCode, coreKeyBits };
+            return { serverConfirmationCode, coreKeyBits, ..._.omit(userData, "encryptionBaseDerive") };
         }
         catch (err) {
             logError(err)
@@ -191,7 +200,7 @@ export default class AuthHandler {
         }
     }
 
-    async savePassword(username: string, ipRep: string, saveToken: string, request: SavePasswordRequest): Promise<{ verifierDerive: PasswordDeriveInfo, verifierEntangled: Buffer } | Failure> {
+    async savePassword(username: string, ipRep: string, saveToken: string, request: SavePasswordRequest): Promise<SavePasswordResponse | Failure> {
         console.log("Attempting save password");
         const { serverKeyBits, authKeyBits, coreKeyBits, clientEphemeralPublic } = request;
         const { verifierDerive, verifierPoint } = (await MongoHandlerCentral.getLeanUser(username)) ?? {};
