@@ -5,39 +5,19 @@ import { io, Socket } from "socket.io-client";
 import { SessionCrypto } from "../../shared/sessionCrypto";
 import {  X3DHUser } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
-import { serialize, deserialize } from "../../shared/cryptoOperator";
-import * as esrp from "../../shared/ellipticSRP";
-import { allSettledResults, awaitCallback, failure, fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
-import { ErrorStrings, Failure, Username, SocketClientSideEvents, MessageHeader, ChatRequestHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, SignUpRequest, NewUserData, Profile, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, UserEncryptedData, SessionIdentifier, HeaderIdentifier, Backup, PasswordDeriveInfo, PasswordEntangleInfo  } from "../../shared/commonTypes";
-import { noProfilePictureImage } from "./noProfilePictureImage";
-import { AwaitedRequest, Chat, ChatDetails, ChatRequest } from "./chatClasses";
-import AuthClient from "./AuthClient";
+import { allSettledResults, awaitCallback, failure, logError, randomFunctions } from "../../shared/commonFunctions";
+import { ErrorStrings, Failure, Username, SocketClientSideEvents, MessageHeader, ChatRequestHeader, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Profile, UserEncryptedData  } from "../../shared/commonTypes";
+import { AwaitedRequest, Chat, ChatRequest } from "./chatClasses";
+import AuthClient, { isClientOnline } from "./AuthClient";
 
-const { getRandomVector, getRandomString } = randomFunctions();
+const { getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;
 
 const chatMethods = ["SendMessage", "GetMessageHeaders", "GetMessagesByNumber", "GetMessagesUptoTimestamp", "GetMessagesUptoId", "GetMessageById", "StoreMessage", "MessageHeaderProcessed", "UpdateChat", "StoreBackup", "GetBackupById", "BackupProcessed", "SendReceipt", "GetAllReceipts", "ClearAllReceipts"] as const;
 
 type ChatMethods = typeof chatMethods[number];
 
-export enum ClientEvent {
-    Disconnected,
-    Connecting,
-    Reconnecting,
-    FailedToConnect,
-    Connected,
-    ServerUnavailable,
-    SigningIn,
-    FailedSignIn,
-    ReAuthenticating,
-    FailedReAuthentication,
-    CreatingNewUser,
-    FailedCreateNewUser,
-    CreatedNewUser,
-    SignedIn,
-    SigningOut,
-    SignedOut
-}
+export type ConnectionStatus = "NotLoaded" | "NotLoggedIn" | "ClientOffline" | "ServerUnreachable" | "Unauthenticated" | "UnknownConnectivityError" | "Online" | "LoggingOut";
 
 export type ClientChatInterface = Pick<RequestMap, ChatMethods> & Readonly<{ isConnected: () => boolean, notifyClient: (chat: Chat) => void }>
 
@@ -86,7 +66,15 @@ export default class Client {
         [SocketServerSideEvents.ReceiptReceived, this.receiptReceived]
     ]);
     private readonly url: string;
+    private notifyStatus: (status: ConnectionStatus) => void;
     private notifyChange: () => void;
+    private countdownTick: (tryingAgainIn: number) => void;
+    private countdownTimer = 0;
+    private countdownTimeout = null;
+    private connecting = false;
+    private reconnecting = false;
+    private initiated = false;
+
     #socket: Socket;
     #profile: Profile;
     #username: string;
@@ -100,22 +88,50 @@ export default class Client {
     private chatInterface: ClientChatInterface;
 
     private static client: Client;
+
+    private set tryingAgainIn(value: number) {
+        if (value <= 0) {
+            this.countdownTimer = 0;
+            if (this.countdownTimeout) {
+                window.clearInterval(this.countdownTimeout);
+                console.log("Interval cleared");
+                this.countdownTimeout = null;
+            }
+            this.reconnect();
+        }
+        else this.countdownTimer = value;
+        this.countdownTick?.(this.countdownTimer);
+    }
+
+    private get tryingAgainIn() {
+        return this.countdownTimer;
+    }
     
-    static get isSignedIn() {
+    static get isLoggedIn() {
         return !!this.client;
+    }
+
+    static async connectionStatus(): Promise<ConnectionStatus> {
+        if (!this.client) return "NotLoggedIn";
+        if (this.client.isConnected) return "Online";
+        if (!(await isClientOnline())) return "ClientOffline";
+        if (!(await AuthClient.isServerReachable())) return "ServerUnreachable";
+        const authenticated = await this.client.confirmAuthenticated();
+        if (authenticated === false) return "Unauthenticated";
+        else return "UnknownConnectivityError";
     }
 
     static async initiate(url: string, encryptionBaseVector: CryptoKey, username: string, profile: Profile, x3dhUser: X3DHUser, sessionCrypto: SessionCrypto) {
         if (!this.client) {
             this.client = new Client(url, encryptionBaseVector, username, profile, x3dhUser, sessionCrypto);
-            const connected = await this.client.connectSocket();
+            const connected = await this.client.connectSocket(true);
             if (connected) await this.client.loadUser(); 
         }
         return this.client;
     }
 
-    static dispose() {
-        this.client.dispose();
+    static dispose(ending?: "ending") {
+        this.client.dispose(ending);
         this.client = null;
     }
 
@@ -128,8 +144,100 @@ export default class Client {
         this.#sessionCrypto = sessionCrypto;
     }
 
-    private dispose() {
-        this.notifyChange = null;
+    private async getAuthToken() {
+        const { nonceId, authNonce } = await AuthClient.getAuthNonce();
+        if (!authNonce) return {};
+        const username = this.#username;
+        const authToken = await this.#sessionCrypto.signEncryptToBase64({ username, authNonce }, "Socket Auth");
+        return { nonceId, authToken };
+    }
+
+    private async confirmAuthenticated() {
+        const authenticated = await AuthClient.isAuthenticated();
+        if (authenticated === false) return false;
+        const { authToken } = await this.getAuthToken();
+        if (!authToken) return null;
+        return await AuthClient.verifyAuthentication(authToken);
+    }
+
+    private async connectSocket(first = false) {
+        try {
+            this.connecting = true;
+            const status = await Client.connectionStatus();
+            this.notifyStatus?.(status);
+            if (status === "ClientOffline" || status === "ServerUnreachable" || status === "Unauthenticated") return this.connecting = false;
+            const { nonceId, authToken } = await this.getAuthToken();
+            if (!authToken) return this.connecting = false;
+            const auth = { authToken, nonceId };
+            this.#socket = io(this.url, { auth, withCredentials: true });
+            this.#socket.on("disconnect", (err) => {
+                console.log("Socket disconnected.");
+                logError(err);
+                this.reconnect();
+            });
+            const success = (await awaitCallback<boolean>(async (resolve) => {
+                this.#socket.io.once("error", (err) => {
+                    logError(err);
+                    if ((err as any).type === "TransportError") console.log("Server unavailable.");
+                    resolve(false);
+                });
+                this.#socket.once("connect_error", (err) => {
+                    console.log("Server rejected socket connection.");
+                    logError(err);
+                    resolve(false);
+                });
+                this.#socket.once("connect", () => resolve(true));
+                this.#socket.connect();
+            }, 5000, false)) && this.isConnected;
+            if (success) {
+                this.#socketHandler = SocketHandler(() => this.#socket, () => this.#sessionCrypto, () => this.isConnected);
+                this.chatInterface = this.constructChatInterface();
+                for (const [event, response] of this.responseMap.entries()) {
+                    this.#socket.on(event, async (data: string, respond) => await this.respond(event, data, response.bind(this), respond));
+                }
+            }
+            await AuthClient.clearNonce();
+            this.connecting = false;
+            if (!success && !this.reconnecting) this.reconnect();
+            if (!first && !this.initiated) this.loadUser();
+            return success;
+        }
+        catch(err) {
+            logError(err);
+            return this.connecting = false;
+        }
+    }
+
+    private async reconnect() {
+        if (this.isConnected || this.connecting || this.tryingAgainIn > 0) return;
+        this.reconnecting = true;
+        const success = await this.connectSocket();
+        this.reconnecting = false;
+        this.notifyStatus?.(await Client.connectionStatus());
+        if (success) {
+            _.map(Array.from(this.chatSessionIdsList.values())
+                .map((chat) => chat.type === "Chat" ? chat : null)
+                .filter((chat) => !!chat),
+                    async (chat) => {
+                        await chat.checkNew();
+                        await this.requestRoom(chat); 
+            })
+            _.map(this.#x3dhUser.pendingChatRequests,
+                    async ({ sessionId, myAlias, otherAlias }) => {
+                        await this.processAwaitedRequest(sessionId, myAlias, otherAlias);
+            });
+        }
+        else {
+            this.tryingAgainIn = 5000;
+            this.countdownTimeout = window.setInterval(() => this.tryingAgainIn -= 20, 20);
+            console.log("Interval set");
+        }
+    }
+
+    private dispose(ending?: "ending") {
+        this.notifyChange?.();
+        this.notifyStatus?.("LoggingOut");
+        this.#socket.removeAllListeners("disconnect");
         this.#socket.disconnect();
         this.#socket = null;
         this.#profile = null;
@@ -145,6 +253,9 @@ export default class Client {
         this.chatSessionIdsList.clear();
         this.chatUsernamesList.clear();
         this.chatInterface = null;
+        if (!ending) this.notifyStatus?.("NotLoggedIn");
+        this.notifyChange = null;
+        this.notifyStatus = null;
     }
 
     private constructChatInterface() {
@@ -200,46 +311,35 @@ export default class Client {
     }
 
     subscribeChange(notifyCallback?: () => void) {
-        if (notifyCallback) this.notifyChange = notifyCallback;
+        this.notifyChange = notifyCallback;
+        notifyCallback?.();
     }
 
-    private async connectSocket() {
-        try {
-            if (!window.navigator.onLine) return false;
-            if (!(await AuthClient.isLoggedIn())) return false;
-            const response = await axios.get(`${this.url}/authNonce`);
-            if (response?.status !== 200) return false;
-            const { authNonce } = response.data;
-            const username = this.#username;
-            const authToken = await this.#sessionCrypto.signEncryptToBase64({ username, authNonce }, "Socket Auth");
-            const auth = { authToken };
-            this.#socket = io(this.url, { auth, withCredentials: true });
-            this.#socket.on("disconnect", (err) => {});
-            const success = await awaitCallback<boolean>(async (resolve) => {
-                this.#socket.io.once("error", (error) => {
-                    logError(error);
-                    if ((error as any).type === "TransportError") console.log("Server unavailable.");
-                    resolve(false);
-                });
-                this.#socket.once("connect_error", (error) => {
-                    logError(error);
-                    resolve(false);
-                });
-                this.#socket.once("connect", () => resolve(true));
-                this.#socket.connect();
-            }, 5000, false);
-            if (success && this.#socket.connected) {
-                this.#socketHandler = SocketHandler(() => this.#socket, () => this.#sessionCrypto, () => this.isConnected);
-                this.chatInterface = this.constructChatInterface();
-                for (const [event, response] of this.responseMap.entries()) {
-                    this.#socket.on(event, async (data: string, respond) => await this.respond(event, data, response.bind(this), respond));
-                }
-            }
-            return success;
+    subscribeStatus(notifyCallback?: (status: ConnectionStatus) => void) {
+        this.notifyStatus = notifyCallback;
+        Client.connectionStatus().then((status) => notifyCallback?.(status));
+    }
+
+    subscribeCountdownTick(tickCallback?: (tryingAgainIn: number) => void) {
+        this.countdownTick = tickCallback;
+        tickCallback?.(this.countdownTimer);
+    }
+
+    forceReconnect() {
+        this.tryingAgainIn = -1;
+    }
+
+    pauseCountdownTick() {
+        if (this.countdownTimeout) {
+            window.clearInterval(this.countdownTimeout);
+            console.log("Interval cleared");
+            this.countdownTimeout = null;
         }
-        catch(err) {
-            logError(err);
-            return;
+    }
+
+    resumeCountdownTick() {
+        if (!this.countdownTimeout) {
+            this.countdownTimeout = window.setInterval(() => this.tryingAgainIn -= 20, 20);
         }
     }
 
@@ -269,33 +369,33 @@ export default class Client {
         }
         const [chatRequest, { sessionId, timestamp, myAlias, otherAlias }, x3dhInfo] = result;
         const result2 = await this.#socketHandler.RegisterPendingSession({ sessionId, otherAlias, myAlias });
-        if (result2?.reason) {
+        if (result2?.reason !== false) {
             logError(result2);
             return failure(ErrorStrings.ProcessFailed);
         }
         const result3 = await this.#socketHandler.SendChatRequest(chatRequest);
-        if (result3?.reason) {
+        if (result3?.reason !== false) {
             logError(result3);
             return failure(ErrorStrings.ProcessFailed);
         }
         const result4 = await this.#socketHandler.UpdateUserData({ x3dhInfo, username: this.username });
-        if (result4?.reason) {
+        if (result4?.reason !== false) {
             logError(result4);
             return failure(ErrorStrings.ProcessFailed);
         }
         this.addChat(new AwaitedRequest(otherUser, sessionId, messageId, timestamp, firstMessage));
-        return { reason: null };
+        return { reason: false };
     }
 
     private async loadUser() {
-        for (const { sessionId, myAlias, otherAlias, messageId, timestamp, otherUser, text } of this.#x3dhUser.pendingChatRequests) {
-            if (!(await this.processAwaitedRequest(sessionId, myAlias, otherAlias))) {
-                const awaited = new AwaitedRequest(otherUser, sessionId, messageId, timestamp, text );
-                this.addChat(awaited);
-            }
-        }
-        await this.loadChats();
-        await this.loadRequests();
+        await Promise.all([this.loadChats(), this.loadRequests(), ..._.map(this.#x3dhUser.pendingChatRequests, 
+            async ({ sessionId, myAlias, otherAlias, messageId, timestamp, otherUser, text }) => {
+                if (!(await this.processAwaitedRequest(sessionId, myAlias, otherAlias))) {
+                    const awaited = new AwaitedRequest(otherUser, sessionId, messageId, timestamp, text );
+                    this.addChat(awaited);
+                }
+        })]);
+        this.initiated = true;
     }
 
     private async processAwaitedRequest(sessionId: string, toAlias?: string, fromAlias?: string) {
@@ -308,7 +408,7 @@ export default class Client {
         }
         const result = await this.#socketHandler.GetMessageHeaders({ sessionId, toAlias, fromAlias });
         if ("reason" in result) {
-            logError(result.reason);
+            logError(result);
             return false;
         }
         const firstResponse = _.orderBy(result, ["sendingRatchetNumber", "sendingChainNumber"], ["asc"])[0];
@@ -321,9 +421,14 @@ export default class Client {
         if ("reason" in chatsData) return;
         const chats = await Promise.all(chatsData.map((chatData) => Chat.instantiate(this.#encryptionBaseVector, this.chatInterface, chatData)));
         for (const chat of chats) {
-            this.addChat(chat);
+            chat.subscribeActivity(() => {
+                if (chat.details?.lastActivity?.messageId) {
+                    chat.unsubscribeActivity();
+                    this.addChat(chat);
+                    this.requestRoom(chat);
+                }
+            });
         }
-        Promise.all(chats.map((chat) => this.requestRoom(chat)));
     }
 
     private async loadRequest(request: ChatRequestHeader) {
@@ -371,12 +476,12 @@ export default class Client {
         const { sessionId, profile, text, messageId, timestamp } = viewChatRequest;
         const { fromAlias, toAlias } = response;
         const registered = await this.#socketHandler.RegisterPendingSession({ sessionId, myAlias: fromAlias, otherAlias: toAlias });
-        if (registered?.reason) {
+        if (registered?.reason !== false) {
             logError(registered);
             return false;
         }
         const sent = await this.#socketHandler.SendMessage(response);
-        if (sent?.reason) {
+        if (sent?.reason !== false) {
             logError(sent);
             return false;
         }
@@ -395,7 +500,7 @@ export default class Client {
 
     private async rejectRequest(sessionId: string, headerId: string, oneTimeKeyId: string) {
         const result = await this.#socketHandler.DeleteChatRequest({ headerId });
-        if (result.reason) {
+        if (result?.reason !== false) {
             logError(result);
             return false;
         }
@@ -440,7 +545,7 @@ export default class Client {
         const newChat = await Chat.instantiate(this.#encryptionBaseVector, this.chatInterface, chatData, { messageId, text, timestamp, sentByMe: true, respondedAt });
         this.removeChat(sessionId, "sessionId", true);
         this.addChat(newChat);
-        await this.requestRoom(newChat);
+        this.requestRoom(newChat);
         return true;
     }
 
@@ -490,21 +595,20 @@ export default class Client {
                 chat.establishRoom(this.#sessionCrypto, this.#socket);
             }
         })
-        return { reason: null };
+        return { reason: false };
     }
 
     private async requestRoom(chat: Chat) {
         const waitReady = this.awaitServerRoomReady(chat.otherUser);
         const response = await this.#socketHandler.RequestRoom({ username: chat.otherUser }, 2000);
-        if (response.reason) {
+        if (response?.reason !== false) {
             return response;
         }
-
         const confirmed = await waitReady.then(async (ready) => {
             return ready ? await chat.establishRoom(this.#sessionCrypto, this.#socket) : false;
         });
         if (!confirmed) return failure(ErrorStrings.ProcessFailed);
-        return { reason: null };
+        return { reason: false };
     }
 
     private async messageReceived({ sessionId }: { sessionId: string }) {

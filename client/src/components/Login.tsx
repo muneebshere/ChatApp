@@ -92,23 +92,24 @@ export default function LogInForm() {
   const decrementTimer = useCallback(() => setTryAgainIn(tryAgainIn - 1000), [tryAgainIn]);
 
   useEffect(() => {
-    username && userLoginPermitted(username).then(({ login }) => setUsernameError(login ? null: "No such user.")).catch(() => {});
+    if (username) {
+      userLoginPermitted(username).then((result) => setUsernameError(result?.login ? null: "No such user.")).catch(() => {});
+    }
   }, [username]);
 
   useEffect(() => {
-    if (tryAgainIn > 0) {
-      timerRef.current = window.setInterval(decrementTimer, 1000);
-      return () => window.clearTimeout(timerRef.current);
+    if (tryAgainIn) {
+      timerRef.current = window.setTimeout(decrementTimer, 1000);
     }
-    else if (timerRef.current) window.clearInterval(timerRef.current);
+    return () => window.clearTimeout(timerRef.current);
   }, [tryAgainIn]);
 
   async function onUsernameEntered() {
     if (!usernameError) {
       setUsernameEntered(true);
-      const { login } = await userLoginPermitted(username);
-      if (login) {
-        const { tries, allowsAt } = login;
+      const result = await userLoginPermitted(username);
+      if (result?.login) {
+        const { tries, allowsAt } = result.login;
         if (tries && allowsAt) {
           setTryCount(tries);
           setTryAgainIn(allowsAt - Date.now());

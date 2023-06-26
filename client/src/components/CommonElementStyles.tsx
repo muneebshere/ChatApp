@@ -101,11 +101,3 @@ export const StyledReactMarkdownVariable = (emojiSize: number) => styled(ReactMa
     padding-bottom: 0px;
     margin-bottom: 0px;
   }`;
-
-export function Spacer({ units }: { units: number }) {
-  return (
-    <React.Fragment>
-      { (new Array(units)).fill(null).map((v, i) => <div key={i}><span>&nbsp;</span></div>) }
-    </React.Fragment>
-  );
-}

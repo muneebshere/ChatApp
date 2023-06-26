@@ -1,19 +1,17 @@
-import React, { useState, useEffect, useReducer, useRef } from "react";
+import React, { useState, useEffect, useReducer, useCallback } from "react";
 import { createRoot } from "react-dom/client";
-
 import { Container, CircularProgress } from "@mui/joy";
 import { CssVarsProvider } from "@mui/joy/styles";
 import { Theme, useMediaQuery } from "@mui/material";
 import LogInSignUp from "./components/LogInSignUp";
 import Main from "./components/Main";
-import { LogInContext, defaultLogInDataReducer, defaultLogInData, logInAction } from "./components/Login";
-import { SignUpContext, defaultSignUpDataReducer, defaultSignUpData, signUpAction } from "./components/Signup";
-import { Spacer } from "./components/CommonElementStyles";
-import Client, { ClientEvent } from "./client";
+import { LogInContext, defaultLogInDataReducer, defaultLogInData } from "./components/Login";
+import { SignUpContext, defaultSignUpDataReducer, defaultSignUpData } from "./components/Signup";
+import Client, { ConnectionStatus } from "./client";
 import * as crypto from "../../shared/cryptoOperator";
-import { match } from "ts-pattern";
 import tinycolor from "tinycolor2";
-import AuthClient from "./AuthClient";
+import AuthClient, { AuthConnectionStatus } from "./AuthClient";
+import { Failure } from "../../shared/commonTypes";
 
 export type SubmitResponse = {
   displayName?: string;
@@ -22,16 +20,10 @@ export type SubmitResponse = {
   savePassword: boolean;
 }
 
+const loaded = (status: ConnectionStatus): status is Exclude<ConnectionStatus, "NotLoaded"> => status !== "NotLoaded"
+const loggedIn = (status: ConnectionStatus): status is Exclude<ConnectionStatus, "NotLoggedIn"> => status !== "NotLoggedIn";
+const loggingOut = (status: ConnectionStatus): status is "LoggingOut" => status === "LoggingOut";
 const generateAvatar = createAvatarGenerator(200, 200);
-const jsHash = calculateJsHash();
-window.setInterval(async () => {
-  const hash = await jsHash;
-  const latestHash = await fetch("./prvJsHash.txt").then((response) => response.text());
-  if (hash !== latestHash) {
-    console.log("js file changed.");
-    window.history.go(); 
-  }
-}, 10000);
 
 if ("virtualKeyboard" in navigator) {
   (navigator.virtualKeyboard as any).overlaysContent = true;
@@ -39,10 +31,30 @@ if ("virtualKeyboard" in navigator) {
 
 createRoot(document.getElementById("root")).render(<Root/>);
 
-async function calculateJsHash() {
+async function setupJsHashChecker() {
   const response = await fetch("./main.js");
-  const fileBuffer = await response.arrayBuffer();
-  return crypto.digestToBase64("SHA-256", fileBuffer);
+  const currentJsHash = await crypto.digestToBase64("SHA-256", await response.arrayBuffer());
+  let changed = false;
+  let interval: number = null;
+  setInterval();
+
+  function setInterval() {
+    interval = window.setInterval(check, 10000);
+  }
+
+  async function check() {
+    if (!changed) {
+      const latestJsHash = await AuthClient.latestJsHash();
+      changed = latestJsHash && latestJsHash !== currentJsHash;
+    }
+    if (changed) {
+      console.log("js file changed.");
+      window.clearInterval(interval);
+      if (window.confirm("Js script file out of date. Reload?")) window.history.go();
+      else setInterval();
+    }
+  }
+
 }
 
 function createAvatarGenerator(width: number, height: number) {
@@ -94,27 +106,41 @@ function Root() {
     </CssVarsProvider>)
 }
 
+let client: Client;
+
 function App() {
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const [logInData, logInDispatch] = useReducer(defaultLogInDataReducer, { ...defaultLogInData, userLoginPermitted, submit: logIn });
   const [signUpData, signUpDispatch] = useReducer(defaultSignUpDataReducer, { ...defaultSignUpData, usernameExists, submit: signUp });
-  const [loaded, setLoaded] = useState(false);
-  const [signedIn, setSignedIn] = useState(false);
+  const [status, setStatus] = useState<ConnectionStatus>("NotLoaded");
+  const [connectionStatus, setConnectionStatus] = useState<AuthConnectionStatus>("Online");
   const [currentTab, setCurrentTab] = useState(0);
   const [visualHeight, setVisualHeight] = useState(window.visualViewport.height);
-  const clientRef = useRef<Client>(null);
+  const updateStatus = () => Client.connectionStatus().then((status) => setStatus(status));
+  const updateConnectionStatus = useCallback((currentConnectionStatus: AuthConnectionStatus) => {
+    if (currentConnectionStatus !== connectionStatus) {
+      setConnectionStatus(currentConnectionStatus);
+      updateStatus();
+    }
+  },[connectionStatus])
 
   useEffect(() => {
     const updateHeight = () => setVisualHeight(window.visualViewport.height - (navigator as any).virtualKeyboard.boundingRect.height);
+    window.addEventListener("online", updateStatus);
+    window.addEventListener("offline", updateStatus);
     window.addEventListener("beforeunload", (e) => {
       e.preventDefault();
       AuthClient.terminateCurrentSession();
       return false;
     }, { capture: true, once: true });
     window.visualViewport.addEventListener("resize", updateHeight);
-    logInSaved().then(() => setLoaded(true));
+    AuthClient.subscribeConnectionStatus(updateConnectionStatus);
+    logInSaved();
     return () => {
+      window.removeEventListener("online", updateStatus);
+      window.removeEventListener("offline", updateStatus);
       window.visualViewport.removeEventListener("resize", updateHeight);
+      AuthClient.subscribeConnectionStatus(null);
     }
   }, []);
 
@@ -126,50 +152,45 @@ function App() {
     return AuthClient.userLogInPermitted(username);
   }
 
-  async function signUp({ displayName, username, password, savePassword }: SubmitResponse) {
+  function clientResult(result: Client | Failure): Failure {
+    if ("reason" in result) {
+      setStatus("NotLoggedIn");
+      return result;
+    }
+    client = result;
+    client.subscribeStatus(setStatus);
+    return { reason: false };
+  }
+
+  async function signUp({ displayName, username, password, savePassword }: SubmitResponse): Promise<Failure> {
     const profilePicture = generateAvatar(displayName, username);
     displayName ||= username;
-    const clientResult = await AuthClient.signUp({ username, displayName, profilePicture, description: "Hey there! I am using ChatApp." }, password, savePassword);
-    if ("reason" in clientResult) return clientResult;
-    clientRef.current = clientResult;
-    setSignedIn(true);
-    return { reason: null };
+    return clientResult(await AuthClient.signUp({ username, displayName, profilePicture, description: "Hey there! I am using ChatApp." }, password, savePassword));
   }
 
-  async function logIn({ username, password, savePassword }: SubmitResponse) {
-    const clientResult = await AuthClient.logIn(username, password, savePassword);
-    if ("reason" in clientResult) return clientResult;
-    clientRef.current = clientResult;
-    setSignedIn(true);
-    return { reason: null };
+  async function logIn({ username, password, savePassword }: SubmitResponse): Promise<Failure> {
+    return clientResult(await AuthClient.logIn(username, password, savePassword));
   }
 
-  async function logInSaved() {
-    const clientResult = await AuthClient.logInSaved();
-    if ("reason" in clientResult) return clientResult;
-    clientRef.current = clientResult;
-    setSignedIn(true);
-    return { reason: null };
+  async function logInSaved(): Promise<Failure> {
+    return clientResult(await AuthClient.logInSaved());
   }
 
   return (
     <Container maxWidth={false} disableGutters={true} sx={{ position: "relative", top: 0, height: `${visualHeight}px`, width: belowXL ? "90vw" : "100vw", overflow: "clip", display: "flex", flexDirection: "column"}}>
-      {!loaded &&
-        <React.Fragment>
-          <Spacer units={2} />
-          <div style={{ display: "flex", justifyContent: "center" }}>
-            <CircularProgress size="lg" variant="soft" />
-          </div>
-        </React.Fragment>}
-      {loaded && !signedIn &&
+      {(!loaded(status) || loggingOut(status)) &&
+          <div style={{ display: "flex", justifyContent: "center", marginTop: "48px" }}>
+            <CircularProgress size="lg" variant="soft"/>
+          </div>}
+      {!loggedIn(status) && !loggingOut(status) &&
         <LogInContext.Provider value={{ logInData, logInDispatch }}>
           <SignUpContext.Provider value={{ signUpData, signUpDispatch }}>
-            <LogInSignUp currentTab={currentTab} setCurrentTab={setCurrentTab} />
+            <LogInSignUp connectionStatus={connectionStatus} currentTab={currentTab} setCurrentTab={setCurrentTab} />
           </SignUpContext.Provider>
         </LogInContext.Provider>
       }
-      {loaded && signedIn &&
-        <Main client={clientRef.current}/>
+      {loaded(status) && loggedIn(status) && !loggingOut(status) &&
+        <Main client={client} status={status}/>
       }
     </Container>);
 }

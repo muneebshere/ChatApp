@@ -99,6 +99,7 @@ type NewMessageDialogProps = {
   warn: boolean,
   belowXL: boolean,
   newChatWith: string,
+  isMessageEmpty: () => boolean,
   setWarn: (warn: boolean) => void,
   setNewChatWith: (newChat: string) => void,
   setNewMessage: (newMessage: string) => void,
@@ -106,7 +107,7 @@ type NewMessageDialogProps = {
   sendRequest: () => void
 };
 
-export function NewMessageDialog({ warn, newChatWith, belowXL, setWarn, setNewChatWith, setNewMessage, validate, sendRequest }: NewMessageDialogProps) {
+export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, setWarn, setNewChatWith, setNewMessage, validate, sendRequest }: NewMessageDialogProps) {
   const [isPopupOpen, setIsPopupOpen] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState((navigator as any).virtualKeyboard.boundingRect.height);
 
@@ -128,6 +129,9 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, setWarn, setNewCh
           if (!open) {
             if (isPopupOpen) {
               setIsPopupOpen(false);
+            }
+            else if (isMessageEmpty()) {
+              setNewChatWith("");
             }
             else {
               setWarn(true);
@@ -256,7 +260,7 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, setWarn, setNewCh
                   setNewChatWith("");
                   setNewMessage("");
                 } }>
-                  Cancel
+                  Close
                 </Button>
               </Grid>
             </Grid>

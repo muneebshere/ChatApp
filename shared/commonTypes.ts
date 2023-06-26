@@ -168,7 +168,7 @@ export type ChatSessionDetails = Readonly<{
 }>;
 
 export type Failure = Readonly<{
-    reason: string;
+    reason: string | false;
     details?: any;
 }>;
 

@@ -34,7 +34,7 @@ export class SessionCrypto {
 
     async decryptVerifyFromBase64(serializedData: string, purpose: string): Promise<any> {
         try {
-            const data: SignedEncryptedMessage = deserialize(fromBase64(serializedData));
+            const data: SignedEncryptedMessage = deserialize(fromBase64(serializedData)) || {};
             const { sessionReference, hSalt } = data;
             if (sessionReference !== this.#sessionReference)
                 return null;

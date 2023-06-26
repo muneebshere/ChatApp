@@ -27,7 +27,15 @@ serializer.register("undefined",
         return undefined as any;
     });
 export const serialize = (thing: any) => serializer.toBuffer(thing);
-export const deserialize = (buff: Buffer) => serializer.fromBuffer(buff);
+export const deserialize = (buff: Buffer): any => {
+    if (!buff) return null;
+    try {
+        return serializer.fromBuffer(buff);
+    }
+    catch(err) {
+        return null;
+    }
+};
 export const { getRandomVector } = randomFunctions();
 const subtle = assignSubtle();
 

@@ -129,6 +129,10 @@ export default class SocketHandler {
     #username: string;
     #disposeRooms: (() => void)[] = [];
 
+    static get sessionReferences() {
+        return Array.from(this.socketHandlers.keys());
+    }
+
     static getUsername(sessionReference: string) {
         const sessionHandler = this.socketHandlers.get(sessionReference);
         return sessionHandler ? sessionHandler.#username : null;
@@ -138,6 +142,11 @@ export default class SocketHandler {
         const { sessionReference, ipRep } = this.onlineUsers.get(username) || {};
         if (!sessionReference) return "Offline";
         return currentIp === ipRep ? "ActiveHere" : "ActiveElsewhere";
+    }
+
+    static async confirmUserSession(sessionReference: string, authToken: string, authData: string) {
+        return this.socketHandlers.get(sessionReference)?.confirmAuthToken(authToken, authData) || false;
+
     }
 
     static async registerSocket(sessionReference: string, ipRep: string, authToken: string, authData: string, socket: Socket) {
@@ -150,6 +159,7 @@ export default class SocketHandler {
 
     static disposeSession(sessionReference: string) {
         this.socketHandlers.get(sessionReference)?.dispose();
+        MongoHandlerCentral.clearRunningClientSession(sessionReference);
     }
 
     constructor(username: string, sessionReference: string, ipRep: string, mongoHandler: typeof MongoHandlerCentral.UserHandlerType, sessionCrypto: SessionCrypto) {
@@ -160,6 +170,11 @@ export default class SocketHandler {
         this.deleteSelf = () => SocketHandler.socketHandlers.delete(sessionReference);
         SocketHandler.socketHandlers.set(sessionReference, this);
         SocketHandler.onlineUsers.set(username, { sessionReference, ipRep });
+    }
+
+    private async confirmAuthToken(authToken: string, authData: string) {
+        const { username, authNonce } = await this.#sessionCrypto.decryptVerifyFromBase64(authToken, "Socket Auth") || {};
+        return (username === this.#username) && (authNonce === authData);
     }
 
     private deregisterSocket() {
@@ -175,8 +190,7 @@ export default class SocketHandler {
     private async registerNewSocket(ipRep: string, authToken: string, authData: string, socket: Socket) {
         if (!this.#username) return false;
         if (SocketHandler.onlineUsers.get(this.#username)?.ipRep !== ipRep) return false;
-        const { username, authNonce } = await this.#sessionCrypto.decryptVerifyFromBase64(authToken, "Socket Auth") || {};
-        if (username !== this.#username || authNonce !== authData) return false;
+        if (!(await this.confirmAuthToken(authToken, authData))) return false;
         this.deregisterSocket();
         this.#socket = socket;
         for (let [event] of typedEntries(this.responseMap)) {
@@ -226,20 +240,20 @@ export default class SocketHandler {
     private async RegisterPendingSession(param: Readonly<{ sessionId: string, myAlias: string, otherAlias: string }>): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.registerPendingSession(param.sessionId, param.myAlias, param.otherAlias))) return failure(ErrorStrings.ProcessFailed);
-        return { reason: null };
+        return { reason: false };
 
     }
 
     private async UpdateUserData(userData: { x3dhInfo?: UserEncryptedData, chatsData?: UserEncryptedData } & Username): Promise<Failure> {
         if (!this.#username || this.#username !== userData.username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.updateUserData(userData))) return failure(ErrorStrings.ProcessFailed);
-        return { reason: null };
+        return { reason: false };
     }
 
     private async PublishKeyBundles(keyBundles: PublishKeyBundlesRequest): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.publishKeyBundles(keyBundles))) return failure(ErrorStrings.ProcessFailed);
-        return { reason: null };
+        return { reason: false };
     }
 
     private async RequestKeyBundle({ username }: Username): Promise<RequestKeyBundleResponse | Failure> {
@@ -254,7 +268,7 @@ export default class SocketHandler {
         const otherSocketHandler = SocketHandler.socketHandlers.get(SocketHandler.onlineUsers.get(username)?.sessionReference);
         if (!otherSocketHandler) return failure(ErrorStrings.ProcessFailed);
         const response  = await otherSocketHandler.requestRoom(this.#username);
-        if (!response?.reason) {
+        if (response?.reason === false) {
             const halfRoom = halfCreateRoom([this.#username, this.#socket, this.#sessionCrypto]);
             otherSocketHandler.establishRoom(this.#username, halfRoom).then((dispose) => {
                 if (dispose) {
@@ -268,13 +282,13 @@ export default class SocketHandler {
     private async SendChatRequest(chatRequest: ChatRequestHeader): Promise<Failure> {
         if (!this.#username || this.#username === chatRequest.addressedTo) return failure(ErrorStrings.InvalidRequest);
         if (!(await MongoHandlerCentral.depositChatRequest(chatRequest))) return failure(ErrorStrings.ProcessFailed);
-        return { reason: null };
+        return { reason: false };
     }
 
     private async SendMessage(message: MessageHeader): Promise<Failure> {
         if (!this.#username || this.#username === message.toAlias) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.depositMessage(message))) return failure(ErrorStrings.ProcessFailed);
-        else return { reason: null };
+        else return { reason: false };
     }
  
     private async GetAllChats(): Promise<ChatData[] | Failure> {
@@ -318,37 +332,37 @@ export default class SocketHandler {
     private async StoreMessage(message: StoredMessage): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.storeMessage(message))) return failure(ErrorStrings.ProcessFailed);
-        return { reason: null };
+        return { reason: false };
     }
 
     private async MessageHeaderProcessed({ sessionId, toAlias, headerId }: SessionIdentifier & HeaderIdentifier): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.messageHeaderProcessed(toAlias, sessionId, headerId))) return failure(ErrorStrings.ProcessFailed);
-        return { reason: null };
+        return { reason: false };
     }
 
     private async CreateChat(chat: ChatData): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.createChat(chat))) return failure(ErrorStrings.ProcessFailed);
-        return { reason: null };
+        return { reason: false };
     }
 
     private async UpdateChat(chat: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.updateChat(chat))) return failure(ErrorStrings.ProcessFailed);
-        return { reason: null };
+        return { reason: false };
     }
 
     private async DeleteChatRequest({ headerId }: { headerId: string }): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.deleteChatRequest(headerId))) return failure(ErrorStrings.ProcessFailed);
-        return { reason: null };
+        return { reason: false };
     }
 
     private async StoreBackup(backup: Backup): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.storeBackup(backup))) return failure(ErrorStrings.ProcessFailed);
-        return { reason: null };
+        return { reason: false };
     }
 
     private async GetBackupById({ byAlias, sessionId, headerId }: HeaderIdentifier & { byAlias: string }): Promise<Backup | Failure> {
@@ -359,13 +373,13 @@ export default class SocketHandler {
     private async BackupProcessed({ byAlias, sessionId, headerId }: HeaderIdentifier & { byAlias: string }): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.backupProcessed(byAlias, sessionId, headerId))) return failure(ErrorStrings.ProcessFailed);
-        return { reason: null };
+        return { reason: false };
     }
 
     private async SendReceipt(receipt: Receipt): Promise<Failure> {
         if (!this.#username || this.#username === receipt.toAlias) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.depositReceipt(receipt))) return failure(ErrorStrings.ProcessFailed);
-        return { reason: null };
+        return { reason: false };
     }
 
     private async GetAllReceipts({ toAlias, sessionId }: SessionIdentifier): Promise<Receipt[] | Failure> {
@@ -376,13 +390,13 @@ export default class SocketHandler {
     private async ClearAllReceipts({ toAlias, sessionId }: SessionIdentifier): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.clearAllReceipts(toAlias, sessionId))) return failure(ErrorStrings.ProcessFailed);
-        return { reason: null };
+        return { reason: false };
     }
 
     private async requestRoom(username: string): Promise<Failure> {
         if (!this.#username || this.#username === username) return failure(ErrorStrings.InvalidRequest);
         const response: Failure = await this.request(SocketServerSideEvents.RoomRequested, { username }, 2000);
-        if (!response?.reason) {
+        if (response?.reason === false) {
             this.#openToRoomTemp = { username };
             setTimeout(() => { this.#openToRoomTemp = null; }, 5000);
         }

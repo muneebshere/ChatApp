@@ -1,13 +1,15 @@
 import _ from "lodash";
 import axios from "axios";
+import isOnline from "is-online";
+import { Queue } from "async-await-queue";
 import { SessionCrypto } from "../../shared/sessionCrypto";
 import {  X3DHUser } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
 import * as esrp from "../../shared/ellipticSRP";
-import { failure, fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
+import { awaitCallback, failure, fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
 import { ErrorStrings, Failure, Username, SignUpRequest, NewUserData, Profile, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, SavePasswordRequest, SavePasswordResponse, SignUpChallenge, LogInResponse, LogInChallenge, LogInSavedRequest, LogInSavedResponse, LogInPermitted  } from "../../shared/commonTypes";
-import Client from "./client";
+import Client, { ConnectionStatus } from "./client";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;
@@ -21,49 +23,101 @@ type SavedAuthData = Readonly<{
 const PORT = 8080;
 const { hostname, protocol } = window.location;
 const baseURL = `${protocol}//${hostname}:${PORT}`;
-const axInstance = axios.create({ baseURL, maxRedirects: 0 })
+const axInstance = axios.create({ baseURL, maxRedirects: 0, timeout: 2000 });
+
+export type AuthConnectionStatus = Extract<ConnectionStatus, "Online" | "ClientOffline" | "ServerUnreachable">
 
 export default class AuthClient {
 
+    private static verified: Promise<boolean> = null;
+    private static issuedNonce: { nonceId: string, authNonce: string } = null;
+    private static nonceQueue = new Queue(1, 10);
+
+    private static notifyConnectionStatus: (status: AuthConnectionStatus) => void;
+
     private constructor() {}
 
+    static subscribeConnectionStatus(notifyCallback: (status: AuthConnectionStatus) => void) {
+        this.notifyConnectionStatus = notifyCallback;
+        this.isServerReachable();
+    }
+
+    static async latestJsHash(): Promise<string> {
+        const response = await this.get("/latestJsHash");
+        if (response?.status !== 200) return null;
+        else return response.data.latestJsHash;
+    }
+
+    static async isServerReachable() {
+        const response = await this.get("/isServerActive");
+        return response?.status === 200;
+    }
+
     static async userExists(username: string): Promise<boolean> {
-        try {
-            const response = await axInstance.get(`/userExists/${username}`);
-            if (response?.status === 200) return response.data.exists;
-            else return null;
-        }
-        catch(err) {
-            logError(err);
-            return null;
-        }
+        const response = await this.get(`/userExists/${username}`);
+        if (response?.status === 200) return response.data.exists;
+        else return null;
     }
 
     static async userLogInPermitted(username: string): Promise<LogInPermitted> {
+        const response = await this.get(`/userLogInPermitted/${username}`);
+        if (response?.status === 200) return response.data;
+        else return null;
+    }
+
+    static async isAuthenticated(): Promise<boolean> {
+        const response = await this.get("/isAuthenticated");
+        return response?.status === 200 ? response.data.authenticated : null;
+    }
+
+    static async getAuthNonce(): Promise<{ nonceId?: string, authNonce?: string }> {
+        if (this.verified) await this.verified;
+        const token = Symbol();
+        await this.nonceQueue.wait(token);
+        if (this.issuedNonce) {
+            console.log(`Previously obtained nonce id ${this.issuedNonce.nonceId}`);
+            this.nonceQueue.end(token);
+            return this.issuedNonce;
+        }
+        const response = await this.get("/authNonce");
+        this.issuedNonce ||= response?.status === 200 ? response.data : {};
+        this.nonceQueue.end(token);
+        setTimeout(() => this.issuedNonce = null, 4500);
+        console.log(`Newly obtained nonce id ${this.issuedNonce.nonceId}`);
+        return this.issuedNonce;
+    }
+
+    static async clearNonce() {
         try {
-            const response = await axInstance.get(`/userLogInPermitted/${username}`);
-            if (response?.status === 200) return response.data;
-            else return null;
+            console.log(`Clearing nonce id ${this.issuedNonce?.nonceId}`);
+            await axInstance.delete("/clearNonce");
+            this.issuedNonce = null;
         }
         catch(err) {
             logError(err);
-            return null;
         }
     }
 
-    static async isLoggedIn(): Promise<boolean> {
-        try {
-            const response = await axInstance.get(`/isLoggedIn`);
-            if (response?.status === 200) return response.data.loggedIn;
-            else return null;
+    static async verifyAuthentication(authToken: string): Promise<boolean> {
+        const nonceId = this.issuedNonce?.nonceId;
+        if (!nonceId) return null;
+        if (this.verified) {
+            console.log(`Already waiting for nonce id ${nonceId}`)
+            return await this.verified;
         }
-        catch(err) {
-            logError(err);
-            return null;
-        }
+        this.issuedNonce = null;
+        this.verified = awaitCallback<boolean>(async (resolve) => {
+            const response = await this.get(`/verifyAuthentication/${nonceId}/${fromBase64(authToken).toString("hex")}`);
+            console.log(`Authentication verified: ${response?.data?.verified} for nonce id ${nonceId}`);
+            resolve(response?.status === 200 ? response.data.confirmed : null);
+        });
+        const verified = await this.verified;
+        this.verified = null;
+        return verified;
     }
 
     static async signUp(profile: Profile, password: string, savePassword: boolean): Promise<Client | Failure> {
+        if (!(await this.isServerReachable())) return failure(ErrorStrings.NoConnectivity);
         try {
             const { username } = profile;
             const passwordString = `${username}#${password}`
@@ -88,7 +142,8 @@ export default class AuthClient {
                 return resultInit;
             }
             const { serverIdentityVerifyingKey, verifierEntangled } = resultInit;
-            const { clientConfirmationCode, sharedKeyBits, confirmServer } = await processAuthChallenge(verifierEntangled, verifierDerive, "now");
+            const { clientConfirmationCode, sharedKeyBitsBuffer, confirmServer } = await processAuthChallenge(verifierEntangled, verifierDerive, "now");
+            const sharedKeyBits = await crypto.importRaw(sharedKeyBitsBuffer);
             const serverIdentityVerifying = await crypto.deriveEncrypt({ serverIdentityVerifyingKey }, encryptionBaseVector, "Server Identity Verifying Key");
             const x3dhUser = await X3DHUser.new(username, encryptionBaseVector);
             if (!x3dhUser) {
@@ -123,6 +178,7 @@ export default class AuthClient {
     }
 
     static async logIn(username: string, password: string, savePassword: boolean): Promise<Client | Failure> {
+        if (!(await this.isServerReachable())) return failure(ErrorStrings.NoConnectivity);
         try {
             const passwordString = `${username}#${password}`;
             const { clientEphemeralPublic, processAuthChallenge } = await esrp.clientSetupAuthProcess(passwordString);
@@ -134,7 +190,8 @@ export default class AuthClient {
                 return resultInit;
             }
             const { verifierEntangled, verifierDerive, databaseAuthKeyDerive } = resultInit;
-            const { clientConfirmationCode, sharedKeyBits, confirmServer } = await processAuthChallenge(verifierEntangled, verifierDerive, "now");
+            const { clientConfirmationCode, sharedKeyBitsBuffer, confirmServer } = await processAuthChallenge(verifierEntangled, verifierDerive, "now");
+            const sharedKeyBits = await crypto.importRaw(sharedKeyBitsBuffer);
             const databaseAuthKeyBuffer = await esrp.disentanglePasswordToBits(passwordString, databaseAuthKeyDerive);
             const logInChallengeResponse: LogInChallengeResponse = { clientConfirmationCode, databaseAuthKeyBuffer };
             const resultConc: LogInResponse | Failure = await this.post("concludeLogIn", logInChallengeResponse);
@@ -174,10 +231,21 @@ export default class AuthClient {
     }
 
     static async logInSaved(): Promise<Client | Failure> {
+        if (!(await this.isServerReachable())) return failure(ErrorStrings.NoConnectivity);
         try {
-            const { serverKeyBits, authData, coreData } = deserialize(fromBase64(window.localStorage.getItem("SavedAuth") || ""));
+            const { serverKeyBits, authData, coreData } = deserialize(fromBase64(window.localStorage.getItem("SavedAuth") || "")) || {};
             if (!serverKeyBits) {
+                await this.clearSavedPassword();
                 logError("Saved details not found");
+                return failure(ErrorStrings.ProcessFailed);
+            };
+            const passwordSaved = await this.isPasswordSaved();
+            if (passwordSaved !== "same-ip") {
+                if (passwordSaved === "other-ip") logError("Accessing server from a different ip than the one used to save password");
+                else {
+                    window.localStorage.removeItem("SavedAuth");
+                    logError("Password not saved.");
+                }
                 return failure(ErrorStrings.ProcessFailed);
             };
             const clientReference = getRandomString(16, "base64");
@@ -190,7 +258,7 @@ export default class AuthClient {
             const { authKeyBits } = resultInit;
             const { username, laterConfirmation, databaseAuthKeyBuffer }: SavedAuthData = await crypto.deriveDecrypt(authData, authKeyBits, "Auth Data");
             const { sharedSecret, clientConfirmationCode, serverConfirmationData } = laterConfirmation;
-            const sharedKeyBits = await esrp.getSharedKeyBits(sharedSecret);
+            const sharedKeyBits = await crypto.importRaw(esrp.getSharedKeyBitsBuffer(sharedSecret));
             const concludeLogInSaved: Username & LogInChallengeResponse = { username, clientConfirmationCode, databaseAuthKeyBuffer };
             const resultConc: LogInSavedResponse | Failure = await this.post("concludeLogInSaved", concludeLogInSaved);
             if ("reason" in resultConc) {
@@ -232,7 +300,7 @@ export default class AuthClient {
 
     static async terminateCurrentSession() {
         navigator.sendBeacon(`${baseURL}/terminateCurrentSession`);
-        Client.dispose();
+        Client.dispose("ending");
     }
 
     private static async savePassword(username: string, passwordString: string, encryptionBaseVector: Buffer, databaseAuthKeyBuffer: Buffer) {
@@ -255,16 +323,73 @@ export default class AuthClient {
         return true;
     }
 
+    private static async isPasswordSaved(): Promise<false | "same-ip" | "other-ip"> {
+        const response = await this.get("/isPasswordSaved");
+        if (response?.status !== 200) return null;
+        else return response.data.passwordSaved;
+    }
+
+    private static async clearSavedPassword() {
+        try {
+            await axInstance.delete("/clearSavedPassword");
+        }
+        catch(err) {
+            logError(err);
+        }
+    }
+
     private static async post(resource: string, data: any) {
+        if (!window.navigator.onLine) {
+            this.notifyResponseStatus(404);
+            return {};
+        }
         const payload = serialize(data).toString("base64");
         try {
             const response = await axInstance.post(`/${resource}`, { payload });
+            this.notifyResponseStatus(response?.status);
             if (response?.status === 200) return deserialize(fromBase64(response.data.payload));
             else return {};
         }
         catch(err) {
             logError(err);
+            this.notifyResponseStatus(404);
             return {};
         }
     }
+
+    private static async get(resource: string) {
+        if (!window.navigator.onLine) {
+            this.notifyResponseStatus(404);
+            return null;
+        }
+        try {
+            const response = await axInstance.get(resource);
+            this.notifyResponseStatus(response?.status);
+            return response;
+        }
+        catch(err) {
+            logError(err);
+            this.notifyResponseStatus(404);
+            return null;
+        }
+    }
+
+    private static async notifyResponseStatus(status: number) {
+        if (!this.notifyConnectionStatus) return;
+        if (status === 200) this.notifyConnectionStatus("Online");
+        else if (status === 404) {
+            if (await isClientOnline()) this.notifyConnectionStatus("ServerUnreachable");
+            else this.notifyConnectionStatus("ClientOffline");
+        }
+    }
+}
+
+export async function isClientOnline() {
+    if (!window.navigator.onLine) return false;
+    try {
+        return await isOnline({ timeout: 500 });
+    } catch (err) {
+        return false;
+    }
+
 }

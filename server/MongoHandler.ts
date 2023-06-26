@@ -8,6 +8,16 @@ import { parseIpReadable } from "./backendserver";
 import { Notify } from "./SocketHandler";
 import { allSettledResults, logError, randomFunctions } from "../shared/commonFunctions";
 
+export type RunningClientSession = Readonly<{
+    username: string,
+    ipRep: string,
+    clientReference: string,
+    sessionReference: string,
+    sharedKeyBitsBuffer: Buffer,
+    clientIdentityVerifyingKey: Buffer,
+    databaseAuthKeyBuffer: Buffer
+}>;
+
 const exposedSignedKey = {
     exportedPublicKey: {
         type: Schema.Types.Buffer,
@@ -75,6 +85,19 @@ const passwordEntangleInfo = {
     ...passwordDeriveInfo
 }
 
+const ip = {
+    ipRep: {
+        type: Schema.Types.String,
+        required: true,
+        immutable: true
+    },
+    ipRead: {
+        type: Schema.Types.String,
+        required: true,
+        immutable: true
+    }
+}
+
 export class MongoHandlerCentral {
 
     private static sessionHooks = new Map<string, (notify: Notify) => void>();
@@ -135,6 +158,55 @@ export class MongoHandlerCentral {
             unique: true
         }
     }), "server_data");
+
+    private static readonly RunningClientSession = mongoose.model("RunningClientSession", new Schema({
+        username: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true,
+            unique: true
+        },
+        ipRep: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true
+        },
+        sessionReference: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true,
+            unique: true
+        },
+        clientReference: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true,
+            unique: true
+        },
+        sharedKeyBitsBuffer: {
+            type: Schema.Types.Buffer,
+            required: true,
+            immutable: true,
+            unique: true
+        },
+        clientIdentityVerifyingKey: {
+            type: Schema.Types.Buffer,
+            required: true,
+            immutable: true,
+            unique: true
+        },
+        databaseAuthKeyBuffer: {
+            type: Schema.Types.Buffer,
+            required: true,
+            immutable: true,
+            unique: true
+        },
+        lastFreshAt: {
+            type: Schema.Types.Date,
+            default: new Date(),
+            expires: 5 * 60
+        }
+    }), "running_client_sessions");
 
     private static readonly DatabaseAccessKey = mongoose.model("DatabaseAccessKey", new Schema({
         username: {
@@ -249,18 +321,7 @@ export class MongoHandlerCentral {
             immutable: true,
             unique: true
         },
-        ipRep: {
-            type: Schema.Types.String,
-            required: true,
-            immutable: true,
-            unique: true
-        },
-        ipRead: {
-            type: Schema.Types.String,
-            required: true,
-            immutable: true,
-            unique: true
-        },
+        ...ip,
         savedAuthDetails: userEncryptedData,
         createdAt: {
             type: Schema.Types.Date,
@@ -338,16 +399,7 @@ export class MongoHandlerCentral {
             required: true,
             default: null
         },
-        ipRep: {
-            type: Schema.Types.String,
-            required: true,
-            immutable: true,
-        },
-        ipRead: {
-            type: Schema.Types.String,
-            required: true,
-            immutable: true,
-        }
+        ...ip
     }).index({ username: 1, ipRep: 1 }, { unique: true })
     .pre("validate", function(next) { 
         if (this.isNew) this.ipRead = parseIpReadable(this.ipRep);
@@ -541,6 +593,31 @@ export class MongoHandlerCentral {
         }
     }
 
+    static async createRunningClientSession(session: RunningClientSession) {
+        const { username } = session;
+        try {
+            await this.RunningClientSession.deleteOne({ username });
+            return !!(await this.RunningClientSession.create(session));
+        }
+        catch(err) {
+            logError(err);
+            return false;
+        }
+    }
+
+    static async refreshRunningClientSessions(sessionReferences: string[]) {
+        const lastFreshAt = new Date();
+        return (await this.RunningClientSession.updateMany({ sessionReference: { $in: sessionReferences } }, { lastFreshAt })).modifiedCount > 0;
+    }
+
+    static async getRunningClientSession(sessionReference: string): Promise<RunningClientSession> {
+        return cleanLean(await this.RunningClientSession.findOne({ sessionReference }).lean());
+    }
+
+    static async clearRunningClientSession(sessionReference: string) {
+        return (await this.RunningClientSession.deleteOne({ sessionReference })).deletedCount === 1;
+    }
+
     static async createNewUser(user: Username & NewAuthData & NewUserData, databaseAuthKey: CryptoKey) {
         try {
             const { username } = user;
@@ -605,6 +682,14 @@ export class MongoHandlerCentral {
 
     static async getSavedAuth(saveToken: string, ipRep: string) {
         return cleanLean(await this.SavedAuth.findOne({ saveToken, ipRep }).lean());
+    }
+
+    static async clearSavedAuth(saveToken: string) {
+        return (await this.SavedAuth.deleteOne({ saveToken })).deletedCount === 1;
+    }
+
+    static async savedAuthExists(saveToken: string, ipRep?: string) {
+        return !!(await this.SavedAuth.findOne({ saveToken, ...(ipRep ? { ipRep } : {}) }).lean());
     }
 
     static async getUserRetries(username: string, ipRep: string): Promise<{ tries?: number, allowsAt?: number }> {

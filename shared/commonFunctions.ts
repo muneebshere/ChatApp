@@ -2,6 +2,8 @@ import { stringify } from "safe-stable-stringify";
 import { isBrowser, isNode, isWebWorker } from "./node_modules/browser-or-node";
 import { ErrorStrings, Failure } from "./commonTypes";
 
+const logOff = true;
+
 export function failure(reason: ErrorStrings, details: any = null): Failure {
     return details ? { reason, details } : { reason };
 }
@@ -34,6 +36,7 @@ export function randomFunctions() {
 }
 
 export function logError(err: any): void {
+    if (logOff) return;
     const message = err.message;
     if (message) {
         console.log(`${message}`);

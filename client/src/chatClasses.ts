@@ -195,9 +195,7 @@ export class Chat extends AbstractChat {
             const delivery = { delivered: respondedAt, seen: respondedAt };
             await chat.encryptStoreMessage({ messageId, text, timestamp, sentByMe, delivery });
         }
-        await chat.loadUnprocessedMessages();
-        await chat.loadNext();
-        chat.loadAndProcessReceipts();
+        chat.loadNext().then(() => chat.checkNew());
         return chat;
     }
 
@@ -357,7 +355,7 @@ export class Chat extends AbstractChat {
         if (!this.clientInterface.isConnected) return null;
         const messageHeader = await this.#chattingSession.sendMessage(sendingMessage, async (exportedChattingSession) => {
             const result = await this.clientInterface.UpdateChat({ chatId: this.chatId, exportedChattingSession });
-            return !result.reason;
+            return result?.reason === false;
         });
         if (messageHeader === "Could Not Save") {
             logError(messageHeader);
@@ -383,6 +381,10 @@ export class Chat extends AbstractChat {
             return { acknowledged: false };
         }
         else return null;
+    }
+
+    async checkNew() {
+        await Promise.all([this.loadUnprocessedMessages(), this.loadAndProcessReceipts()]);
     }
 
     async performLoad(load: () => Promise<void>) {
@@ -535,7 +537,7 @@ export class Chat extends AbstractChat {
         const toAlias = this.otherAlias;
         const [messageBody, signature] = await this.#chattingSession.receiveMessage(encryptedMessage, async (exportedChattingSession) => {
             const result = await this.clientInterface.UpdateChat({ chatId: this.chatId, exportedChattingSession });
-            return !result.reason; 
+            return result?.reason === false; 
         });
         const sendReceipt = async ({ bounced }: { bounced: boolean }) => {
             live || await this.clientInterface.MessageHeaderProcessed({ sessionId, headerId, toAlias: this.myAlias });

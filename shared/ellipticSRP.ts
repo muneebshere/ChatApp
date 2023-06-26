@@ -11,29 +11,30 @@ export type ConfirmationData = Readonly<{
     confirmPurpose: string
 }>
 
-type ServerAuthChallengeNow = Readonly<{ 
-    sharedKeyBits: CryptoKey, 
+type ServerAuthChallenge = Readonly<{
     serverConfirmationCode: Buffer,
-    verifierEntangled: Buffer,
+    verifierEntangled: Buffer
+}>;
+
+type ServerAuthChallengeNow = ServerAuthChallenge & Readonly<{ 
+    sharedKeyBitsBuffer: Buffer, 
     confirmClient: (confirmationCode: Buffer) => Promise<boolean>, 
 }>;
 
-export type ServerAuthChallengeLater = Readonly<{ 
+export type ServerAuthChallengeLater = ServerAuthChallenge & Readonly<{
     sharedSecret: Buffer, 
-    serverConfirmationCode: Buffer,
-    verifierEntangled: Buffer,
     clientConfirmationData: ConfirmationData;
 }>;
 
-type ClientAuthChallengeNowResult = Readonly<{ 
-    sharedKeyBits: CryptoKey, 
-    clientConfirmationCode: Buffer,
+type ClientAuthChallengeNowResult = Readonly<{
+    sharedKeyBitsBuffer: Buffer, 
+    clientConfirmationCode: Buffer
     confirmServer: (confirmationCode: Buffer) => Promise<boolean>, 
 }>;
 
-export type ClientAuthChallengeLaterResult = Readonly<{ 
+export type ClientAuthChallengeLaterResult = Readonly<{
     sharedSecret: Buffer, 
-    clientConfirmationCode: Buffer,
+    clientConfirmationCode: Buffer
     serverConfirmationData: ConfirmationData;
 }>;
 
@@ -116,8 +117,8 @@ async function setupConfirmationData(sharedSecret: Buffer, toSign: RistrettoPoin
     return { confirmationCode, commonHash, toConfirm, confirmPurpose };
 }
 
-export async function getSharedKeyBits(sharedSecret: Buffer) {
-    return await importRaw(sha512(sharedSecret));
+export function getSharedKeyBitsBuffer(sharedSecret: Buffer) {
+    return sha512(sharedSecret);
 }
 
 export async function processConfirmationData(sharedSecret: Buffer, confirmationCode: Buffer, confirmationData: ConfirmationData) {
@@ -169,14 +170,14 @@ export async function clientSetupAuthProcess(passwordString: string) {
         const vector1 = getSharedSecret(clientEphemeralPrivate, serverEphemeralPublic);
         const vector2 = getSharedSecret(verifierPrivate, serverEphemeralPublic).multiply(toBigInt(commonHash));
         const sharedSecret = toBuffer(vector1.add(vector2));
-        const sharedKeyBits = await importRaw(sha512(sharedSecret));
+        const sharedKeyBitsBuffer = sha512(sharedSecret);
         if (confirm === "later") {
             const { confirmationCode: clientConfirmationCode, ...serverConfirmationData } = await setupConfirmationData(sharedSecret, serverEphemeralPublic, clientEphemeralPoint, "Client");
             return { sharedSecret, clientConfirmationCode, serverConfirmationData };
         }
         else {
             const { confirmationCode: clientConfirmationCode, confirmCode: confirmServer } = await setupConfirmation(sharedSecret, serverEphemeralPublic, clientEphemeralPoint, "Client");
-            return { sharedKeyBits, clientConfirmationCode, confirmServer };
+            return { sharedKeyBitsBuffer, clientConfirmationCode, confirmServer };
         }
     }
     return { clientEphemeralPublic, processAuthChallenge };
@@ -193,7 +194,7 @@ export async function serverSetupAuthChallenge(verifierPublic: Buffer, clientEph
     const vector1 = getSharedSecret(serverEphemeralPrivate, clientEphemeralPoint);
     const vector2 = getSharedSecret(serverEphemeralPrivate, verifierPoint).multiply(toBigInt(commonHash));
     const sharedSecret = toBuffer(vector1.add(vector2));
-    const sharedKeyBits = await importRaw(sha512(sharedSecret));
+    const sharedKeyBitsBuffer = sha512(sharedSecret);
     const verifierEntangled = toBuffer(serverEphemeralPublic.add(verifierExpandedPoint));
     if (confirm === "later") {
         const { confirmationCode: serverConfirmationCode, ...clientConfirmationData } = await setupConfirmationData(sharedSecret, clientEphemeralPoint, serverEphemeralPublic, "Server");
@@ -201,6 +202,6 @@ export async function serverSetupAuthChallenge(verifierPublic: Buffer, clientEph
     }
     else {
         const { confirmationCode: serverConfirmationCode, confirmCode: confirmClient } = await setupConfirmation(sharedSecret, clientEphemeralPoint, serverEphemeralPublic, "Server");
-        return { sharedKeyBits, serverConfirmationCode, confirmClient, verifierEntangled };
+        return { sharedKeyBitsBuffer, serverConfirmationCode, confirmClient, verifierEntangled };
     }
 }
