@@ -128,7 +128,7 @@ function useScrollRestore(scrollbar: () => HTMLDivElement,
       const notSeen = Number.isNaN(parseInt((target as HTMLElement).dataset.seen));
       const timestamp = parseInt((target as HTMLElement).dataset.timestamp);
       if (notSeen && intersectionRect.bottom && intersectionRect.bottom <= boundingClientRect.bottom) {
-        target.dispatchEvent(new CustomEvent("seen", { detail: { timestamp: Date.now() }}));
+        target?.dispatchEvent(new CustomEvent("seen", { detail: { timestamp: Date.now() }}));
       }
       if (timestamp === earliestLoaded() && intersectionRect.top && intersectionRect.top >= boundingClientRect.top) {
         loadMore();
@@ -451,7 +451,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
             placeholder="Type a message"
             defaultValue={message}
             onChange={(e) => { 
-              messageRef.current = e.target.value;
+              messageRef.current = e?.target?.value || "";
               debouncedSendTyping();
              }}
             onSubmit={sendMessage}

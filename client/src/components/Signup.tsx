@@ -23,7 +23,7 @@ type SignUpData = {
 }
 
 type SignUpAction<K extends keyof SignUpData> = {
-  id: K;
+  id: K | "clear";
   value: SignUpData[K];
 }
 
@@ -34,7 +34,7 @@ type SignUpContextType = {
   signUpDispatch: Dispatch<SignUpAction<keyof SignUpData>>;
 }
 
-export function signUpAction<K extends keyof SignUpData>(id: K, value: SignUpData[K]): SignUpAction<K> {
+export function signUpAction<K extends keyof SignUpData>(id: K | "clear", value: SignUpData[K]): SignUpAction<K> {
   return { id, value };
 }
 
@@ -62,6 +62,7 @@ export const defaultSignUpDataReducer: SignUpDataReducer = (data, action) => {
     .with("submitted", () => ({ ...data, submitted: value as boolean }))
     .with("failed", () => ({ ...data, failed: value as boolean }))
     .with("warned", () => ({ ...data, warned: value as boolean }))
+    .with("clear", () => ({ ...defaultSignUpData ,..._.pick(data, "usernameExists", "submit") }))
     .otherwise(() => data);    
 }
 
@@ -104,9 +105,10 @@ export default function SignUpForm() {
     setFailed(false);
     setSubmitted(true);
     const { reason } = await submit({ displayName, username, password, savePassword });
-    if (reason) {
+    if (reason !== false) {
       setFailed(true);
     }
+    signUpDispatch(signUpAction("clear", null));
     setSubmitted(false);
   }
 
@@ -121,6 +123,7 @@ export default function SignUpForm() {
           setValue={setDisplayName}
           valid={true}
           disabled={submitted}
+          autoFocus={true}
           helperText="If you don't specify a display name, your username will be used as your display name."
           onEnter={submitLocal}/>
         <ControlledTextField 
@@ -166,14 +169,14 @@ export default function SignUpForm() {
           <FormLabel>Show Password</FormLabel>
           <StyledJoySwitch checked={showPassword} 
             disabled={submitted}
-            onChange={ (e) => setShowPassword(e.target.checked) } 
+            onChange={ (e) => setShowPassword(e?.target?.checked) } 
             color={showPassword ? "primary" : "neutral"}/>
         </FormControl>
         <FormControl orientation="horizontal">
           <FormLabel>Save password</FormLabel>
           <StyledJoySwitch checked={savePassword} 
             disabled={submitted}
-            onChange={ (e) => setSavePassword(e.target.checked) }
+            onChange={ (e) => setSavePassword(e?.target?.checked) }
             color={savePassword ? "primary" : "neutral"}/>
         </FormControl>
         <Button variant="solid"

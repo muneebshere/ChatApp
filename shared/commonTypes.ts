@@ -375,13 +375,13 @@ export type SocketClientRequestReturn = {
 }
 
 enum SocketServerSideEventsEnum {
-    CompleteHandshake,
     MessageReceived,
     ChatRequestReceived,
     ReceiptReceived,
     RoomRequested,
     ClientRoomReady,
-    ServerRoomReady
+    ServerRoomReady,
+    ServerDisconnecting
 }
 
 export type SocketServerSideEventsKey = Exclude<keyof typeof SocketServerSideEventsEnum, number>

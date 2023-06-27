@@ -37,8 +37,8 @@ function SocketHandler(socket: () => Socket, sessionCrypto: () => SessionCrypto,
             return {};
         }
         const { payload } = await awaitCallback<any>(async (resolve) => {
-            socket().emit(event, (await sessionCrypto().signEncryptToBase64(data, event)),
-                async (response: string) => resolve(response ? await sessionCrypto().decryptVerifyFromBase64(response, event) : {}));
+            socket().emit(event, (await sessionCrypto()?.signEncryptToBase64(data, event)),
+                async (response: string) => resolve((response && await sessionCrypto()?.decryptVerifyFromBase64(response, event)) || {}));
             if (timeout > 0) {
                 window.setTimeout(() => resolve(failure(ErrorStrings.NoConnectivity)), timeout);
             }
@@ -63,7 +63,8 @@ export default class Client {
         [SocketServerSideEvents.RoomRequested, this.roomRequested] as [SocketServerSideEventsKey, any],
         [SocketServerSideEvents.MessageReceived, this.messageReceived],
         [SocketServerSideEvents.ChatRequestReceived, this.chatRequestReceived],
-        [SocketServerSideEvents.ReceiptReceived, this.receiptReceived]
+        [SocketServerSideEvents.ReceiptReceived, this.receiptReceived],
+        [SocketServerSideEvents.ServerDisconnecting, this.setDisconnectReason]
     ]);
     private readonly url: string;
     private notifyStatus: (status: ConnectionStatus) => void;
@@ -74,6 +75,7 @@ export default class Client {
     private connecting = false;
     private reconnecting = false;
     private initiated = false;
+    private disconnectReason = "";
 
     #socket: Socket;
     #profile: Profile;
@@ -150,7 +152,7 @@ export default class Client {
         const { nonceId, authNonce } = await AuthClient.getAuthNonce();
         if (!authNonce) return {};
         const username = this.#username;
-        const authToken = await this.#sessionCrypto.signEncryptToBase64({ username, authNonce }, "Socket Auth");
+        const authToken = await this.#sessionCrypto?.signEncryptToBase64({ username, authNonce }, "Socket Auth");
         return { nonceId, authToken };
     }
 
@@ -175,8 +177,10 @@ export default class Client {
             this.#socket = io(this.url, { auth, withCredentials: true });
             this.#socket.on("disconnect", (err) => {
                 console.log("Socket disconnected.");
+                console.log(this.disconnectReason);
                 logError(err);
-                this.reconnect();
+                if (this.disconnectReason) AuthClient.terminateCurrentSession("not-ending");
+                else this.reconnect();
             });
             const success = (await awaitCallback<boolean>(async (resolve) => {
                 this.#socket.io.once("error", (err) => {
@@ -259,6 +263,11 @@ export default class Client {
         if (!ending) this.notifyStatus?.("NotLoggedIn");
         this.notifyChange = null;
         this.notifyStatus = null;
+    }
+
+    private setDisconnectReason({ reason }: { reason: string }) {
+        this.disconnectReason = reason;
+        return {};
     }
 
     private constructChatInterface() {
@@ -554,10 +563,10 @@ export default class Client {
 
     private async respond(event: string, data: string, responseBy: (arg0: any) => any, respondAt: (arg0: string) => void) {
         const respond = async (response: any) => {
-            respondAt(await this.#sessionCrypto.signEncryptToBase64(response, event));
+            respondAt(await this.#sessionCrypto?.signEncryptToBase64(response, event));
         }
         try {
-            const decryptedData = await this.#sessionCrypto.decryptVerifyFromBase64(data, event);
+            const decryptedData = await this.#sessionCrypto?.decryptVerifyFromBase64(data, event);
             if (!decryptedData) await respond(failure(ErrorStrings.DecryptFailure));
             else {
                 const response = await responseBy(decryptedData);

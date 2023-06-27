@@ -164,13 +164,15 @@ async function main() {
     app.post("/concludeLogIn", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { challengeReference } = req.signedCookies?.logInInit || {};
+        const { sessionReference: prevSession } = req.signedCookies?.authenticated || {};
         res.clearCookie("logInInit");
         const { payload } = req.body;
         if (!ipRep || typeof payload !== "string") return res.status(400).end();
         const request: LogInChallengeResponse= deserialize(fromBase64(payload));
         const sessionReference = getRandomString(16, "base64");
-        const result = await authHandler.concludeLogIn(ipRep, challengeReference, sessionReference, request);
+        const result = await authHandler.concludeLogIn(ipRep, prevSession, challengeReference, sessionReference, request);
         if (!("reason" in result)) {
+            if (prevSession) res.clearCookie("authenticated");
             res.cookie("authenticated", { sessionReference, sessionIp: ipRep }, cookieOptions);
         }
         return res.json({ payload: serialize(result).toString("base64") });
@@ -193,13 +195,15 @@ async function main() {
     app.post("/concludeLogInSaved", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { username } = req.signedCookies?.logInSavedInit || {};
+        const { sessionReference: prevSession } = req.signedCookies?.authenticated || {};
         res.clearCookie("logInSavedInit");
         const { payload } = req.body;
         if (!ipRep || typeof payload !== "string") return res.status(400).end();
         const request: LogInChallengeResponse= deserialize(fromBase64(payload));
         const sessionReference = getRandomString(16, "base64");
-        const result = await authHandler.concludeLogInSaved(ipRep, sessionReference, { ...request, username });
+        const result = await authHandler.concludeLogInSaved(ipRep, prevSession, sessionReference, { ...request, username });
         if (!("reason" in result)) {
+            if (prevSession) res.clearCookie("authenticated");
             res.cookie("authenticated", { sessionReference, sessionIp: ipRep }, cookieOptions);
         }
         return res.json({ payload: serialize(result).toString("base64") });
@@ -222,13 +226,13 @@ async function main() {
     
     app.post("/userLogOut", async (req, res) => {
         const { sessionReference } = req.signedCookies?.authenticated || {};
-        SocketHandler.disposeSession(sessionReference);
+        await SocketHandler.disposeSession(sessionReference, "Logging out");
         return res.clearCookie("authenticated").clearCookie("savedPassword").status(200).end();
     });
     
     app.post("/terminateCurrentSession", async (req, res) => {
         const { sessionReference } = req.signedCookies?.authenticated || {};
-        SocketHandler.disposeSession(sessionReference);
+        await SocketHandler.disposeSession(sessionReference, "Session terminated");
         return res.clearCookie("authenticated").status(200).end();
     });
     
@@ -242,6 +246,9 @@ async function main() {
                 : (await MongoHandlerCentral.savedAuthExists(saveToken, ipRep)
                     ? "same-ip"
                     : "other-ip"); 
+        if (saveToken && !passwordSaved) {
+            res.clearCookie("passwordSaved");
+        }
         return res.json({ passwordSaved });
     });
     app.get("/isAuthenticated", async (req, res) => {

@@ -138,10 +138,8 @@ export default class SocketHandler {
         return sessionHandler ? sessionHandler.#username : null;
     }
 
-    static getUserStatus(username: string, currentIp: string): "ActiveHere" | "ActiveElsewhere" | "Offline" {
-        const { sessionReference, ipRep } = this.onlineUsers.get(username) || {};
-        if (!sessionReference) return "Offline";
-        return currentIp === ipRep ? "ActiveHere" : "ActiveElsewhere";
+    static isUserActive(username: string) {
+        return this.onlineUsers.has(username);
     }
 
     static async confirmUserSession(sessionReference: string, authToken: string, authData: string) {
@@ -153,12 +151,8 @@ export default class SocketHandler {
         return this.socketHandlers.get(sessionReference)?.registerNewSocket(ipRep, authToken, authData, socket) || false;
     }
 
-    static disposeUserSessions(username: string) {
-        this.socketHandlers.get(this.onlineUsers.get(username)?.sessionReference)?.dispose();
-    }
-
-    static disposeSession(sessionReference: string) {
-        this.socketHandlers.get(sessionReference)?.dispose();
+    static async disposeSession(sessionReference: string, reason: string) {
+        await this.socketHandlers.get(sessionReference)?.dispose(reason);
         MongoHandlerCentral.clearRunningClientSession(sessionReference);
     }
 
@@ -173,16 +167,17 @@ export default class SocketHandler {
     }
 
     private async confirmAuthToken(authToken: string, authData: string) {
-        const { username, authNonce } = await this.#sessionCrypto.decryptVerifyFromBase64(authToken, "Socket Auth") || {};
+        const { username, authNonce } = await this.#sessionCrypto?.decryptVerifyFromBase64(authToken, "Socket Auth") || {};
         return (username === this.#username) && (authNonce === authData);
     }
 
-    private deregisterSocket() {
+    private async deregisterSocket(reason: string) {
         if (this.#socket) {
             console.log(`Disonnected: socket#${this.#socket.id}`);
             this.#disposeRooms.forEach((disposeRoom) => disposeRoom());
             this.#socket.removeAllListeners();
-            this.#socket.disconnect();
+            await this.request(SocketServerSideEvents.ServerDisconnecting, { reason }, 500);
+            this.#socket?.disconnect(true);
             this.#socket = null;
         }
     }
@@ -191,33 +186,36 @@ export default class SocketHandler {
         if (!this.#username) return false;
         if (SocketHandler.onlineUsers.get(this.#username)?.ipRep !== ipRep) return false;
         if (!(await this.confirmAuthToken(authToken, authData))) return false;
-        this.deregisterSocket();
+        await this.deregisterSocket("Another socket connection being established with this session.");
         this.#socket = socket;
         for (let [event] of typedEntries(this.responseMap)) {
             const responseBy = this.responseMap[event].bind(this);
             socket.on(event, async (data: string, resolve) => await this.respond(event, data, responseBy, resolve));
         }
-        socket.on("disconnect", this.deregisterSocket.bind(this));
+        socket.on("disconnect", async () => await this.deregisterSocket(""));
         return true;
     }
 
     private async request(event: string, data: any, timeout = 0): Promise<any> {
         return await new Promise(async (resolve: (result: any) => void) => {
-            this.#socket?.emit(event, await this.#sessionCrypto.signEncryptToBase64(data, event),
-                async (response: string) => resolve(response ? await this.#sessionCrypto.decryptVerifyFromBase64(response, event) : failure(ErrorStrings.DecryptFailure)));
+            this.#socket?.emit(event, await this.#sessionCrypto?.signEncryptToBase64(data, event),
+                async (response: string) => resolve((response && await this.#sessionCrypto?.decryptVerifyFromBase64(response, event)) || failure(ErrorStrings.DecryptFailure)));
             if (timeout > 0) {
                 setTimeout(() => resolve(failure(ErrorStrings.NoConnectivity)), timeout);
             }
-        }).catch((err) => console.log(`${err}\n${err.stack}`));
+        }).catch((err) => {
+            logError(err);
+            return failure(ErrorStrings.ProcessFailed);
+        });
     }
 
     private async respond(event: SocketClientSideEventsKey, data: string, responseBy: (arg: SocketClientRequestParameters[typeof event]) => Promise<SocketClientRequestReturn[typeof event] | Failure>, resolve: (arg0: string) => void) {
         const encryptResolve = async (response: SocketClientRequestReturn[typeof event] | Failure) => {
             if (!this.#sessionCrypto) resolve(null);
-            else resolve(await this.#sessionCrypto.signEncryptToBase64({ payload: response }, event));
+            else resolve(await this.#sessionCrypto?.signEncryptToBase64({ payload: response }, event));
         }
         try {
-            const decryptedData = await this.#sessionCrypto.decryptVerifyFromBase64(data, event);
+            const decryptedData = await this.#sessionCrypto?.decryptVerifyFromBase64(data, event);
             if (!decryptedData) await encryptResolve(failure(ErrorStrings.DecryptFailure));
             else {
                 const response = await responseBy(decryptedData);
@@ -426,8 +424,8 @@ export default class SocketHandler {
         }
     }
 
-    private dispose() {
-        this.deregisterSocket();
+    private async dispose(reason: string) {
+        await this.deregisterSocket(reason);
         this.#mongoHandler.unsubscribe();
         SocketHandler.onlineUsers.delete(this.#username);
         this.deleteSelf();

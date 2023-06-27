@@ -34,16 +34,17 @@ export default function ControlledTextField(args: ControlledTextFieldProps) {
 
   function onChange(e: React.ChangeEvent<HTMLInputElement>) {
     e.preventDefault();
-    setCursor(e.target.selectionStart);
-    let newValue = e.target.value;
+    setCursor(e?.target?.selectionStart || 0);
+    let newValue = e?.target?.value || "";
     if (preventSpaces) newValue = newValue.replace(/\s+/g, "");
     setValue(newValue);
   }
 
   function onBlur(e: React.FocusEvent<HTMLInputElement>) {
+    if (!e) return;
     if (touched === false) {
       setTouched(true);
-      if (!e.target.value) {
+      if (!e.target?.value) {
         setValue("\u2060");
         setValue("");
       }

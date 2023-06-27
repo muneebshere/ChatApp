@@ -171,7 +171,7 @@ export default class AuthHandler {
         return { verifierDerive, verifierEntangled, databaseAuthKeyDerive };
     }
 
-    async concludeLogIn(ipRep: string, challengeReference: string, sessionReference: string, response: LogInChallengeResponse): Promise<LogInResponse | Failure> {
+    async concludeLogIn(ipRep: string, prevSession: string, challengeReference: string, sessionReference: string, response: LogInChallengeResponse): Promise<LogInResponse | Failure> {
         const { clientConfirmationCode, databaseAuthKeyBuffer } = response;
         const logInChallenge = this.#logInChallengeTemp.get(challengeReference);
         if (!logInChallenge || logInChallenge.ipRep !== ipRep) return failure(ErrorStrings.InvalidReference);
@@ -191,9 +191,10 @@ export default class AuthHandler {
                 return failure(ErrorStrings.IncorrectPassword, { tries });   
             }
             else await MongoHandlerCentral.updateUserRetries(username, ipRep, null);
-            const status = SocketHandler.getUserStatus(username, ipRep);
-            if (status === "ActiveElsewhere") return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
-            else if (status === "ActiveHere") SocketHandler.disposeUserSessions(username);
+            if (SocketHandler.isUserActive(username)) {
+                if (prevSession) await SocketHandler.disposeSession(prevSession, "Logging in again from the same device");
+                else return failure(ErrorStrings.InvalidRequest, "Already Active Elsewhere");
+            }
             const sessionData = { username, ipRep, clientReference, sessionReference, sharedKeyBitsBuffer, clientIdentityVerifyingKey, databaseAuthKeyBuffer };
             const [socketHandler, sessionRecordKeyDeriveSalt] = await this.createSocketHandler(sessionData, true);
             if (!socketHandler) return failure(ErrorStrings.ProcessFailed);
@@ -217,7 +218,7 @@ export default class AuthHandler {
         return { username, authKeyBits };
     }
 
-    async concludeLogInSaved(ipRep: string, sessionReference: string, { username, clientConfirmationCode, databaseAuthKeyBuffer }: LogInChallengeResponse & Username): Promise<LogInSavedResponse | Failure> {
+    async concludeLogInSaved(ipRep: string, prevSession: string, sessionReference: string, { username, clientConfirmationCode, databaseAuthKeyBuffer }: LogInChallengeResponse & Username): Promise<LogInSavedResponse | Failure> {
         const logInSaved = this.#logInSavedTemp.get(username)
         if (!logInSaved || logInSaved.ipRep !== ipRep) return failure(ErrorStrings.InvalidReference);
         const { laterConfirmation, coreKeyBits, clientIdentityVerifyingKey, userData, clientReference } = logInSaved;
@@ -225,9 +226,10 @@ export default class AuthHandler {
         try {
             if (!(await esrp.processConfirmationData(sharedSecret, clientConfirmationCode, clientConfirmationData))) return failure(ErrorStrings.IncorrectData);
             const sharedKeyBitsBuffer = esrp.getSharedKeyBitsBuffer(sharedSecret);
-            const status = SocketHandler.getUserStatus(username, ipRep);
-            if (status === "ActiveElsewhere") return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
-            else if (status === "ActiveHere") SocketHandler.disposeUserSessions(username);
+            if (SocketHandler.isUserActive(username)) {
+                if (prevSession) await SocketHandler.disposeSession(prevSession, "Logging in again from the same device");
+                else return failure(ErrorStrings.InvalidRequest, "Already Active Elsewhere");
+            }
             const sessionData = { username, ipRep, clientReference, sessionReference, sharedKeyBitsBuffer, clientIdentityVerifyingKey, databaseAuthKeyBuffer };
             const [socketHandler, sessionRecordKeyDeriveSalt] = await this.createSocketHandler(sessionData, true);
             if (!socketHandler) return failure(ErrorStrings.ProcessFailed);

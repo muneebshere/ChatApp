@@ -25,7 +25,7 @@ type LogInData = {
 }
 
 type LogInAction<K extends keyof LogInData> = {
-  id: K;
+  id: K | "clear";
   value: LogInData[K];
 }
 
@@ -36,11 +36,11 @@ type LogInContextType = {
   logInDispatch: Dispatch<LogInAction<keyof LogInData>>;
 }
 
-export function logInAction<K extends keyof LogInData>(id: K, value: LogInData[K]): LogInAction<K> {
+export function logInAction<K extends keyof LogInData>(id: K | "clear", value: LogInData[K]): LogInAction<K> {
   return { id, value };
 }
 
-export const defaultLogInData: Omit<LogInData, "usernameExists" | "submit" | "userLoginPermitted"> = {
+export const defaultLogInData: Omit<LogInData, "submit" | "userLoginPermitted"> = {
   username: "",
   usernameEntered: false,
   password: "",
@@ -68,6 +68,7 @@ export const defaultLogInDataReducer: LogInDataReducer = (data, action) => {
     .with("failed", () => ({ ...data, failed: value as boolean }))
     .with("submitted", () => ({ ...data, submitted: value as boolean }))
     .with("warned", () => ({ ...data, warned: value as boolean }))
+    .with("clear", () => ({ ...defaultLogInData ,..._.pick(data, "userLoginPermitted", "submit") }))
     .otherwise(() => data);
 }
 
@@ -127,7 +128,7 @@ export default function LogInForm() {
     setFailed(false);
     setSubmitted(true);
     const { reason, details } = (await submit({ username, password, savePassword })) ?? {};
-    if (reason) {
+    if (reason !== false) {
       if (reason === ErrorStrings.IncorrectPassword) {
         setLastIncorrectPasswords([...lastIncorrectPasswords, [username, password]]);
       }
@@ -139,8 +140,8 @@ export default function LogInForm() {
           setTryAgainIn(allowsAt - Date.now());
         }
       }
-      else if (reason === ErrorStrings.InvalidRequest && details === "Already Logged In Elsewhere") {
-        setUsernameError("This user is already logged in elsewhere.");
+      else if (reason === ErrorStrings.InvalidRequest && details === "Already Active Elsewhere") {
+        setUsernameError("This user is already active elsewhere.");
         setUsernameEntered(false);
       }
       else {
@@ -148,8 +149,7 @@ export default function LogInForm() {
       }
     }
     else {
-      setTryCount(0);
-      setTryAgainIn(0);
+      logInDispatch(logInAction("clear", null));
     }
     setSubmitted(false);
   }
@@ -169,6 +169,7 @@ export default function LogInForm() {
             valid={!usernameError}
             forceInvalid={!!username}
             errorMessage={usernameError}
+            autoFocus={!usernameEntered}
             onEnter={onUsernameEntered}/>
           <Button variant="solid"
             onClick={onUsernameEntered} 
@@ -191,19 +192,20 @@ export default function LogInForm() {
             disabled={submitted || tryAgainIn > 0}
             forceInvalid={!validatePassword(password) || tryAgainIn > 0}
             errorMessage={ tryAgainIn <= 0 ? (!password ? "Please provide password" : "Incorrect password.") : `Incorrect password entered ${tryCount} times. Try again in ${ (tryAgainIn / 1000).toFixed(0) }s.`}
+            autoFocus={usernameEntered}
             onEnter={submitLocal}/>
           <FormControl orientation="horizontal">
             <FormLabel>Show Password</FormLabel>
             <StyledJoySwitch checked={showPassword}
               disabled={submitted}
-              onChange={ (e) => setShowPassword(e.target.checked) } 
+              onChange={ (e) => setShowPassword(e?.target?.checked) } 
               color={showPassword ? "primary" : "neutral"}/>
           </FormControl>
           <FormControl orientation="horizontal">
             <FormLabel>Save password</FormLabel>
             <StyledJoySwitch checked={savePassword} 
               disabled={submitted}
-              onChange={ (e) => setSavePassword(e.target.checked) }
+              onChange={ (e) => setSavePassword(e?.target?.checked) }
               color={savePassword ? "primary" : "neutral"}/>
           </FormControl>
           <Stack direction="row" spacing={2}>

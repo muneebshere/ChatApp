@@ -302,9 +302,9 @@ export default class AuthClient {
         Client.dispose();
     }
 
-    static async terminateCurrentSession() {
+    static async terminateCurrentSession(notEnding?: "not-ending") {
         navigator.sendBeacon(`${baseURL}/terminateCurrentSession`);
-        Client.dispose("ending");
+        Client.dispose(notEnding ? null : "ending");
     }
 
     private static async savePassword(username: string, passwordString: string, encryptionBaseVector: Buffer, databaseAuthKeyBuffer: Buffer) {

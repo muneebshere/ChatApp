@@ -207,7 +207,7 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
               <StyledScrollingTextarea
                 placeholder="Type a message"
                 outerProps={{ style: { marginTop: "12px" } }}
-                onChange={ (e) => setNewMessage(e.target.value) }
+                onChange={ (e) => setNewMessage(e?.target?.value || "") }
                 onSubmit={() => sendRequest()}
                 minRows={3}
                 maxRows={5} 

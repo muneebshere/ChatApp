@@ -77,7 +77,7 @@ export default function Sidebar({ currentChatWith, openChat, chats, client, belo
           placeholder="Search for chat"
           value={search}
           style={{ width: "100%" }}
-          onChange={(e: any) => setSearch(e.target.value)}
+          onChange={(e: any) => setSearch(e?.target?.value || "")}
           endDecorator={
             search 
               ? (<IconButton variant="soft" color="neutral" onClick={() => setSearch("")}>

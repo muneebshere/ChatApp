@@ -1,12 +1,10 @@
 import _ from "lodash";
-import React, { useContext, useEffect, useState } from "react";
+import React, { useContext, useEffect } from "react";
 import { Tabs, TabList, Tab, TabPanel, Grid, Alert } from "@mui/joy";
-import { SubmitResponse } from "../App";
 import { StyledSheet } from "./CommonElementStyles";
 import LogInForm, { LogInContext } from "./Login";
 import SignUpForm, { SignUpContext } from "./Signup";
-import { Failure } from "../../../shared/commonTypes";
-import AuthClient, { AuthConnectionStatus } from "../AuthClient";
+import { AuthConnectionStatus } from "../AuthClient";
 import { CloudOff, WifiOff } from "@mui/icons-material";
 
 type TabProps =  { 
@@ -18,6 +16,8 @@ type TabProps =  {
 export default function LogInSignUp({ connectionStatus, currentTab, setCurrentTab }: TabProps) {
   const { logInData: { submitted: logInSubmitted } } = useContext(LogInContext);
   const { signUpData: { submitted: signUpSubmitted } } = useContext(SignUpContext);
+
+  useEffect(() => setCurrentTab(0), []);
 
   return (
     <Grid container sx={{ flexGrow: 1, justifyContent: "center", alignContent: "flex-start" }}>
@@ -56,10 +56,4 @@ export default function LogInSignUp({ connectionStatus, currentTab, setCurrentTa
         </StyledSheet>
       </Grid>
     </Grid>)
-}
-
-type LogInSignUpProps = {
-  logIn: (response: SubmitResponse) => Promise<Failure>;
-  signUp: (response: SubmitResponse) => Promise<Failure>;
-  usernameExists: (username: string) => Promise<boolean>;
 }
