@@ -1,11 +1,21 @@
 import _ from "lodash";
 import * as crypto from "../shared/cryptoOperator";
-import { Failure, ErrorStrings, Username, SignUpRequest, SignUpChallenge, SignUpChallengeResponse, NewUserData, LogInRequest, LogInChallenge, UserData, LogInChallengeResponse, LogInSavedRequest, SavePasswordRequest, LogInResponse, LogInSavedResponse, PasswordDeriveInfo, SavePasswordResponse, LogInPermitted } from "../shared/commonTypes";
-import { failure, fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
-import { MongoHandlerCentral, RunningClientSession } from "./MongoHandler";
+import { Failure, ErrorStrings, Username, SignUpRequest, SignUpChallenge, SignUpChallengeResponse, NewUserData, LogInRequest, LogInChallenge, UserData, LogInChallengeResponse, LogInSavedRequest, SavePasswordRequest, LogInResponse, LogInSavedResponse, SavePasswordResponse, LogInPermitted, SignUpResponse } from "../shared/commonTypes";
+import { failure, logError } from "../shared/commonFunctions";
+import MongoHandlerCentral from "./MongoHandler";
 import * as esrp from "../shared/ellipticSRP";
 import SocketHandler from "./SocketHandler";
 import { SessionCrypto } from "../shared/sessionCrypto";
+
+type RunningClientSession = Readonly<{
+    username: string,
+    ipRep: string,
+    clientReference: string,
+    sessionReference: string,
+    sharedKeyBitsBuffer: Buffer,
+    clientIdentityVerifyingKey: Buffer,
+    databaseAuthKeyBuffer: Buffer
+}>;
 
 type ServerSavedDetails = Readonly<{
     username: string, 
@@ -65,7 +75,9 @@ export default class AuthHandler {
         }, 1000);
     }
 
-    private async createSocketHandler(session: RunningClientSession) {
+    private async createSocketHandler(session: RunningClientSession, persist: false): Promise<SocketHandler>;
+    private async createSocketHandler(session: RunningClientSession, persist: true): Promise<[SocketHandler, Buffer]>;
+    private async createSocketHandler(session: RunningClientSession, persist: boolean) {
         const { username, ipRep, clientReference, sessionReference, clientIdentityVerifyingKey, databaseAuthKeyBuffer, sharedKeyBitsBuffer } = session;
         const sharedKeyBits = await crypto.importRaw(sharedKeyBitsBuffer);
         const databaseAuthKey = await crypto.importRaw(databaseAuthKeyBuffer);
@@ -73,14 +85,27 @@ export default class AuthHandler {
         const mongoHandler = await MongoHandlerCentral.instantiateUserHandler(username, databaseAuthKey);
         if (!mongoHandler) return null;
         const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, this.#serverIdentitySigningKey, clientVerifyingKey);
-        return new SocketHandler(username, sessionReference, ipRep, mongoHandler, sessionCrypto);
+        const socketHandler = new SocketHandler(username, sessionReference, ipRep, mongoHandler, sessionCrypto);
+        if (socketHandler) {
+            if (persist) {
+                const salt = crypto.getRandomVector(64);
+                const sessionRecordKey = await crypto.deriveHKDF(sharedKeyBits, salt, "Session Record", 512);
+                crypto.deriveEncrypt(session, sessionRecordKey, `Session Record: ${sessionReference}`).then((record) => MongoHandlerCentral.createRunningClientSession(sessionReference, record));
+                return [socketHandler, salt];
+            }
+            return socketHandler;
+        }
+        else return [];
     }
 
-    async restartCrashedSession(sessionReference: string) { 
+    async restartCrashedSession(sessionReference: string, sessionRecordKey: Buffer) { 
         if (SocketHandler.getUsername(sessionReference)) return true;
         const crashedSession = await MongoHandlerCentral.getRunningClientSession(sessionReference);
         if (!crashedSession) return false;
-        return !!(await this.createSocketHandler(crashedSession));
+        const sessionData: RunningClientSession = await crypto.deriveDecrypt(crashedSession, sessionRecordKey, `Session Record: ${sessionReference}`);
+        if (!sessionData) return false;
+        MongoHandlerCentral.refreshRunningClientSessions([sessionReference]);
+        return !!(await this.createSocketHandler(sessionData, false));
     }
 
     async userExists(username: string): Promise<{ exists: boolean }> {
@@ -105,7 +130,7 @@ export default class AuthHandler {
         return { verifierEntangled, serverIdentityVerifyingKey };
     }
 
-    async concludeSignUp(ipRep: string, challengeReference: string, sessionReference: string, response: SignUpChallengeResponse): Promise<Pick<LogInResponse, "serverConfirmationCode"> | Failure> {
+    async concludeSignUp(ipRep: string, challengeReference: string, sessionReference: string, response: SignUpChallengeResponse): Promise<SignUpResponse | Failure> {
         const { clientConfirmationCode, newUserDataSigned, databaseAuthKeyBuffer } = response;
         const registerChallenge = this.#registerChallengeTemp.get(challengeReference);
         if (!registerChallenge || registerChallenge.ipRep !== ipRep) return failure(ErrorStrings.InvalidReference);
@@ -119,11 +144,10 @@ export default class AuthHandler {
             const databaseAuthKey = await crypto.importRaw(databaseAuthKeyBuffer);
             if (await MongoHandlerCentral.createNewUser({ username, clientIdentityVerifyingKey, verifierPoint, ...newUserData }, databaseAuthKey)) {
                 const sessionData = { username, ipRep, clientReference, sessionReference, sharedKeyBitsBuffer, clientIdentityVerifyingKey, databaseAuthKeyBuffer };
-                const socketHandler = await this.createSocketHandler(sessionData);
+                const [socketHandler, sessionRecordKeyDeriveSalt] = await this.createSocketHandler(sessionData, true);
                 if (!socketHandler) return failure(ErrorStrings.ProcessFailed);
                 console.log(`Saved user: ${username}`);
-                MongoHandlerCentral.createRunningClientSession(sessionData);
-                return { serverConfirmationCode };
+                return { serverConfirmationCode, sessionRecordKeyDeriveSalt };
             }
             return failure(ErrorStrings.ProcessFailed);
         }
@@ -171,10 +195,10 @@ export default class AuthHandler {
             if (status === "ActiveElsewhere") return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
             else if (status === "ActiveHere") SocketHandler.disposeUserSessions(username);
             const sessionData = { username, ipRep, clientReference, sessionReference, sharedKeyBitsBuffer, clientIdentityVerifyingKey, databaseAuthKeyBuffer };
-            const socketHandler = await this.createSocketHandler(sessionData);
+            const [socketHandler, sessionRecordKeyDeriveSalt] = await this.createSocketHandler(sessionData, true);
             if (!socketHandler) return failure(ErrorStrings.ProcessFailed);
-            MongoHandlerCentral.createRunningClientSession(sessionData);
-            return { serverConfirmationCode, ...userData };
+            console.log(`User logged in: ${username}`);
+            return { serverConfirmationCode, sessionRecordKeyDeriveSalt, ...userData };
         }
         catch (err) {
             logError(err)
@@ -205,10 +229,10 @@ export default class AuthHandler {
             if (status === "ActiveElsewhere") return failure(ErrorStrings.InvalidRequest, "Already Logged In Elsewhere");
             else if (status === "ActiveHere") SocketHandler.disposeUserSessions(username);
             const sessionData = { username, ipRep, clientReference, sessionReference, sharedKeyBitsBuffer, clientIdentityVerifyingKey, databaseAuthKeyBuffer };
-            const socketHandler = await this.createSocketHandler(sessionData);
+            const [socketHandler, sessionRecordKeyDeriveSalt] = await this.createSocketHandler(sessionData, true);
             if (!socketHandler) return failure(ErrorStrings.ProcessFailed);
-            MongoHandlerCentral.createRunningClientSession(sessionData);
-            return { serverConfirmationCode, coreKeyBits, ..._.omit(userData, "encryptionBaseDerive") };
+            console.log(`User logged in saved: ${username}`);
+            return { serverConfirmationCode, sessionRecordKeyDeriveSalt, coreKeyBits, ..._.omit(userData, "encryptionBaseDerive") };
         }
         catch (err) {
             logError(err)

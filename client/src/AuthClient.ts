@@ -8,7 +8,7 @@ import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
 import * as esrp from "../../shared/ellipticSRP";
 import { awaitCallback, failure, fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
-import { ErrorStrings, Failure, Username, SignUpRequest, NewUserData, Profile, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, SavePasswordRequest, SavePasswordResponse, SignUpChallenge, LogInResponse, LogInChallenge, LogInSavedRequest, LogInSavedResponse, LogInPermitted  } from "../../shared/commonTypes";
+import { ErrorStrings, Failure, Username, SignUpRequest, NewUserData, Profile, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, SavePasswordRequest, SavePasswordResponse, SignUpChallenge, LogInResponse, LogInChallenge, LogInSavedRequest, LogInSavedResponse, LogInPermitted, SignUpResponse  } from "../../shared/commonTypes";
 import Client, { ConnectionStatus } from "./client";
 
 const { getRandomVector, getRandomString } = randomFunctions();
@@ -98,7 +98,7 @@ export default class AuthClient {
         }
     }
 
-    static async verifyAuthentication(authToken: string): Promise<boolean> {
+    static async verifyAuthentication(authToken: string, sessionRecordKey: string): Promise<boolean> {
         const nonceId = this.issuedNonce?.nonceId;
         if (!nonceId) return null;
         if (this.verified) {
@@ -107,7 +107,7 @@ export default class AuthClient {
         }
         this.issuedNonce = null;
         this.verified = awaitCallback<boolean>(async (resolve) => {
-            const response = await this.get(`/verifyAuthentication/${nonceId}/${fromBase64(authToken).toString("hex")}`);
+            const response = await this.get(`/verifyAuthentication/${nonceId}/${authToken}/${sessionRecordKey}`);
             console.log(`Authentication verified: ${response?.data?.verified} for nonce id ${nonceId}`);
             resolve(response?.status === 200 ? response.data.confirmed : null);
         });
@@ -155,21 +155,23 @@ export default class AuthClient {
             const newUserData: NewUserData =  { userData: { encryptionBaseDerive, profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying }, verifierDerive, databaseAuthKeyDerive, keyBundles };
             const newUserDataSigned = await crypto.deriveSignEncrypt(sharedKeyBits, newUserData, Buffer.alloc(32), "New User Data", identitySigningKeypair.privateKey);
             const concludeSignUp: SignUpChallengeResponse = { clientConfirmationCode, newUserDataSigned, databaseAuthKeyBuffer };
-            const resultConc: Pick<LogInResponse, "serverConfirmationCode"> | Failure = await this.post("concludeSignUp", concludeSignUp);
+            const resultConc: SignUpResponse | Failure = await this.post("concludeSignUp", concludeSignUp);
             if ("reason" in resultConc) {
                 logError(resultConc);
                 return resultConc;
             }
+            const { serverConfirmationCode, sessionRecordKeyDeriveSalt } = resultConc;
             if (!(await confirmServer(resultConc.serverConfirmationCode))) {
                 logError(new Error("Server confirmation code incorrect."))
                 return failure(ErrorStrings.ProcessFailed);
             }
             const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, identitySigningKeypair.privateKey, await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false));
+            const sessionRecordKey = await crypto.deriveHKDF(sharedKeyBits, sessionRecordKeyDeriveSalt, "Session Record", 512);
             if (savePassword) {
                 const savePasswordSuccess = await this.savePassword(username, passwordString, encryptionBase, databaseAuthKeyBuffer);
                 console.log(savePasswordSuccess ? "Password saved successfully." : "Failed to save password.");
             }
-            return Client.initiate(baseURL, encryptionBaseVector, username, profile, x3dhUser, sessionCrypto);
+            return Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
         }
         catch (err) {
             logError(err);
@@ -199,11 +201,11 @@ export default class AuthClient {
                 logError(resultConc);
                 return resultConc;
             }
-            if (!(await confirmServer(resultConc.serverConfirmationCode))) {
+            const { serverConfirmationCode, sessionRecordKeyDeriveSalt, encryptionBaseDerive, clientIdentitySigning, serverIdentityVerifying, profileData, x3dhInfo } = resultConc;
+            if (!(await confirmServer(serverConfirmationCode))) {
                 logError(new Error("Server confirmation code incorrect."))
                 return failure(ErrorStrings.ProcessFailed);
             }
-            const { encryptionBaseDerive, clientIdentitySigning, serverIdentityVerifying, profileData, x3dhInfo } = resultConc;
             const encryptionBase = await esrp.disentanglePasswordToBits(passwordString, encryptionBaseDerive);
             const encryptionBaseVector = await crypto.importRaw(encryptionBase);
             const { serverIdentityVerifyingKey } = (await crypto.deriveDecrypt(serverIdentityVerifying, encryptionBaseVector, "Server Identity Verifying Key")) ?? {};
@@ -218,11 +220,12 @@ export default class AuthClient {
                 return failure(ErrorStrings.ProcessFailed);
             }
             const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, clientIdentitySigningKey, serverVerifyingKey);
+            const sessionRecordKey = await crypto.deriveHKDF(sharedKeyBits, sessionRecordKeyDeriveSalt, "Session Record", 512);
             if (savePassword) {
                 const savePasswordSuccess = await this.savePassword(username, passwordString, encryptionBase, databaseAuthKeyBuffer);
                 console.log(savePasswordSuccess ? "Password saved successfully." : "Failed to save password.");
             }
-            return Client.initiate(baseURL, encryptionBaseVector, username, profile, x3dhUser, sessionCrypto);
+            return Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
         }
         catch (err) {
             logError(err);
@@ -265,7 +268,7 @@ export default class AuthClient {
                 logError(resultConc);
                 return resultConc;
             }
-            const { coreKeyBits, serverConfirmationCode, x3dhInfo, profileData, clientIdentitySigning, serverIdentityVerifying } = resultConc;
+            const { coreKeyBits, serverConfirmationCode, sessionRecordKeyDeriveSalt, x3dhInfo, profileData, clientIdentitySigning, serverIdentityVerifying } = resultConc;
             if (!(await esrp.processConfirmationData(sharedSecret, serverConfirmationCode, serverConfirmationData))) {
                 logError(new Error("Server confirmation code incorrect."));
                 return failure(ErrorStrings.ProcessFailed);
@@ -284,7 +287,8 @@ export default class AuthClient {
                 return failure(ErrorStrings.ProcessFailed);
             }
             const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, clientSigningKey, serverVerifyingKey);
-            return Client.initiate(baseURL, encryptionBaseVector, username, profile, x3dhUser, sessionCrypto);
+            const sessionRecordKey = await crypto.deriveHKDF(sharedKeyBits, sessionRecordKeyDeriveSalt, "Session Record", 512);
+            return Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
         }
         catch (err) {
             logError(err);

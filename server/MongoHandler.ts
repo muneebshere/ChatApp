@@ -1,22 +1,12 @@
 import _ from "lodash";
-import { Binary, DeleteResult } from "mongodb";
+import { Binary } from "mongodb";
 import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
-import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PublishKeyBundlesRequest, StoredMessage, SignUpRequest, NewUserData, UserEncryptedData, Receipt, Backup, ChatSessionDetails, Username, NewAuthData } from "../shared/commonTypes";
+import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PublishKeyBundlesRequest, StoredMessage, NewUserData, UserEncryptedData, Receipt, Backup, ChatSessionDetails, Username, NewAuthData } from "../shared/commonTypes";
 import * as crypto from "../shared/cryptoOperator";
 import { parseIpReadable } from "./backendserver";
 import { Notify } from "./SocketHandler";
 import { allSettledResults, logError, randomFunctions } from "../shared/commonFunctions";
-
-export type RunningClientSession = Readonly<{
-    username: string,
-    ipRep: string,
-    clientReference: string,
-    sessionReference: string,
-    sharedKeyBitsBuffer: Buffer,
-    clientIdentityVerifyingKey: Buffer,
-    databaseAuthKeyBuffer: Buffer
-}>;
 
 const exposedSignedKey = {
     exportedPublicKey: {
@@ -98,7 +88,7 @@ const ip = {
     }
 }
 
-export class MongoHandlerCentral {
+export default class MongoHandlerCentral {
 
     private static sessionHooks = new Map<string, (notify: Notify) => void>();
 
@@ -160,49 +150,16 @@ export class MongoHandlerCentral {
     }), "server_data");
 
     private static readonly RunningClientSession = mongoose.model("RunningClientSession", new Schema({
-        username: {
-            type: Schema.Types.String,
-            required: true,
-            immutable: true,
-            unique: true
-        },
-        ipRep: {
-            type: Schema.Types.String,
-            required: true,
-            immutable: true
-        },
         sessionReference: {
             type: Schema.Types.String,
             required: true,
             immutable: true,
             unique: true
         },
-        clientReference: {
-            type: Schema.Types.String,
-            required: true,
-            immutable: true,
-            unique: true
-        },
-        sharedKeyBitsBuffer: {
-            type: Schema.Types.Buffer,
-            required: true,
-            immutable: true,
-            unique: true
-        },
-        clientIdentityVerifyingKey: {
-            type: Schema.Types.Buffer,
-            required: true,
-            immutable: true,
-            unique: true
-        },
-        databaseAuthKeyBuffer: {
-            type: Schema.Types.Buffer,
-            required: true,
-            immutable: true,
-            unique: true
-        },
+        record: immutableUserEncryptedData,
         lastFreshAt: {
             type: Schema.Types.Date,
+            required: true,
             default: new Date(),
             expires: 5 * 60
         }
@@ -593,11 +550,9 @@ export class MongoHandlerCentral {
         }
     }
 
-    static async createRunningClientSession(session: RunningClientSession) {
-        const { username } = session;
+    static async createRunningClientSession(sessionReference: string, record: UserEncryptedData) {
         try {
-            await this.RunningClientSession.deleteOne({ username });
-            return !!(await this.RunningClientSession.create(session));
+            return !!(await this.RunningClientSession.create({ sessionReference, record }));
         }
         catch(err) {
             logError(err);
@@ -610,8 +565,12 @@ export class MongoHandlerCentral {
         return (await this.RunningClientSession.updateMany({ sessionReference: { $in: sessionReferences } }, { lastFreshAt })).modifiedCount > 0;
     }
 
-    static async getRunningClientSession(sessionReference: string): Promise<RunningClientSession> {
-        return cleanLean(await this.RunningClientSession.findOne({ sessionReference }).lean());
+    static async runningClientSessionExists(sessionReference: string): Promise<boolean> {
+        return !!(await this.RunningClientSession.exists({ sessionReference }))?._id;
+    }
+
+    static async getRunningClientSession(sessionReference: string): Promise<UserEncryptedData> {
+        return cleanLean(await this.RunningClientSession.findOne({ sessionReference }).lean()).record;
     }
 
     static async clearRunningClientSession(sessionReference: string) {
@@ -635,7 +594,7 @@ export class MongoHandlerCentral {
     }
 
     static async userExists(username: string) {
-        return !!(await this.User.findOne({ username }));
+        return !!(await this.User.exists({ username }))?._id;
     }
 
     static async getLeanUser(username: string): Promise<Username & NewAuthData & NewUserData> {
@@ -689,7 +648,7 @@ export class MongoHandlerCentral {
     }
 
     static async savedAuthExists(saveToken: string, ipRep?: string) {
-        return !!(await this.SavedAuth.findOne({ saveToken, ...(ipRep ? { ipRep } : {}) }).lean());
+        return !!(await this.SavedAuth.exists({ saveToken, ...(ipRep ? { ipRep } : {}) }))?._id;
     }
 
     static async getUserRetries(username: string, ipRep: string): Promise<{ tries?: number, allowsAt?: number }> {

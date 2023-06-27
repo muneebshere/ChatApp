@@ -5,7 +5,7 @@ import { io, Socket } from "socket.io-client";
 import { SessionCrypto } from "../../shared/sessionCrypto";
 import {  X3DHUser } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
-import { allSettledResults, awaitCallback, failure, logError, randomFunctions } from "../../shared/commonFunctions";
+import { allSettledResults, awaitCallback, failure, fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
 import { ErrorStrings, Failure, Username, SocketClientSideEvents, MessageHeader, ChatRequestHeader, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Profile, UserEncryptedData  } from "../../shared/commonTypes";
 import { AwaitedRequest, Chat, ChatRequest } from "./chatClasses";
 import AuthClient, { isClientOnline } from "./AuthClient";
@@ -82,6 +82,7 @@ export default class Client {
     #sessionCrypto: SessionCrypto
     #socketHandler: RequestMap;
     #encryptionBaseVector: CryptoKey;
+    #sessionRecordKey: Buffer;
     private readonly chatList = new Set<string>();
     private readonly chatSessionIdsList = new Map<string, Chat | ChatRequest | AwaitedRequest>();
     private readonly chatUsernamesList = new Map<string, Chat | ChatRequest | AwaitedRequest>();
@@ -121,9 +122,9 @@ export default class Client {
         else return "UnknownConnectivityError";
     }
 
-    static async initiate(url: string, encryptionBaseVector: CryptoKey, username: string, profile: Profile, x3dhUser: X3DHUser, sessionCrypto: SessionCrypto) {
+    static async initiate(url: string, encryptionBaseVector: CryptoKey, sessionRecordKey: Buffer, username: string, profile: Profile, x3dhUser: X3DHUser, sessionCrypto: SessionCrypto) {
         if (!this.client) {
-            this.client = new Client(url, encryptionBaseVector, username, profile, x3dhUser, sessionCrypto);
+            this.client = new Client(url, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
             const connected = await this.client.connectSocket(true);
             if (connected) await this.client.loadUser(); 
         }
@@ -135,9 +136,10 @@ export default class Client {
         this.client = null;
     }
 
-    private constructor(url: string, encryptionBaseVector: CryptoKey, username: string, profile: Profile, x3dhUser: X3DHUser, sessionCrypto: SessionCrypto) {
+    private constructor(url: string, encryptionBaseVector: CryptoKey, sessionRecordKey: Buffer, username: string, profile: Profile, x3dhUser: X3DHUser, sessionCrypto: SessionCrypto) {
         this.url = url;
         this.#encryptionBaseVector = encryptionBaseVector;
+        this.#sessionRecordKey = sessionRecordKey;
         this.#username = username;
         this.#profile = profile;
         this.#x3dhUser = x3dhUser;
@@ -157,7 +159,7 @@ export default class Client {
         if (authenticated === false) return false;
         const { authToken } = await this.getAuthToken();
         if (!authToken) return null;
-        return await AuthClient.verifyAuthentication(authToken);
+        return await AuthClient.verifyAuthentication(fromBase64(authToken).toString("hex"), this.#sessionRecordKey.toString("hex"));
     }
 
     private async connectSocket(first = false) {
@@ -168,7 +170,8 @@ export default class Client {
             if (status === "ClientOffline" || status === "ServerUnreachable" || status === "Unauthenticated") return this.connecting = false;
             const { nonceId, authToken } = await this.getAuthToken();
             if (!authToken) return this.connecting = false;
-            const auth = { authToken, nonceId };
+            const sessionRecordKey = this.#sessionRecordKey.toString("base64");
+            const auth = { authToken, nonceId, sessionRecordKey };
             this.#socket = io(this.url, { auth, withCredentials: true });
             this.#socket.on("disconnect", (err) => {
                 console.log("Socket disconnected.");

@@ -221,9 +221,12 @@ export type SignUpChallengeResponse = LogInChallengeResponse & {
     readonly newUserDataSigned: SignedEncryptedData;
 };
 
-export type LogInResponse = UserData & { 
-    readonly serverConfirmationCode: Buffer 
-};
+export type SignUpResponse = Readonly<{ 
+    serverConfirmationCode: Buffer,
+    sessionRecordKeyDeriveSalt: Buffer
+}>;
+
+export type LogInResponse = SignUpResponse & UserData;
 
 export type LogInSavedResponse = Omit<LogInResponse, "encryptionBaseDerive"> & {
     readonly coreKeyBits: Buffer;

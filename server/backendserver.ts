@@ -1,5 +1,4 @@
 import _ from "lodash";
-import xor from "buffer-xor";
 import { DateTime } from "luxon";
 import { config } from "./node_modules/dotenv";
 import { ServerOptions, createServer } from "node:https";
@@ -13,7 +12,7 @@ import * as crypto from "../shared/cryptoOperator";
 import { serialize, deserialize } from "../shared/cryptoOperator";
 import { SignUpRequest, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, LogInSavedRequest, SavePasswordRequest } from "../shared/commonTypes";
 import { fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
-import { MongoHandlerCentral } from "./MongoHandler";
+import MongoHandlerCentral from "./MongoHandler";
 import AuthHandler from "./AuthHandler";
 import SocketHandler from "./SocketHandler";
 
@@ -248,9 +247,15 @@ async function main() {
     app.get("/isAuthenticated", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         if (!ipRep) return res.status(400).end();
-        const { sessionReference } = req.signedCookies?.authenticated || {};
-        const authenticated = !!sessionReference;
-        return res.json({ authenticated });
+        const { sessionReference, sessionIp } = req.signedCookies?.authenticated || {};
+        const authenticationExists = sessionReference && sessionIp === ipRep;
+        const running = !!SocketHandler.getUsername(sessionReference);
+        const authenticated = authenticationExists && (running || await MongoHandlerCentral.runningClientSessionExists(sessionReference));
+        if (authenticationExists && !authenticated) {
+            res.clearCookie("authenticated");
+        }
+        const crashed = authenticated ? !running: undefined;
+        return res.json({ authenticated, crashed });
     });
     
     app.get("/authNonce", async (req, res) => {
@@ -265,18 +270,18 @@ async function main() {
         return res.json({ nonceId, authNonce });
     });
     
-    app.get("/verifyAuthentication/:clientNonceId/:authToken", async (req, res) => {
+    app.get("/verifyAuthentication/:clientNonceId/:authToken/:sessionRecordKey", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
-        const { sessionReference } = req.signedCookies?.authenticated || {};
+        const { sessionReference, sessionIp } = req.signedCookies?.authenticated || {};
         if (!sessionReference) return res.clearCookie("authNonce").json({ verified: false });
         const { nonceId, nonce, authNonce: existingAuthNonce } = req.signedCookies?.authNonce || {};
-        let { authToken, clientNonceId } = req.params;
+        let { authToken, clientNonceId, sessionRecordKey } = req.params;
         if (nonceId !== clientNonceId) console.log(`Mismatch of nonceId ${nonceId} with client nonceId ${clientNonceId}`);
         if (!ipRep || !authToken || !clientNonceId || !nonceId || nonceId !== clientNonceId) return res.status(400).end();
         console.log(`Testing nonce id ${nonceId}`);
         authToken = Buffer.from(authToken, "hex").toString("base64");
         const { authNonce } = await calculateNonce(ipRep, sessionReference, nonce);
-        const verified = await authHandler.restartCrashedSession(sessionReference) && await SocketHandler.confirmUserSession(sessionReference, authToken, authNonce);
+        const verified = (sessionIp === ipRep) && (await authHandler.restartCrashedSession(sessionReference, Buffer.from(sessionRecordKey, "hex")) && await SocketHandler.confirmUserSession(sessionReference, authToken, authNonce));
         console.log(`Verified authentication: ${verified} for authNonce: ${authNonce} against originalAuthNonce ${existingAuthNonce}`);
         return res.clearCookie("authNonce").json({ verified });
     });
@@ -305,16 +310,18 @@ async function main() {
         try {
             const ipRep = parseIpRepresentation(socket.request.socket.remoteAddress);
             const { authenticated: { sessionReference }, authNonce: { nonceId, nonce } } = socket.request.signedCookies;
-            const { authToken, nonceId: clientNonceId } = socket.handshake.auth ?? {};
+            const { nonceId: clientNonceId, authToken, sessionRecordKey } = socket.handshake.auth ?? {};
             if (nonceId !== clientNonceId) {
                 console.log(`Mismatch of nonceId ${nonceId} with client nonceId ${clientNonceId}`);
                 return next(new Error("Nonce mismatch."));
             }
             console.log(`Connecting on nonce id ${nonceId}`);
             const { authNonce } = await calculateNonce(ipRep, sessionReference, nonce);
-            if (await SocketHandler.registerSocket(sessionReference, ipRep, authToken, authNonce, socket)) {
-                console.log(`Socket connected from ip ${parseIpReadable(ipRep)} with sessionReference ${sessionReference}.`);
-                return next();
+            if (await authHandler.restartCrashedSession(sessionReference, fromBase64(sessionRecordKey))) {
+                if (await SocketHandler.registerSocket(sessionReference, ipRep, authToken, authNonce, socket)) {
+                    console.log(`Socket connected from ip ${parseIpReadable(ipRep)} with sessionReference ${sessionReference}.`);
+                    return next();
+                }
             }
             console.log(`Socket connection from ip ${parseIpReadable(ipRep)} with sessionReference ${sessionReference} rejected.`)
             return next(new Error(("Registering socket failed.")));
