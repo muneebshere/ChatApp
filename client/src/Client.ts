@@ -7,7 +7,7 @@ import {  X3DHUser } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
 import { allSettledResults, awaitCallback, failure, fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
 import { ErrorStrings, Failure, Username, SocketClientSideEvents, MessageHeader, ChatRequestHeader, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Profile, UserEncryptedData  } from "../../shared/commonTypes";
-import { AwaitedRequest, Chat, ChatRequest } from "./chatClasses";
+import { AwaitedRequest, Chat, ChatRequest } from "./ChatClasses";
 import AuthClient, { isClientOnline } from "./AuthClient";
 
 const { getRandomString } = randomFunctions();

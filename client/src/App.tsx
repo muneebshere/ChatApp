@@ -7,7 +7,7 @@ import LogInSignUp from "./components/LogInSignUp";
 import Main from "./components/Main";
 import { LogInContext, defaultLogInDataReducer, defaultLogInData } from "./components/Login";
 import { SignUpContext, defaultSignUpDataReducer, defaultSignUpData } from "./components/Signup";
-import Client, { ConnectionStatus } from "./client";
+import Client, { ConnectionStatus } from "./Client";
 import * as crypto from "../../shared/cryptoOperator";
 import tinycolor from "tinycolor2";
 import AuthClient, { AuthConnectionStatus } from "./AuthClient";

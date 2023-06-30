@@ -6,7 +6,7 @@ import { DayCard } from "./MessageList";
 import { StyledSheet, DisableSelectTypography } from "./CommonElementStyles";
 import MessageCard from "./MessageCard";
 import { DateTime } from "luxon";
-import { AwaitedRequest } from "../chatClasses";
+import { AwaitedRequest } from "../ChatClasses";
 import { ChatHeaderMemo } from "./ChatHeader";
 
 

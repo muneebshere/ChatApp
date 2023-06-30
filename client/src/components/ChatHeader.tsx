@@ -3,7 +3,7 @@ import React, { memo } from "react";
 import { Avatar, IconButton, Stack } from "@mui/joy";
 import { ArrowBackSharp, CachedSharp } from "@mui/icons-material";
 import { DisableSelectTypography } from "./CommonElementStyles";
-import { ChatDetails } from "../chatClasses";
+import { ChatDetails } from "../ChatClasses";
 
 type ChatHeaderProps = Readonly<{
   chatDetails: ChatDetails;

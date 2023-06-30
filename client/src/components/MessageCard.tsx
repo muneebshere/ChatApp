@@ -20,8 +20,7 @@ import { StyledReactMarkdownVariable } from "./CommonElementStyles";
 import { DisplayMessage, ReplyingToInfo, DeliveryInfo } from "../../../shared/commonTypes";
 import { ElementRects } from "@floating-ui/react";
 import useSwipeDrag from "./Hooks/useSwipeDrag";
-import { SxProps } from "@mui/material";
-import { ChatMessage } from "../chatClasses";
+import { ChatMessage } from "../ChatClasses";
 import { useSize } from "./Hooks/useSize";
 
 interface HTMLDivElementScroll extends HTMLDivElement {

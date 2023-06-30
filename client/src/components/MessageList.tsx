@@ -9,7 +9,7 @@ import { DisplayMessage } from "../../../shared/commonTypes";
 import { ElementRects } from "@floating-ui/react";
 import { DisableSelectTypography } from "./CommonElementStyles";
 import { useEffectOnce } from "usehooks-ts";
-import { ChatMessageList } from "../chatClasses";
+import { ChatMessageList } from "../ChatClasses";
 
 function formatDate(date: string): string {
   const dt = DateTime.fromISO(date);

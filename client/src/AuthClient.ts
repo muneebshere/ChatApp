@@ -9,7 +9,7 @@ import { serialize, deserialize } from "../../shared/cryptoOperator";
 import * as esrp from "../../shared/ellipticSRP";
 import { awaitCallback, failure, fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
 import { ErrorStrings, Failure, Username, SignUpRequest, NewUserData, Profile, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, SavePasswordRequest, SavePasswordResponse, SignUpChallenge, LogInResponse, LogInChallenge, LogInSavedRequest, LogInSavedResponse, LogInPermitted, SignUpResponse  } from "../../shared/commonTypes";
-import Client, { ConnectionStatus } from "./client";
+import Client, { ConnectionStatus } from "./Client";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;

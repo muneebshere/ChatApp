@@ -13,7 +13,7 @@ import { ReplyingToProps, ReplyingToMemo } from "./ReplyingTo";
 import { MessageCardContext } from "./MessageCard";
 import { ReplyingToInfo } from "../../../shared/commonTypes";
 import useResizeObserver from "@react-hook/resize-observer";
-import { Chat } from "../chatClasses";
+import { Chat } from "../ChatClasses";
 import { truncateText } from "../../../shared/commonFunctions";
 import { ChatHeaderMemo } from "./ChatHeader";
 

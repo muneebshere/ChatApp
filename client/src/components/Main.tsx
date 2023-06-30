@@ -3,7 +3,7 @@ import { Grid } from "@mui/joy";
 import { useMediaQuery, Theme } from "@mui/material";
 import Sidebar from "./Sidebar";
 import { ChatViewMemo, ScrollState } from "./ChatView";
-import Client, { ConnectionStatus } from "../client";
+import Client, { ConnectionStatus } from "../Client";
 import { ChatRequestView } from "./ChatRequestView";
 import { AwaitedRequestView } from "./AwaitedRequestView";
 import DisconnectedAlert, { DisconnectedStatus } from "./DisconnectedAlert";

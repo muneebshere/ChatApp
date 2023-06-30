@@ -6,7 +6,7 @@ import * as crypto from "../../shared/cryptoOperator";
 import { MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, SocketServerSideEvents, DeliveryInfo, Receipt, Backup  } from "../../shared/commonTypes";
 import { DateTime } from "luxon";
 import { allSettledResults, awaitCallback, logError, randomFunctions, truncateText } from "../../shared/commonFunctions";
-import { ClientChatInterface, ClientChatRequestInterface } from "./client";
+import { ClientChatInterface, ClientChatRequestInterface } from "./Client";
 import { noProfilePictureImage } from "./noProfilePictureImage";
 
 const { getRandomString } = randomFunctions();
