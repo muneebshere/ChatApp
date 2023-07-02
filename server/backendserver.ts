@@ -255,7 +255,7 @@ async function main() {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         if (!ipRep) return res.status(400).end();
         const { sessionReference, sessionIp } = req.signedCookies?.authenticated || {};
-        const authenticationExists = sessionReference && sessionIp === ipRep;
+        const authenticationExists = !!sessionReference && sessionIp === ipRep;
         const running = !!SocketHandler.getUsername(sessionReference);
         const authenticated = authenticationExists && (running || await MongoHandlerCentral.runningClientSessionExists(sessionReference));
         if (authenticationExists && !authenticated) {

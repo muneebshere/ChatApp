@@ -500,7 +500,7 @@ export class X3DHUser {
                 this.maxSkip,
                 importedDHInitializer);
             const text = serialize({ ...profileDetails, username: this.username }).toString("base64");
-            const messageId = getRandomString(15, "hex");
+            const messageId = `f${getRandomString(14, "hex")}`;
             const result = await chattingSession.sendMessage({ messageId, text, timestamp }, saveSession);
             // this.#currentOneTimeKeys.delete(myOneTimeKeyIdentifier);
             return result;

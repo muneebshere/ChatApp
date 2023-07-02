@@ -157,7 +157,7 @@ export class Chat extends AbstractChat {
     private readonly sendingEvent: string;
     private readonly contactDetails: Omit<Contact, "username">;
     private readonly messagesList = new Map<string, ChatMessage>();
-    private readonly chatMessageLists = new Map<string, ChatMessageListInternal>();
+    private readonly chatMessageLists = new Map<string, typeof ChatMessageList.InternalListType>();
     private readonly clientInterface: ClientChatInterface;
     readonly #chattingSession: ChattingSession;
     readonly #encryptionBaseVector: CryptoKey;
@@ -218,7 +218,7 @@ export class Chat extends AbstractChat {
     get messages() { 
         return Array.from(this.chatMessageLists.entries())
                 .sort(([d1,], [d2,]) => DateTime.fromISO(d1).toMillis() - DateTime.fromISO(d2).toMillis())
-                .map(([d, l]) => l.exposeList);
+                .map(([, l]) => l.chatMessageList);
     }
 
     get earliestLoaded() { return this.loadedUpto; }
@@ -296,7 +296,7 @@ export class Chat extends AbstractChat {
             return false;
         }
         const { text, timestamp, replyId } = messageContent;
-        const messageId = getRandomString(15, "hex");
+        const messageId = `f${getRandomString(14, "hex")}`;
         const sendingMessage: SendingMessage = { messageId, text, timestamp, replyingTo: replyId };
         const replyingToInfo = await this.populateReplyingTo(replyId);
         if (replyingToInfo === undefined) {
@@ -311,7 +311,7 @@ export class Chat extends AbstractChat {
             sentByMe: true,
             delivery: null
         };
-        this.addMessageToList(displayMessage);
+        this.addMessagesToList([displayMessage]);
         const result = await this.dispatchSendingMessage(sendingMessage, true);
         if (!result) return false;
         await this.encryptStoreMessage(displayMessage);
@@ -341,7 +341,7 @@ export class Chat extends AbstractChat {
             this.unreadMessagesSet.delete(reportingAbout);
             this.notifyActivity?.();  
         }
-        const messageId = getRandomString(15, "hex");
+        const messageId = `f${getRandomString(14, "hex")}`;
         const sendingMessage: SendingMessage =
             event === "delivered" || event === "seen"
                 ? { messageId, timestamp, event, reportingAbout }
@@ -456,32 +456,39 @@ export class Chat extends AbstractChat {
         }
     }
 
-    private addMessageToList(message: DisplayMessage) {
-        const { messageId, timestamp } = message;
-        const date = DateTime.fromMillis(timestamp).toISODate();
-        let chatMessageList = this.chatMessageLists.get(date);
-        if (!message.sentByMe && !message.delivery?.seen) this.unreadMessagesSet.add(messageId);
-        if (chatMessageList) {
-            chatMessageList.add(message);
+    private addMessagesToList(displayMessages: DisplayMessage[]) {
+        for (const [date, messages] of _.chain(displayMessages)
+                                        .groupBy(({ timestamp }) => DateTime.fromMillis(timestamp).toISODate())
+                                        .map((messages, date) => ([date, messages] as const)).value()) {
+            let chatMessageList = this.chatMessageLists.get(date);
+            messages.forEach(({ messageId, sentByMe, delivery }) => {
+                if (!sentByMe && !delivery?.seen) this.unreadMessagesSet.add(messageId);
+            });
+            if (chatMessageList) {
+                chatMessageList.add(messages);
+            }
+            else {
+                chatMessageList = ChatMessageList.construct(messages, (event, timestamp, reportingAbout) => this.sendEvent(event, timestamp, reportingAbout));
+                this.chatMessageLists.set(date, chatMessageList);
+                this.notify?.("added");
+            }
+            messages.forEach((message) => {
+                const { messageId, sentByMe, timestamp, delivery } = message;
+                const chatMessage = chatMessageList.messageById(messageId);
+                this.messagesList.set(messageId, chatMessage);
+                if (!sentByMe && !delivery?.delivered) chatMessage.signalEvent("delivered", Date.now());
+                if (timestamp >= (this.lastActivity?.timestamp || 0)) {
+                    this.lastActivity = message;
+                    this.notify?.("received-new");
+                    this.clientInterface.notifyClient(this);
+                }
+                else if (timestamp < this.loadedUpto) {
+                    this.loadedUpto = timestamp;
+                }
+                this.notifyActivity?.();
+            });
+
         }
-        else {
-            chatMessageList = 
-            ChatMessageListInternal.construct(message, (event, timestamp, reportingAbout) => this.sendEvent(event, timestamp, reportingAbout));
-            this.chatMessageLists.set(date, chatMessageList);
-            this.notify?.("added");
-        }
-        const chatMessage = chatMessageList.messageById(messageId);
-        this.messagesList.set(messageId, chatMessage);
-        if (!message.sentByMe && !message.delivery?.delivered) chatMessage.signalEvent("delivered", Date.now());
-        if (timestamp >= (this.lastActivity?.timestamp || 0)) {
-            this.lastActivity = message;
-            this.notify?.("received-new");
-            this.clientInterface.notifyClient(this);
-        }
-        else if (timestamp < this.loadedUpto) {
-            this.loadedUpto = timestamp;
-        }
-        this.notifyActivity?.();
     }
 
     private async dispatch(messageHeader: MessageHeader) {
@@ -516,10 +523,7 @@ export class Chat extends AbstractChat {
     }
 
     private async decryptPushMessages(messages: StoredMessage[]) {
-        const decrypted = await allSettledResults(messages.map(async (message) => (await crypto.deriveDecrypt(message.content, this.#encryptionBaseVector, this.sessionId)) as DisplayMessage));
-        for (const message of _.orderBy(decrypted, (m) => m.timestamp, "desc")) {
-            this.addMessageToList(message);
-        }
+        this.addMessagesToList(await allSettledResults(messages.map(async (message) => (await crypto.deriveDecrypt(message.content, this.#encryptionBaseVector, this.sessionId)) as DisplayMessage)))
     }
 
     private async encryptStoreMessage(message: DisplayMessage) {
@@ -586,9 +590,9 @@ export class Chat extends AbstractChat {
                 return sendReceipt({ bounced: true });
             }
             displayMessage = { messageId, timestamp, text, replyingToInfo, sentByMe: false };
-            this.addMessageToList(displayMessage);
+            this.addMessagesToList([displayMessage]);
         }
-        await this.encryptStoreMessage(displayMessage);
+        if (displayMessage) await this.encryptStoreMessage(displayMessage);
         return sendReceipt({ bounced: false });
     }
 
@@ -652,10 +656,15 @@ export class Chat extends AbstractChat {
 }
 
 export class ChatMessageList {
-    private internalList: ChatMessageListInternal;
+    private internalList: typeof ChatMessageList.InternalListType;
 
-    constructor(internalList: ChatMessageListInternal) {
-        this.internalList = internalList;
+    private constructor() {
+    }
+
+    static construct(messages: DisplayMessage[], sendEvent: (event: "delivered" | "seen", timestamp: number, reportingAbout: string) => void) {
+        const list = new ChatMessageList();
+        list.internalList = new ChatMessageList.InternalList(messages, sendEvent, list);
+        return list.internalList;
     }
 
     public get date() {
@@ -673,6 +682,123 @@ export class ChatMessageList {
     unsubscribe() {
         this.internalList.unsubscribe();
     }
+
+    static readonly InternalListType: typeof this.InternalList.prototype = null;
+
+    private static InternalList = class {
+        readonly date: string;
+        private indexedMessages = new Map<string, readonly [ChatMessage, (isFirst: boolean) => void]>();
+        private chatMessages: ChatMessage[] = [];
+        private notifyAdded: () => void;
+        private sendEvent: (event: "delivered" | "seen", timestamp: number, reportingAbout: string) => void;
+        private earliest: number;
+        private latest: number;
+        private exposedList: ChatMessageList;
+
+        constructor(messages: DisplayMessage[], sendEvent: (event: "delivered" | "seen", timestamp: number, reportingAbout: string) => void, exposedList: ChatMessageList) {
+            this.date = DateTime.fromMillis(messages[0].timestamp).toISODate();
+            if (messages.some(({ timestamp }) => DateTime.fromMillis(timestamp).toISODate() !== this.date)) throw "All messages must be same date";
+            this.sendEvent = sendEvent;
+            this.exposedList = exposedList;
+            this.add(messages);
+        }
+
+        public get messageList() {
+            return [...this.chatMessages];
+        }
+    
+        public get chatMessageList() {
+            return this.exposedList;
+        }
+    
+        messageById(messageId: string) {
+            return this.indexedMessages.get(messageId)[0];
+        }
+    
+        subscribe(notifyAdded: () => void) {
+            this.notifyAdded = notifyAdded;
+        }
+    
+        unsubscribe() {
+            this.notifyAdded = null;
+        }
+    
+        add(messages: DisplayMessage[]) {
+            this.breakIntoChunks(messages).forEach(([index, messagesChunk]) => this.insertChunk(index, messagesChunk));
+        }
+
+        private breakIntoChunks(messages: DisplayMessage[]): [number, DisplayMessage[]][] {
+            if (messages.some(({ timestamp }) => DateTime.fromMillis(timestamp).toISODate() !== this.date)) throw "All messages must be same date";
+            messages = messages.filter(({ messageId }) => !this.indexedMessages.has(messageId)).sort((m1, m2) => m1.timestamp - m2.timestamp);
+            if (messages.length === 0) return [];
+            if (!this.earliest || messages.at(-1).timestamp < this.earliest) return [[0, messages]];
+            if (messages.at(-1).timestamp > this.latest) return [[this.chatMessages.length, messages]];
+            const oldMessages = this.chatMessages.map(({ timestamp }, index) => ({ index, timestamp, newlyAdded: false }));
+            const newMessages = messages.map(({ timestamp }, index) => ({ index, timestamp, newlyAdded: true }));
+            const ordered = [...newMessages, ...oldMessages].sort((m1, m2) => m1.timestamp - m2.timestamp);
+            const chunks:  [number, DisplayMessage[]][] = [];
+            let cursor = 0;
+            while (cursor < ordered.length) {
+                cursor = ordered.findIndex(({ newlyAdded }, i) => i >= cursor && newlyAdded);
+                if (cursor < 0) break;
+                const insertIndex = 
+                    cursor > 0
+                        ? ordered[cursor - 1].index + 1
+                        : 0;
+                const startIndex = ordered[cursor].index;
+                cursor = ordered.findIndex(({ newlyAdded }, i) => i > cursor && !newlyAdded);
+                const stopIndex = 
+                    cursor > 0
+                        ? ordered[cursor - 1].index
+                        : ordered.at(-1).index;
+                chunks.push([insertIndex, messages.slice(startIndex, stopIndex + 1)]);
+                if (cursor < 0) cursor = ordered.length;
+            }
+        }
+
+        private insertChunk(index: number, messages: DisplayMessage[]) {
+            const startSentByMe = index > 0 ? this.chatMessages[index - 1].sentByMe : null;
+            const [lastSentByMe, newChatMessages] = this.constructChatMessages(startSentByMe, messages);
+            if (index === 0) {
+                this.earliest = newChatMessages[0][0].timestamp;
+            }
+            if (index >= this.chatMessages.length) {
+                this.latest = newChatMessages.at(-1)[0].timestamp;
+            }
+            if (lastSentByMe !== null && index > 0 && index < this.chatMessages.length) {
+                const { messageId, sentByMe } = this.chatMessageList[index].messageId;
+                this.indexedMessages.get(messageId)[1](sentByMe !== lastSentByMe);
+            }
+            const chatMessages = newChatMessages.map(([message, updateFirst]) => {
+                this.indexedMessages.set(message.messageId, [message, updateFirst]);
+                return message;
+            });
+            this.chatMessages.splice(index, 0, ...chatMessages);
+            this.notifyAdded?.();
+        }
+
+        private constructChatMessages(startSentByMe: boolean, messages: DisplayMessage[]) {
+            const chatMessages: (readonly [ChatMessage, (isFirst: boolean) => void])[] = [];
+            let index = 0;
+            let lastSentByMe = startSentByMe;
+            while (index < messages.length) {
+                const message = messages[index];
+                const { sentByMe, messageId } = message;
+                const sendEvent = 
+                    sentByMe 
+                        ? null
+                        : (event: "delivered" | "seen", timestamp: number) => this.sendEvent(event, timestamp, messageId);
+                const isFirst = 
+                    lastSentByMe === null 
+                        ? true 
+                        : lastSentByMe !== sentByMe;
+                chatMessages.push(ChatMessage.new(message, isFirst, sendEvent));
+                index += 1;
+                lastSentByMe = sentByMe;
+            }
+            return [lastSentByMe, chatMessages] as const;
+        }
+    }
 }
 
 export class ChatMessage {
@@ -681,12 +807,32 @@ export class ChatMessage {
     private notifyChange: (event: "first" | "sent" | "delivered" | "seen") => void;
     readonly signalEvent: (event: "sent" | "delivered" | "seen", timestamp: number) => void;
 
+    public get displayMessage() {
+        return { ...this.message };
+    }
+
     public get messageId() {
         return this.displayMessage.messageId;
     }
+        
+    public get replyingToInfo() {
+        return { ...this.displayMessage.replyingToInfo };
+    }
 
-    public get displayMessage() {
-        return this.message;
+    public get timestamp() {
+        return this.displayMessage.timestamp;
+    }
+
+    public get text() {
+        return this.displayMessage.text;
+    }
+
+    public get sentByMe() {
+        return this.displayMessage.sentByMe;
+    }
+
+    public get delivery() {
+        return { ...this.displayMessage.delivery };
     }
 
     public get isFirstOfType() {
@@ -741,84 +887,6 @@ export class ChatMessage {
     static new(displayMessage: DisplayMessage, isFirst: boolean, signalEvent?: (event: "delivered" | "seen", timestamp: number) => void) {
         const chatMessage = new ChatMessage(displayMessage, isFirst, signalEvent);
         return [chatMessage, (isFirst: boolean) => chatMessage.updateFirst(isFirst)] as const;
-    }
-}
-
-class ChatMessageListInternal {
-    readonly date: string;
-    private indexedMessages = new Map<string, [ChatMessage, (isFirst: boolean) => void]>();
-    private messages: ChatMessage[] = [];
-    private notifyAdded: () => void;
-    private sendEvent: (event: "delivered" | "seen", timestamp: number, reportingAbout: string) => void;
-    private earliest: number;
-    private latest: number;
-    private exposedList: ChatMessageList;
-
-    static construct(message: DisplayMessage, sendEvent: (event: "delivered" | "seen", timestamp: number, reportingAbout: string) => void) {
-        const internalList = new ChatMessageListInternal(message, sendEvent);
-        internalList.exposedList = new ChatMessageList(internalList);
-        return internalList;
-    }
-
-    private constructor(message: DisplayMessage, sendEvent: (event: "delivered" | "seen", timestamp: number, reportingAbout: string) => void) {
-        const { timestamp } = message;
-        this.date = DateTime.fromMillis(timestamp).toISODate();
-        this.sendEvent = sendEvent;
-        this.latest = timestamp;
-        this.earliest = this.latest + 1;
-        this.add(message);
-    }
-
-    public get messageList() {
-        return [...this.messages];
-    }
-
-    public get exposeList() {
-        return this.exposedList;
-    }
-
-    messageById(messageId: string) {
-        return this.indexedMessages.get(messageId)[0];
-    }
-
-    subscribe(notifyAdded: () => void) {
-        this.notifyAdded = notifyAdded;
-    }
-
-    unsubscribe() {
-        this.notifyAdded = null;
-    }
-
-    add(displayMessage: DisplayMessage) {
-        const { messageId, timestamp, sentByMe } = displayMessage;
-        if (this.indexedMessages.has(messageId)) return;
-        const sendEvent = 
-            sentByMe 
-                ? null
-                : (event: "delivered" | "seen", timestamp: number) => this.sendEvent(event, timestamp, messageId);
-        let index = 0;
-        if (timestamp > this.latest) {
-            index = this.messages.length;
-            this.latest = timestamp;
-        }
-        else if (timestamp > this.earliest) {
-            index = this.messages.findIndex(({ displayMessage: { timestamp: t }}) => t > timestamp);
-        }
-        else {
-            this.earliest = timestamp;
-        }
-        const isFirst = 
-            index === 0
-                ? true
-                : this.messages[index - 1].displayMessage.sentByMe !== sentByMe;
-        if (index < this.messages.length) {
-            const after = this.indexedMessages.get(this.messages[index].messageId);
-            after[1](after[0].displayMessage.sentByMe !== sentByMe);
-        }
-        const [message, updateFirst] = ChatMessage.new(displayMessage, isFirst, sendEvent);
-        this.messages.splice(index, 0, message);
-        this.indexedMessages.set(messageId, [message, updateFirst]);
-        this.notifyAdded?.();
     }
 }
 

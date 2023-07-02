@@ -1,5 +1,5 @@
 import _ from "lodash";
-import { RistrettoPoint, ed25519 } from "@noble/curves/ed25519";
+import { RistrettoPoint as RistrettoPointConst, ed25519 } from "@noble/curves/ed25519";
 import { sha3_224 as sha224_raw, sha3_512 as sha512_raw } from "@noble/hashes/sha3";
 import * as crypto from "./cryptoOperator";
 import { getRandomVector, importRaw } from "./cryptoOperator";
@@ -9,7 +9,9 @@ export type ConfirmationData = Readonly<{
     commonHash: Buffer,
     toConfirm: Buffer,
     confirmPurpose: string
-}>
+}>;
+
+type RistrettoPoint = typeof RistrettoPointConst.prototype;
 
 type ServerAuthChallenge = Readonly<{
     serverConfirmationCode: Buffer,
@@ -77,7 +79,7 @@ function getSharedSecret(privateKey: Buffer, publicKey: RistrettoPoint) {
 }
 
 function getPublicPoint(privateKey: Buffer) {
-    return getSharedSecret(privateKey, RistrettoPoint.BASE);
+    return getSharedSecret(privateKey, RistrettoPointConst.BASE);
 }
 
 function condenseIntoPair(seed: Buffer): [Buffer, RistrettoPoint] {
@@ -139,7 +141,7 @@ export async function entanglePassword(passwordString: string, outputPoint?: Ris
 export async function disentanglePasswordToPoint(passwordString: string, passwordEntangleInfo: PasswordEntangleInfo) {
     const { passwordEntangledPoint, ...pInfo } = passwordEntangleInfo;
     const passwordBits = await crypto.deriveMasterKeyBits(passwordString, pInfo);
-    const passwordEntangledPublic = RistrettoPoint.fromHex(passwordEntangledPoint);
+    const passwordEntangledPublic = RistrettoPointConst.fromHex(passwordEntangledPoint);
     const passwordInv = invMod(toBigInt(sha224(passwordBits)), ed25519.CURVE.n);
     return passwordEntangledPublic.multiply(passwordInv);
 }
@@ -164,7 +166,7 @@ export async function clientSetupAuthProcess(passwordString: string) {
         const passwordBits = await crypto.deriveMasterKeyBits(passwordString, verifierDerive);
         const [verifierPrivate, verifierPoint] = condenseIntoPair(passwordBits);
         const [, verifierExpandedPoint] = condenseIntoPair(toBuffer(verifierPoint));
-        const verifierEntangledPoint = RistrettoPoint.fromHex(verifierEntangled);
+        const verifierEntangledPoint = RistrettoPointConst.fromHex(verifierEntangled);
         const serverEphemeralPublic = verifierEntangledPoint.subtract(verifierExpandedPoint);
         const commonHash = sha224(toBuffer(serverEphemeralPublic.add(clientEphemeralPoint)));
         const vector1 = getSharedSecret(clientEphemeralPrivate, serverEphemeralPublic);
@@ -187,9 +189,9 @@ export async function serverSetupAuthChallenge(verifierPublic: Buffer, clientEph
 export async function serverSetupAuthChallenge(verifierPublic: Buffer, clientEphemeralPublic: Buffer, confirm: "later"): Promise<ServerAuthChallengeLater>;
 export async function serverSetupAuthChallenge(verifierPublic: Buffer, clientEphemeralPublic: Buffer, confirm: "now" | "later"): Promise<ServerAuthChallengeLater | ServerAuthChallengeNow> {
     const [serverEphemeralPrivate, serverEphemeralPublic] = generateEphemeral();
-    const verifierPoint = RistrettoPoint.fromHex(verifierPublic);
+    const verifierPoint = RistrettoPointConst.fromHex(verifierPublic);
     const verifierExpandedPoint = getPublicPoint(sha224(verifierPublic));
-    const clientEphemeralPoint = RistrettoPoint.fromHex(clientEphemeralPublic);
+    const clientEphemeralPoint = RistrettoPointConst.fromHex(clientEphemeralPublic);
     const commonHash = sha224(toBuffer(serverEphemeralPublic.add(clientEphemeralPoint)));
     const vector1 = getSharedSecret(serverEphemeralPrivate, clientEphemeralPoint);
     const vector2 = getSharedSecret(serverEphemeralPrivate, verifierPoint).multiply(toBigInt(commonHash));

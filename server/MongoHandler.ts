@@ -902,12 +902,12 @@ export default class MongoHandlerCentral {
     
         async getMessagesByNumber(chatId: string, limit: number, olderThanTimemark: number): Promise<StoredMessage[]> {
             if (!this.matchChat(chatId)) return undefined;
-            return cleanLean(await MongoHandlerCentral.Message.find({ chatId }).lt("timemark", olderThanTimemark).sort({ timemark: -1 }).limit(limit).lean().exec());
+            return cleanLean(await MongoHandlerCentral.Message.find({ chatId }).lte("timemark", olderThanTimemark).sort({ timemark: -1 }).limit(limit).lean().exec());
         }
     
         async getMessagesUptoTimestamp(chatId: string, newerThanTimemark: number, olderThanTimemark: number): Promise<StoredMessage[]> {
             if (!this.matchChat(chatId)) return undefined;
-            return cleanLean(await MongoHandlerCentral.Message.find({ chatId }).lt("timemark", olderThanTimemark).gt("timemark", newerThanTimemark).sort({ timemark: -1 }).lean().exec());
+            return cleanLean(await MongoHandlerCentral.Message.find({ chatId }).lte("timemark", olderThanTimemark).gte("timemark", newerThanTimemark).sort({ timemark: -1 }).lean().exec());
         }
     
         async getMessagesUptoId(chatId: string, hashedId: string, olderThanTimemark: number): Promise<StoredMessage[]> {
@@ -927,7 +927,7 @@ export default class MongoHandlerCentral {
             const chatRequest = await MongoHandlerCentral.ChatRequest.findOne({ headerId });
             if (!this.matchUsername(chatRequest.addressedTo)) return false;
             try {
-                return (await chatRequest.deleteOne()).deletedCount === 1
+                return !!(await chatRequest.deleteOne());
             }
             catch (err) {
                 logError(err);

@@ -98,7 +98,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
   const { messageId, text, timestamp, replyingToInfo, sentByMe } = chatMessage.displayMessage;
   const [darken, setDarken] = useState(false);
   const [isFirstOfType, setIsFirstOfType] = useState(chatMessage.isFirstOfType);
-  const [delivery, setDelivery] = useState(chatMessage.displayMessage.delivery);
+  const [delivery, setDelivery] = useState(chatMessage.delivery);
   const scrollRef = useRef<HTMLDivElementScroll>(null);
   const bodyRef = useRef<HTMLSpanElement>(null);
   const statusRef = useRef<HTMLDivElement>(null);
@@ -129,7 +129,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
         setIsFirstOfType(chatMessage.isFirstOfType);
       }
       else {
-        setDelivery(chatMessage.displayMessage.delivery);
+        setDelivery(chatMessage.delivery);
       }
     });
     return () => chatMessage.unsubscribe();
@@ -191,7 +191,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
   return (
     <Grid container sx={{ display: "flex", flexGrow: 1, justifyContent: side, height: "fit-content", maxWidth: "100%" }} onClick={onClick} ref={scrollRef} {...handlers}>
       <Grid xs={10} sm={8} lg={7} sx={{ display: "flex", flexGrow: 0, justifyContent: side, height: "fit-content" }}>
-        <StyledSheet sx={{ width: "100%", display: "flex", flexGrow: 1, justifyContent: side, alignContent: "flex-start", padding: 0, margin: 0 }} ref={sheetRef} id={messageId} data-seen={sentByMe ? 10 : delivery?.seen} data-timestamp={timestamp}>
+        <StyledSheet className="MessageCard" sx={{ width: "100%", display: "flex", flexGrow: 1, justifyContent: side, alignContent: "flex-start", padding: 0, margin: 0 }} ref={sheetRef} id={messageId} data-seen={sentByMe ? 10 : delivery?.seen}>
           <SvgMessageCard background={messageColor} first={isFirstOfType} sentByMe={sentByMe} shadowColor="#adb5bd" darken={darken} darkenFinished={() => setDarken(false) }>
             <Stack direction="column"
               sx={{ maxWidth: "max-content", width: "fit-content", padding: 1.5, paddingBottom: 0.5, alignContent: "flex-start", textAlign: "start" }}>

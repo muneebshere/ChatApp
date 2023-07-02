@@ -426,7 +426,7 @@ export default class SocketHandler {
 
     private async dispose(reason: string) {
         await this.deregisterSocket(reason);
-        this.#mongoHandler.unsubscribe();
+        this.#mongoHandler?.unsubscribe();
         SocketHandler.onlineUsers.delete(this.#username);
         this.deleteSelf();
         this.#sessionCrypto = null;

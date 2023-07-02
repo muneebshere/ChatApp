@@ -373,7 +373,7 @@ export default class Client {
         }
         const { keyBundle } = keyBundleResponse;
         const { profile } = this;
-        const messageId = getRandomString(15, "hex");
+        const messageId = `f${getRandomString(14, "hex")}`;
         const result = await this.#x3dhUser.generateChatRequest(keyBundle, messageId, firstMessage, madeAt, profile);
         if (typeof result === "string") {
             logError(result);
