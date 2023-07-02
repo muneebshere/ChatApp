@@ -50,7 +50,7 @@ export default class AuthClient {
 
     static async isServerReachable() {
         const response = await this.get("/isServerActive");
-        return response?.status !== 404;
+        return response?.status === 200;
     }
 
     static async userExists(username: string): Promise<boolean> {
@@ -173,7 +173,7 @@ export default class AuthClient {
                 const savePasswordSuccess = await this.savePassword(username, passwordString, encryptionBase, databaseAuthKeyBuffer);
                 console.log(savePasswordSuccess ? "Password saved successfully." : "Failed to save password.");
             }
-            return Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
+            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
         }
         catch (err) {
             logError(err);
@@ -229,7 +229,7 @@ export default class AuthClient {
                 const savePasswordSuccess = await this.savePassword(username, passwordString, encryptionBase, databaseAuthKeyBuffer);
                 console.log(savePasswordSuccess ? "Password saved successfully." : "Failed to save password.");
             }
-            return Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
+            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
         }
         catch (err) {
             logError(err);
@@ -295,7 +295,7 @@ export default class AuthClient {
             const sessionRecordKey = await crypto.deriveHKDF(sharedKeyBits, sessionRecordKeyDeriveSalt, "Session Record", 512);
             const savingSession = serialize(await crypto.deriveEncrypt({ username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying } }, saveSessionKey, "SavedSession")).toString("base64");
             window.sessionStorage.setItem("SavedSession", savingSession);
-            return Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
+            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
         }
         catch (err) {
             logError(err);
@@ -346,7 +346,7 @@ export default class AuthClient {
             const savingSession = serialize(await crypto.deriveEncrypt({ username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying } }, saveSessionKey, "SavedSession")).toString("base64");
             window.sessionStorage.setItem("SavedSession", savingSession);
             const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, clientSigningKey, serverVerifyingKey);
-            return Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
+            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
         }
         catch (err) {
             logError(err);
@@ -429,8 +429,9 @@ export default class AuthClient {
         if (!this.notifyConnectionStatus) return;
         if (status === 200) this.notifyConnectionStatus("Online");
         else if (status === 404) {
-            if (await this.isServerReachable()) this.notifyConnectionStatus("ServerUnreachable")
-            else this.notifyConnectionStatus("ClientOffline");
+            if (await isClientOnline()) this.notifyConnectionStatus("ClientOffline");
+            else if (await this.isServerReachable()) this.notifyConnectionStatus("ServerUnreachable");
+            else this.notifyConnectionStatus("Online");
         }
     }
 }

@@ -116,6 +116,7 @@ function App() {
   const [connectionStatus, setConnectionStatus] = useState<AuthConnectionStatus>("Online");
   const [currentTab, setCurrentTab] = useState(0);
   const [visualHeight, setVisualHeight] = useState(window.visualViewport.height);
+  const [currentChatWith, setCurrentChatWith] = useState("");
   const updateStatus = () => Client.connectionStatus().then((status) => setStatus(status));
   const updateConnectionStatus = useCallback((currentConnectionStatus: AuthConnectionStatus) => {
     if (currentConnectionStatus !== connectionStatus) {
@@ -158,6 +159,13 @@ function App() {
       return result;
     }
     client = result;
+    let currentChatWith = window.history.state?.currentChatWith || window.location.hash.slice(1);
+    if (!client.chatsList.find((c) => currentChatWith === c.otherUser)) {
+      currentChatWith = null;
+      window.location.hash = ""
+    }
+    window.history.replaceState({ currentChatWith }, "", currentChatWith ? `#${currentChatWith}` : "");
+    setCurrentChatWith(currentChatWith);
     client.subscribeStatus(setStatus);
     return { reason: false };
   }
@@ -194,7 +202,7 @@ function App() {
         </LogInContext.Provider>
       }
       {loaded(status) && loggedIn(status) && !loggingOut(status) &&
-        <Main client={client} status={status}/>
+        <Main client={client} status={status} currentChatWith={currentChatWith} setCurrentChatWith={setCurrentChatWith}/>
       }
     </Container>);
 }

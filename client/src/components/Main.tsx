@@ -8,28 +8,26 @@ import { ChatRequestView } from "./ChatRequestView";
 import { AwaitedRequestView } from "./AwaitedRequestView";
 import DisconnectedAlert, { DisconnectedStatus } from "./DisconnectedAlert";
 
-export type ClientConnectionStatus = Exclude<ConnectionStatus, "NotLoaded" | "NotLoggedIn" | "LoggingOut">
+export type ClientConnectionStatus = Exclude<ConnectionStatus, "NotLoaded" | "NotLoggedIn" | "LoggingOut">;
+
+export type MainProps = Readonly<{
+  client: Client;
+  status: ClientConnectionStatus;
+  currentChatWith: string;
+  setCurrentChatWith: (chatWith: string) => void;
+}>;
 
 function disconnected(status: ClientConnectionStatus): status is DisconnectedStatus {
   return status !== "Online";
 }
 
-export default function Main({ client, status }: { client: Client, status: ClientConnectionStatus }) {
-  const { isConnected: connected, profile: { displayName } } = client;
-  const [currentChatWith, setCurrentChatWith] = useState(null);
+export default function Main({ client, status, currentChatWith, setCurrentChatWith }: MainProps) {
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const typedMessages = useRef(new Map<string, string>());
   const lastScrollPositions = useRef(new Map<string, ScrollState>());
   const [chats, setChats] = useState(client.chatsList);
   
   useEffect(() => {
-    let currentChatWith = window.history.state?.currentChatWith || window.location.hash.slice(1);
-    if (!client.chatsList.find((c) => currentChatWith === c)) {
-      currentChatWith = null;
-      window.location.hash = ""
-    }
-    window.history.replaceState({ currentChatWith }, "", currentChatWith ? `#${currentChatWith}` : "");
-    setCurrentChatWith(currentChatWith);
     const popStateListener = (event: PopStateEvent) => setCurrentChatWith(event.state?.currentChatWith);
     window.addEventListener("popstate", popStateListener);
     client.subscribeChange(() => setChats(Array.from(client.chatsList)));
@@ -37,7 +35,7 @@ export default function Main({ client, status }: { client: Client, status: Clien
   }, []);
 
   function openChat(chat: string) {
-    window.history.pushState({ currentChatWith: chat }, "", `#${chat}`);
+    window.history.pushState({ currentChatWith: chat }, "", chat ? `#${chat}`: "");
     setCurrentChatWith(chat);
   }
 

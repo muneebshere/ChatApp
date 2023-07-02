@@ -91,6 +91,8 @@ export default class Client {
     private chatInterface: ClientChatInterface;
 
     private static client: Client;
+    private static loadedClient: Promise<Client>;
+    private static resolveClient: () => void;
 
     private set tryingAgainIn(value: number) {
         if (value <= 0) {
@@ -127,10 +129,14 @@ export default class Client {
     static async initiate(url: string, encryptionBaseVector: CryptoKey, sessionRecordKey: Buffer, username: string, profile: Profile, x3dhUser: X3DHUser, sessionCrypto: SessionCrypto) {
         if (!this.client) {
             this.client = new Client(url, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
+            Client.loadedClient = new Promise<Client>((resolve) => this.resolveClient = () => {
+                resolve(this.client);
+                this.resolveClient = null;
+            });
             const connected = await this.client.connectSocket(true);
             if (connected) await this.client.loadUser(); 
         }
-        return this.client;
+        return await this.loadedClient;
     }
 
     static dispose(loggingOut?: "logging-out") {
@@ -218,6 +224,7 @@ export default class Client {
     private async reconnect() {
         if (this.isConnected || this.connecting || this.tryingAgainIn > 0) return;
         this.reconnecting = true;
+        this.notifyStatus?.(await Client.connectionStatus());
         const success = await this.connectSocket();
         this.reconnecting = false;
         this.notifyStatus?.(await Client.connectionStatus());
@@ -408,6 +415,7 @@ export default class Client {
                 }
         })]);
         this.initiated = true;
+        Client.resolveClient?.();
     }
 
     private async processAwaitedRequest(sessionId: string, toAlias?: string, fromAlias?: string) {
@@ -431,16 +439,19 @@ export default class Client {
     private async loadChats() {
         const chatsData = await this.#socketHandler.GetAllChats([]);
         if ("reason" in chatsData) return;
-        const chats = await Promise.all(chatsData.map((chatData) => Chat.instantiate(this.#encryptionBaseVector, this.chatInterface, chatData)));
-        for (const chat of chats) {
-            chat.subscribeActivity(() => {
-                if (chat.details?.lastActivity?.messageId) {
-                    chat.unsubscribeActivity();
-                    this.addChat(chat);
-                    this.requestRoom(chat);
-                }
-            });
-        }
+        const chats = await Promise.all(_.map(chatsData, async (chatData) => {
+            const chat = await Chat.instantiate(this.#encryptionBaseVector, this.chatInterface, chatData);
+            await new Promise((resolve) => {
+                chat.subscribeActivity(() => {
+                    if (chat.details?.lastActivity?.messageId) {
+                        chat.unsubscribeActivity();
+                        this.addChat(chat);
+                        this.requestRoom(chat);
+                        resolve(null);
+                    }
+                });
+            })
+        }));
     }
 
     private async loadRequest(request: ChatRequestHeader) {
