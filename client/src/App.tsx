@@ -135,7 +135,7 @@ function App() {
     }, { capture: true, once: true });
     window.visualViewport.addEventListener("resize", updateHeight);
     AuthClient.subscribeConnectionStatus(updateConnectionStatus);
-    logInSaved();
+    initiate();
     return () => {
       window.removeEventListener("online", updateStatus);
       window.removeEventListener("offline", updateStatus);
@@ -172,8 +172,12 @@ function App() {
     return clientResult(await AuthClient.logIn(username, password, savePassword));
   }
 
-  async function logInSaved(): Promise<Failure> {
-    return clientResult(await AuthClient.logInSaved());
+  async function initiate(): Promise<Failure> {
+    let result = await AuthClient.resumeAuthenticatedSession();
+    if ("reason" in result) {
+      result = await AuthClient.logInSaved();
+    }
+    return clientResult(result);
   }
 
   return (

@@ -1,5 +1,5 @@
 import _ from "lodash";
-import axios from "axios";
+import axios, { AxiosError } from "axios";
 import isOnline from "is-online";
 import { Queue } from "async-await-queue";
 import { SessionCrypto } from "../../shared/sessionCrypto";
@@ -8,7 +8,7 @@ import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
 import * as esrp from "../../shared/ellipticSRP";
 import { awaitCallback, failure, fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
-import { ErrorStrings, Failure, Username, SignUpRequest, NewUserData, Profile, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, SavePasswordRequest, SavePasswordResponse, SignUpChallenge, LogInResponse, LogInChallenge, LogInSavedRequest, LogInSavedResponse, LogInPermitted, SignUpResponse  } from "../../shared/commonTypes";
+import { ErrorStrings, Failure, Username, SignUpRequest, NewUserData, Profile, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, SavePasswordRequest, SavePasswordResponse, SignUpChallenge, LogInResponse, LogInChallenge, LogInSavedRequest, LogInSavedResponse, LogInPermitted, SignUpResponse, UserEncryptedData  } from "../../shared/commonTypes";
 import Client, { ConnectionStatus } from "./Client";
 
 const { getRandomVector, getRandomString } = randomFunctions();
@@ -50,7 +50,7 @@ export default class AuthClient {
 
     static async isServerReachable() {
         const response = await this.get("/isServerActive");
-        return response?.status === 200;
+        return response?.status !== 404;
     }
 
     static async userExists(username: string): Promise<boolean> {
@@ -160,13 +160,15 @@ export default class AuthClient {
                 logError(resultConc);
                 return resultConc;
             }
-            const { serverConfirmationCode, sessionRecordKeyDeriveSalt } = resultConc;
-            if (!(await confirmServer(resultConc.serverConfirmationCode))) {
+            const { serverConfirmationCode, sessionRecordKeyDeriveSalt, saveSessionKey } = resultConc;
+            if (!(await confirmServer(serverConfirmationCode))) {
                 logError(new Error("Server confirmation code incorrect."))
                 return failure(ErrorStrings.ProcessFailed);
             }
             const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, identitySigningKeypair.privateKey, await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false));
             const sessionRecordKey = await crypto.deriveHKDF(sharedKeyBits, sessionRecordKeyDeriveSalt, "Session Record", 512);
+            const savingSession = serialize(await crypto.deriveEncrypt({ username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying } }, saveSessionKey, "SavedSession")).toString("base64");
+            window.sessionStorage.setItem("SavedSession", savingSession);
             if (savePassword) {
                 const savePasswordSuccess = await this.savePassword(username, passwordString, encryptionBase, databaseAuthKeyBuffer);
                 console.log(savePasswordSuccess ? "Password saved successfully." : "Failed to save password.");
@@ -201,7 +203,7 @@ export default class AuthClient {
                 logError(resultConc);
                 return resultConc;
             }
-            const { serverConfirmationCode, sessionRecordKeyDeriveSalt, encryptionBaseDerive, clientIdentitySigning, serverIdentityVerifying, profileData, x3dhInfo } = resultConc;
+            const { serverConfirmationCode, sessionRecordKeyDeriveSalt, saveSessionKey, encryptionBaseDerive, clientIdentitySigning, serverIdentityVerifying, profileData, x3dhInfo } = resultConc;
             if (!(await confirmServer(serverConfirmationCode))) {
                 logError(new Error("Server confirmation code incorrect."))
                 return failure(ErrorStrings.ProcessFailed);
@@ -221,6 +223,8 @@ export default class AuthClient {
             }
             const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, clientIdentitySigningKey, serverVerifyingKey);
             const sessionRecordKey = await crypto.deriveHKDF(sharedKeyBits, sessionRecordKeyDeriveSalt, "Session Record", 512);
+            const savingSession = serialize(await crypto.deriveEncrypt({ username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying } }, saveSessionKey, "SavedSession")).toString("base64");
+            window.sessionStorage.setItem("SavedSession", savingSession);
             if (savePassword) {
                 const savePasswordSuccess = await this.savePassword(username, passwordString, encryptionBase, databaseAuthKeyBuffer);
                 console.log(savePasswordSuccess ? "Password saved successfully." : "Failed to save password.");
@@ -261,14 +265,15 @@ export default class AuthClient {
             const { authKeyBits } = resultInit;
             const { username, laterConfirmation, databaseAuthKeyBuffer }: SavedAuthData = await crypto.deriveDecrypt(authData, authKeyBits, "Auth Data");
             const { sharedSecret, clientConfirmationCode, serverConfirmationData } = laterConfirmation;
-            const sharedKeyBits = await crypto.importRaw(esrp.getSharedKeyBitsBuffer(sharedSecret));
+            const sharedKeyBitsBuffer = esrp.getSharedKeyBitsBuffer(sharedSecret);
+            const sharedKeyBits = await crypto.importRaw(sharedKeyBitsBuffer);
             const concludeLogInSaved: Username & LogInChallengeResponse = { username, clientConfirmationCode, databaseAuthKeyBuffer };
             const resultConc: LogInSavedResponse | Failure = await this.post("concludeLogInSaved", concludeLogInSaved);
             if ("reason" in resultConc) {
                 logError(resultConc);
                 return resultConc;
             }
-            const { coreKeyBits, serverConfirmationCode, sessionRecordKeyDeriveSalt, x3dhInfo, profileData, clientIdentitySigning, serverIdentityVerifying } = resultConc;
+            const { coreKeyBits, serverConfirmationCode, sessionRecordKeyDeriveSalt, saveSessionKey, x3dhInfo, profileData, clientIdentitySigning, serverIdentityVerifying } = resultConc;
             if (!(await esrp.processConfirmationData(sharedSecret, serverConfirmationCode, serverConfirmationData))) {
                 logError(new Error("Server confirmation code incorrect."));
                 return failure(ErrorStrings.ProcessFailed);
@@ -288,6 +293,8 @@ export default class AuthClient {
             }
             const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, clientSigningKey, serverVerifyingKey);
             const sessionRecordKey = await crypto.deriveHKDF(sharedKeyBits, sessionRecordKeyDeriveSalt, "Session Record", 512);
+            const savingSession = serialize(await crypto.deriveEncrypt({ username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying } }, saveSessionKey, "SavedSession")).toString("base64");
+            window.sessionStorage.setItem("SavedSession", savingSession);
             return Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
         }
         catch (err) {
@@ -297,14 +304,54 @@ export default class AuthClient {
     }
 
     static async userLogOut() {
+        window.sessionStorage.removeItem("SavedSession");
         window.localStorage.removeItem("SavedAuth");
         await axInstance.post("/userLogOut", {});
-        Client.dispose();
+        Client.dispose("logging-out");
     }
 
-    static async terminateCurrentSession(notEnding?: "not-ending") {
-        navigator.sendBeacon(`${baseURL}/terminateCurrentSession`);
-        Client.dispose(notEnding ? null : "ending");
+    static async terminateCurrentSession(loggingOut?: "logging-out") {
+        if (loggingOut) window.sessionStorage.removeItem("SavedSession");
+        await Promise.all([navigator.sendBeacon(`${baseURL}/terminateCurrentSession`), Client.dispose(loggingOut)]);
+    }
+
+    static async resumeAuthenticatedSession(): Promise<Client | Failure> {
+        if (!(await this.isServerReachable())) return failure(ErrorStrings.NoConnectivity);
+        try {
+            const { ciphertext, hSalt }: UserEncryptedData = deserialize(fromBase64(window.sessionStorage.getItem("SavedSession") || "")) || {};
+            if (!ciphertext) {
+                return failure(ErrorStrings.ProcessFailed);
+            }
+            const { resumed, saveSessionKeyBase64 } = (await this.get("/resumeAuthenticatedSession"))?.data || {};
+            if (!resumed) {
+                logError("Couldn't resume");
+                return failure(ErrorStrings.ProcessFailed);
+            }
+            const saveSessionKey = Buffer.from(saveSessionKeyBase64, "base64");
+            const { username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying } } = await crypto.deriveDecrypt({ ciphertext, hSalt }, saveSessionKey, "SavedSession");
+            if (!username) {
+                logError("Couldn't resume");
+                return failure(ErrorStrings.ProcessFailed);
+            }
+            const sharedKeyBits = await crypto.importRaw(sharedKeyBitsBuffer);
+            const encryptionBaseVector = await crypto.importRaw(encryptionBase);
+            const { serverIdentityVerifyingKey } = (await crypto.deriveDecrypt(serverIdentityVerifying, encryptionBaseVector, "Server Identity Verifying Key")) ?? {};
+            const clientSigningKey = await crypto.deriveUnwrap(encryptionBaseVector, clientIdentitySigning, "ECDSA", "Client Identity Signing Key", false);
+            const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
+            const x3dhUser = await X3DHUser.importUser(x3dhInfo, encryptionBaseVector);
+            const profile: Profile = await crypto.deriveDecrypt(profileData, encryptionBase, "User Profile");
+            if (!profile || !x3dhUser) {
+                return failure(ErrorStrings.ProcessFailed);
+            }
+            const savingSession = serialize(await crypto.deriveEncrypt({ username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying } }, saveSessionKey, "SavedSession")).toString("base64");
+            window.sessionStorage.setItem("SavedSession", savingSession);
+            const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, clientSigningKey, serverVerifyingKey);
+            return Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
+        }
+        catch (err) {
+            logError(err);
+            return failure(ErrorStrings.ProcessFailed);
+        }
     }
 
     private static async savePassword(username: string, passwordString: string, encryptionBaseVector: Buffer, databaseAuthKeyBuffer: Buffer) {
@@ -356,7 +403,7 @@ export default class AuthClient {
         }
         catch(err) {
             logError(err);
-            this.notifyResponseStatus(404);
+            this.notifyResponseStatus((err as AxiosError)?.status);
             return {};
         }
     }
@@ -382,7 +429,7 @@ export default class AuthClient {
         if (!this.notifyConnectionStatus) return;
         if (status === 200) this.notifyConnectionStatus("Online");
         else if (status === 404) {
-            if (await isClientOnline()) this.notifyConnectionStatus("ServerUnreachable");
+            if (await this.isServerReachable()) this.notifyConnectionStatus("ServerUnreachable")
             else this.notifyConnectionStatus("ClientOffline");
         }
     }

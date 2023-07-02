@@ -223,7 +223,8 @@ export type SignUpChallengeResponse = LogInChallengeResponse & {
 
 export type SignUpResponse = Readonly<{ 
     serverConfirmationCode: Buffer,
-    sessionRecordKeyDeriveSalt: Buffer
+    sessionRecordKeyDeriveSalt: Buffer,
+    saveSessionKey: Buffer
 }>;
 
 export type LogInResponse = SignUpResponse & UserData;

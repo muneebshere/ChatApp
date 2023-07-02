@@ -133,8 +133,8 @@ export default class Client {
         return this.client;
     }
 
-    static dispose(ending?: "ending") {
-        this.client.dispose(ending);
+    static dispose(loggingOut?: "logging-out") {
+        this.client.dispose(loggingOut);
         this.client = null;
     }
 
@@ -179,7 +179,7 @@ export default class Client {
                 console.log("Socket disconnected.");
                 console.log(this.disconnectReason);
                 logError(err);
-                if (this.disconnectReason) AuthClient.terminateCurrentSession("not-ending");
+                if (this.disconnectReason) AuthClient.terminateCurrentSession("logging-out");
                 else this.reconnect();
             });
             const success = (await awaitCallback<boolean>(async (resolve) => {
@@ -241,7 +241,7 @@ export default class Client {
         }
     }
 
-    private dispose(ending?: "ending") {
+    private dispose(loggingOut?: "logging-out") {
         this.notifyChange?.();
         this.notifyStatus?.("LoggingOut");
         this.#socket.removeAllListeners("disconnect");
@@ -260,7 +260,7 @@ export default class Client {
         this.chatSessionIdsList.clear();
         this.chatUsernamesList.clear();
         this.chatInterface = null;
-        if (!ending) this.notifyStatus?.("NotLoggedIn");
+        if (loggingOut) this.notifyStatus?.("NotLoggedIn");
         this.notifyChange = null;
         this.notifyStatus = null;
     }

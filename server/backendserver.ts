@@ -22,7 +22,7 @@ declare module "http" {
         signedCookies: any;
     }
 }
-
+const { getRandomString, getRandomVector } = randomFunctions();
 let latestJsHash: string = null;
 
 function parseIpRepresentation(address: string) {
@@ -33,6 +33,13 @@ function parseIpRepresentation(address: string) {
             ? ipv4_or_ipv6.toIPv4MappedAddress()
             : ipv4_or_ipv6;
     return Buffer.from(ipv6.toByteArray()).toString("base64");
+}
+
+async function calculateNonce(ipRep: string, sessionReference: string, nonce: string): Promise<{ nonce: string, authNonce: string }> {
+    const nonceVector = nonce ? fromBase64(nonce) : getRandomVector(64);
+    nonce ||= nonceVector.toString("base64");
+    const authNonce = await crypto.digestToBase64("SHA-256",Buffer.concat([fromBase64(ipRep), fromBase64(sessionReference), nonceVector]));
+    return { authNonce, nonce };
 }
 
 export function parseIpReadable(ipRep: string) {
@@ -58,13 +65,6 @@ async function watchForJsHashChange() {
 }
 
 async function main() {
-
-    async function calculateNonce(ipRep: string, sessionReference: string, nonce: string): Promise<{ nonce: string, authNonce: string }> {
-        const nonceVector = nonce ? fromBase64(nonce) : getRandomVector(64);
-        nonce ||= nonceVector.toString("base64");
-        const authNonce = await crypto.digestToBase64("SHA-256",Buffer.concat([fromBase64(ipRep), fromBase64(sessionReference), nonceVector]));
-        return { authNonce, nonce };
-    }
     
     const PORT = 8080;
     const mongoUrl = "mongodb://localhost:27017/chatapp";
@@ -73,7 +73,6 @@ async function main() {
         cert: fs.readFileSync(`..\\certificates\\cert.pem`)
     }
     const corsOptions: CorsOptions = { origin: /.*/, methods: ["GET", "POST", "DELETE"], exposedHeaders: ["set-cookie"], allowedHeaders: ["content-type"], credentials: true };
-    const { getRandomString, getRandomVector } = randomFunctions();
 
     try {
         config({ debug: true, path: "./config.env" });
@@ -91,6 +90,12 @@ async function main() {
     const cookieOptions: CookieOptions = { httpOnly: true, secure: true, sameSite: "strict", signed: true };
     const app = express().use(cors(corsOptions)).use(cookieParserMiddle).use(express.json());
     const httpsServer = createServer(httpsOptions, app);
+    const interruptedAuthentications = new Map<string, NodeJS.Timeout>();
+    const saveSessionKeys = new Map<string, string>();
+    const disposeSession = async (sessionReference: string, reason: string) => {
+        await SocketHandler.disposeSession(sessionReference, reason);
+        saveSessionKeys.delete(sessionReference);
+    }
     
     const io = new SocketServer(httpsServer, {
         cors: {
@@ -143,6 +148,7 @@ async function main() {
         const sessionReference = getRandomString(16, "base64");
         const result = await authHandler.concludeSignUp(ipRep, challengeReference, sessionReference, request);
         if (!("reason" in result)) {
+            saveSessionKeys.set(sessionReference, result.saveSessionKey.toString("base64"));
             res.cookie("authenticated", { sessionReference, sessionIp: ipRep }, cookieOptions);
         }
         return res.json({ payload: serialize(result).toString("base64") });
@@ -170,8 +176,10 @@ async function main() {
         if (!ipRep || typeof payload !== "string") return res.status(400).end();
         const request: LogInChallengeResponse= deserialize(fromBase64(payload));
         const sessionReference = getRandomString(16, "base64");
-        const result = await authHandler.concludeLogIn(ipRep, prevSession, challengeReference, sessionReference, request);
+        const dispose = async () => disposeSession(prevSession, "Logging in again from the same device");
+        const result = await authHandler.concludeLogIn(ipRep, prevSession, challengeReference, sessionReference, dispose, request);
         if (!("reason" in result)) {
+            saveSessionKeys.set(sessionReference, result.saveSessionKey.toString("base64"));
             if (prevSession) res.clearCookie("authenticated");
             res.cookie("authenticated", { sessionReference, sessionIp: ipRep }, cookieOptions);
         }
@@ -201,8 +209,10 @@ async function main() {
         if (!ipRep || typeof payload !== "string") return res.status(400).end();
         const request: LogInChallengeResponse= deserialize(fromBase64(payload));
         const sessionReference = getRandomString(16, "base64");
-        const result = await authHandler.concludeLogInSaved(ipRep, prevSession, sessionReference, { ...request, username });
+        const dispose = async () => disposeSession(prevSession, "Logging in again from the same device");
+        const result = await authHandler.concludeLogInSaved(ipRep, prevSession, sessionReference, dispose, { ...request, username });
         if (!("reason" in result)) {
+            saveSessionKeys.set(sessionReference, result.saveSessionKey.toString("base64"));
             if (prevSession) res.clearCookie("authenticated");
             res.cookie("authenticated", { sessionReference, sessionIp: ipRep }, cookieOptions);
         }
@@ -226,14 +236,31 @@ async function main() {
     
     app.post("/userLogOut", async (req, res) => {
         const { sessionReference } = req.signedCookies?.authenticated || {};
-        await SocketHandler.disposeSession(sessionReference, "Logging out");
+        await disposeSession(sessionReference, "Logging out");
         return res.clearCookie("authenticated").clearCookie("savedPassword").status(200).end();
     });
     
     app.post("/terminateCurrentSession", async (req, res) => {
         const { sessionReference } = req.signedCookies?.authenticated || {};
-        await SocketHandler.disposeSession(sessionReference, "Session terminated");
-        return res.clearCookie("authenticated").status(200).end();
+        if (sessionReference) {
+            interruptedAuthentications.set(sessionReference, setTimeout(() => {
+                interruptedAuthentications.delete(sessionReference);
+                disposeSession(sessionReference, "Session terminated");
+            }, 5000));
+        }
+        return res.status(200).end();
+    });
+    
+    app.get("/resumeAuthenticatedSession", async (req, res) => {
+        const ipRep = parseIpRepresentation(req.socket.remoteAddress);
+        const { sessionReference, sessionIp } = req.signedCookies?.authenticated || {};
+        const timeout = interruptedAuthentications.get(sessionReference);
+        if (!timeout) return res.clearCookie("authenticated").json({ resumed: false });
+        if (!ipRep || ipRep !== sessionIp) return res.status(400).end();
+        clearTimeout(timeout);
+        interruptedAuthentications.delete(sessionReference);
+        const saveSessionKeyBase64 = saveSessionKeys.get(sessionReference);
+        return res.json({ resumed: true, saveSessionKeyBase64 });
     });
     
     app.get("/isPasswordSaved", async (req, res) => {
@@ -251,6 +278,7 @@ async function main() {
         }
         return res.json({ passwordSaved });
     });
+
     app.get("/isAuthenticated", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         if (!ipRep) return res.status(400).end();
