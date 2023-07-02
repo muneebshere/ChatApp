@@ -42,6 +42,7 @@ export type ScrollState = { id: string, index: number, offset: number, isRatio?:
 export type OrientationState = {
   lastOrientation: () => OrientationType;
   setNewOrientation: () => void;
+  changed: () => boolean;
 }
 
 type ChatViewProps = {
@@ -60,7 +61,8 @@ function useOrientationState(): OrientationState {
     lastOrientation: () => orientationRef.current,
     setNewOrientation: () => {
       orientationRef.current = orientation();
-    }
+    },
+    changed: () => orientation() !== orientationState.lastOrientation()
   }), []);
 
   return orientationState;
@@ -132,11 +134,11 @@ function useScrollRestore(scrollbar: () => HTMLDivElement,
     if (selectingRef.current) {
       return;
     }
-    if (orientation() !== orientationState.lastOrientation()) {
+    if (orientationState.changed()) {
       return;
     }
     selectingRef.current = true;
-    if (inViewRef.current.size === 0) {
+    if (inViewRef.current.size === 0 || getIsScrolledDown(scrollbar())) {
       currentScroll.current = null;
       selectingRef.current = false;
       return;
@@ -210,8 +212,8 @@ function useScrollRestore(scrollbar: () => HTMLDivElement,
   }
 
   function onOrientationChange() {
-    const lastScrolledTo = currentScroll.current && calculateScrollPosition(currentScroll.current);
     setTimeout(() => {
+      const lastScrolledTo = currentScroll.current && calculateScrollPosition(currentScroll.current);
       const scrollElement = scrollbar();
       const top = lastScrolledTo || scrollElement.scrollHeight;
       scrollElement.scrollTo({ top, behavior: "instant" });
@@ -328,7 +330,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
     const scrollbar = event.target as HTMLDivElement;
     if (scrollbar.scrollTop < 1 && chat.canLoadFurther) {
       scrollbar.scrollTo({ top: 1, behavior: "instant" });
-      if (!waitingHighlightRef.current) chat.loadNext();
+      if (!waitingHighlightRef.current && !orientationState.changed()) chat.loadNext();
     }
     if (scrollbar.scrollHeight <= scrollbar.clientHeight + Number.EPSILON) {
       setIsScrolledDown(true);
