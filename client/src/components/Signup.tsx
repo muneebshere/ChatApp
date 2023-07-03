@@ -1,10 +1,9 @@
 import _ from "lodash";
 import { match } from "ts-pattern";
 import React, { createContext, Dispatch, useCallback, useContext, useEffect, useState } from "react";
-import { FormControl, FormLabel, Stack, Button, CircularProgress, Alert } from "@mui/joy";
+import { FormControl, FormLabel, Stack, Button, CircularProgress, Alert, FormHelperText } from "@mui/joy";
 import { SubmitResponse } from "../App";
 import { DisableSelectTypography, StyledJoySwitch } from "./CommonElementStyles";
-import WarnSavePassword from "./WarnSavePassword";
 import ControlledTextField from "./ControlledTextField";
 import { Failure } from "../../../shared/commonTypes";
 
@@ -17,7 +16,6 @@ type SignUpData = {
   readonly savePassword: boolean;
   readonly failed: boolean;
   readonly submitted: boolean;
-  readonly warned: boolean;
   readonly usernameExists: (username: string) => Promise<boolean>;
   readonly submit: (response: SubmitResponse) => Promise<Failure>;
 }
@@ -46,8 +44,7 @@ export const defaultSignUpData: Omit<SignUpData, "usernameExists" | "submit"> = 
   showPassword: false,
   savePassword: false,
   submitted: false,
-  failed: false,
-  warned: false
+  failed: false
 };
 
 export const defaultSignUpDataReducer: SignUpDataReducer = (data, action) => {
@@ -61,7 +58,6 @@ export const defaultSignUpDataReducer: SignUpDataReducer = (data, action) => {
     .with("savePassword", () => ({ ...data, savePassword: value as boolean }))
     .with("submitted", () => ({ ...data, submitted: value as boolean }))
     .with("failed", () => ({ ...data, failed: value as boolean }))
-    .with("warned", () => ({ ...data, warned: value as boolean }))
     .with("clear", () => ({ ...defaultSignUpData ,..._.pick(data, "usernameExists", "submit") }))
     .otherwise(() => data);    
 }
@@ -69,7 +65,7 @@ export const defaultSignUpDataReducer: SignUpDataReducer = (data, action) => {
 export const SignUpContext = createContext<SignUpContextType>(null);
 
 export default function SignUpForm() {
-  const { signUpData: { displayName, username, password, repeatPassword, showPassword, savePassword, failed, submitted, warned, usernameExists, submit }, signUpDispatch } = useContext(SignUpContext);
+  const { signUpData: { displayName, username, password, repeatPassword, showPassword, savePassword, failed, submitted, usernameExists, submit }, signUpDispatch } = useContext(SignUpContext);
   const [usernameError, setUsernameError] = useState("");
   const setDisplayName = (displayName: string) => signUpDispatch(signUpAction("displayName", displayName));
   const setUsername = (username: string) => signUpDispatch(signUpAction("username", username));
@@ -79,7 +75,6 @@ export default function SignUpForm() {
   const setSavePassword = (savePassword: boolean) => signUpDispatch(signUpAction("savePassword", savePassword));
   const setFailed = (failed: boolean) => signUpDispatch(signUpAction("failed", failed));
   const setSubmitted = (submitted: boolean) => signUpDispatch(signUpAction("submitted", submitted));
-  const setWarned = (warned: boolean) => signUpDispatch(signUpAction("warned", warned));
   const canSubmit = !submitted && !usernameError && validatePassword(password) && (showPassword || password === repeatPassword);
 
   useEffect(() => {
@@ -172,13 +167,19 @@ export default function SignUpForm() {
             onChange={ (e) => setShowPassword(e?.target?.checked) } 
             color={showPassword ? "primary" : "neutral"}/>
         </FormControl>
-        <FormControl orientation="horizontal">
-          <FormLabel>Save password</FormLabel>
-          <StyledJoySwitch checked={savePassword} 
-            disabled={submitted}
-            onChange={ (e) => setSavePassword(e?.target?.checked) }
-            color={savePassword ? "primary" : "neutral"}/>
-        </FormControl>
+        <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
+          <FormControl orientation="horizontal" sx={{ width: "100%" }}>
+            <FormLabel>Save password</FormLabel>
+            <StyledJoySwitch checked={savePassword} 
+              disabled={submitted}
+              onChange={ (e) => setSavePassword(e?.target?.checked) }
+              color={savePassword ? "primary" : "neutral"}/>
+          </FormControl>
+          {savePassword &&
+            <FormHelperText sx={{ width: "100%", paddingTop: "4px", justifyItems: "flex-start", textAlign: "start", color: "var(--joy-palette-danger-outlinedColor)" }}>
+              Please don't use this option on a shared computer.
+            </FormHelperText>}
+        </div>
         <Button variant="solid"
           onClick={submitLocal} 
           disabled={!canSubmit}>
@@ -196,7 +197,6 @@ export default function SignUpForm() {
           <DisableSelectTypography color="danger" fontWeight="sm">Sign up failed! Please try again.</DisableSelectTypography>
         </Alert>}
       </Stack>
-      <WarnSavePassword open={savePassword && !warned} setWarned={setWarned}/>
     </React.Fragment>
   )
 }

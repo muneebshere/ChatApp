@@ -193,6 +193,7 @@ export const PopoverContent = forwardRef<
           context={floatingContext} 
           modal={context.modal}
           initialFocus={-1}
+          returnFocus={true}
           guards={false}>
           <div
             ref={ref}
@@ -201,6 +202,7 @@ export const PopoverContent = forwardRef<
               top: context.y ?? 0,
               left: context.x ?? 0,
               width: "max-content",
+              zIndex: 6,
               ...props.style
             }}
             aria-labelledby={context.labelId}

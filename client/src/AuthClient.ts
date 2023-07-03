@@ -439,7 +439,7 @@ export default class AuthClient {
 export async function isClientOnline() {
     if (!window.navigator.onLine) return false;
     try {
-        return await isOnline({ timeout: 500 });
+        return await isOnline({ timeout: 1000 });
     } catch (err) {
         return false;
     }

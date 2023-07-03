@@ -205,7 +205,6 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
           <Sheet
             variant="outlined"
             sx={{
-              zIndex: 10,
               width: belowXL ? "70vw" : "35vw",
               borderRadius: "md",
               p: 3,

@@ -5,7 +5,6 @@ import { Card, List, ListItem, ListSubheader } from "@mui/joy";
 import { DateTime } from "luxon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip";
 import MessageCard from "./MessageCard";
-import { DisplayMessage } from "../../../shared/commonTypes";
 import { ElementRects } from "@floating-ui/react";
 import { DisableSelectTypography } from "./CommonElementStyles";
 import { useEffectOnce } from "usehooks-ts";

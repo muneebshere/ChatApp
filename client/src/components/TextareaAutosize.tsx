@@ -9,6 +9,12 @@ import {
 } from "@mui/utils";
 import styled from "@emotion/styled";
 
+declare module "React" {
+  interface TextareaHTMLAttributes<T> extends HTMLAttributes<T> {
+    virtualkeyboardpolicy?: "auto" | "manual";
+  }
+}
+
 interface TextareaAutosizeProps
   extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "children" | "rows" | "onSubmit"> {
   ref?: React.Ref<HTMLTextAreaElement>;
@@ -37,6 +43,8 @@ interface TextareaAutosizeProps
   startDecorator?: JSX.Element;
 
   startDecoratorStyle?: React.CSSProperties;
+
+  openKeyboardManual?: boolean;
 }
 
 type State = {
@@ -90,8 +98,9 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
   props: TextareaAutosizeProps,
   ref: ForwardedRef<Element>,
 ) {
-  const { onChange, onHeightUpdate, maxRows, minRows = 1, style, value, onSubmit, ...other } = props;
+  const { onChange, onHeightUpdate, maxRows, minRows = 1, style, value, onSubmit, openKeyboardManual, ...other } = props;
 
+  const virtualkeyboardpolicy = openKeyboardManual ? "manual" : "auto";
   const { current: isControlled } = useRef(value != null);
   const inputRef = useRef<HTMLInputElement>(null);
   const handleRef = useForkRef(ref, inputRef);
@@ -279,7 +288,9 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
         }
       : undefined;
 
-  }, [onSubmit])
+  }, [onSubmit]);
+
+  const onClick = openKeyboardManual ? () => (navigator as any).virtualKeyboard?.show() : undefined;
 
   return (
     <React.Fragment>
@@ -287,6 +298,8 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
         value={value}
         onChange={handleChange}
         onKeyDown={handleSubmit}
+        virtualkeyboardpolicy={virtualkeyboardpolicy}
+        onClick={onClick}
         ref={handleRef}
         // Apply the rows prop to get a "correct" first SSR paint
         rows={minRows as number}

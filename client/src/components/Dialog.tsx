@@ -1,4 +1,4 @@
-import React, { ButtonHTMLAttributes, Dispatch, HTMLProps, ReactNode, SetStateAction, cloneElement, createContext, forwardRef, isValidElement, useContext, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import React, { ButtonHTMLAttributes, Dispatch, HTMLProps, ReactNode, SetStateAction, cloneElement, createContext, forwardRef, isValidElement, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   useFloating,
   useClick,
@@ -19,6 +19,7 @@ interface DialogOptions {
   setControlledOpen?: (open: boolean) => void;
   changeOpenTo?: boolean;
   notifyChange?: (open: boolean) => void;
+  keepFocusIn?: readonly [React.RefObject<HTMLElement>, React.MutableRefObject<boolean>];
 }
 
 export function useDialog({
@@ -27,7 +28,8 @@ export function useDialog({
     changeOpenTo,
     notifyChange,
     outsidePress,
-    overlayBackdrop
+    overlayBackdrop,
+    keepFocusIn
 }: DialogOptions = {}) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(!!changeOpenTo);
   const [labelId, setLabelId] = useState<string | undefined>();
@@ -85,9 +87,10 @@ export function useDialog({
       setLabelId,
       setDescriptionId,
       outsidePress,
-      overlayBackdrop
+      overlayBackdrop,
+      keepFocusIn
     }),
-    [open, setOpen, outsidePress, interactions, data, labelId, descriptionId]
+    [open, setOpen, outsidePress, interactions, data, labelId, descriptionId, keepFocusIn]
   );
 }
 
@@ -97,7 +100,7 @@ type ContextType =
       setDescriptionId: Dispatch<
         SetStateAction<string | undefined>
       >;
-    } & { outsidePress?: boolean, overlayBackdrop?: string })
+    } & { outsidePress?: boolean, overlayBackdrop?: string, keepFocusIn?: readonly [React.RefObject<HTMLElement>, React.MutableRefObject<boolean>] })
   | null;
 
 const DialogContext = createContext<ContextType>(null);
@@ -168,24 +171,56 @@ export const DialogContent = forwardRef<
 >(function DialogContent(props, propRef) {
   const { context: floatingContext, ...context } = useDialogContext();
   const ref = useMergeRefs([context.refs.setFloating, propRef]);
+  const mainRef = useRef<HTMLDivElement>(null);
 
-  const { overlayBackdrop: backdropFilter, outsidePress } = context;
+  const { overlayBackdrop: backdropFilter, outsidePress, keepFocusIn } = context;
+  const [focusElement, clickedInside] = keepFocusIn || [];
+
+  const onFocusIn = 
+    clickedInside
+      ? () => focusElement.current?.focus()
+      : null;
+  const onClick = 
+    clickedInside
+      ? () => clickedInside.current = false
+      : null;
+  const onMouseDown =
+    clickedInside
+      ? () => {
+                clickedInside.current = true;
+                focusElement.current?.focus();
+              }
+      : null;
+
+  useLayoutEffect(() => {
+    if (keepFocusIn) return () => {
+      mainRef.current?.removeEventListener("mousedown", onMouseDown, { capture: true });
+      mainRef.current?.removeEventListener("click", onClick, { capture: true });
+      mainRef.current?.removeEventListener("focusin", onFocusIn, { capture: true });
+    }
+  }, [])
 
   return (
     <FloatingPortal>
       {context.open && (
         <FloatingOverlay className="Dialog-overlay" 
+          ref={(elem) => {
+            if (!keepFocusIn) return;
+            elem?.addEventListener("mousedown", onMouseDown, { capture: true });
+            elem?.addEventListener("click", onClick, { capture: true });
+            elem?.addEventListener("focusin", onFocusIn, { capture: true });
+            mainRef.current = elem;
+          }}
           lockScroll 
-          style={{ backdropFilter }}
+          style={{ backdropFilter, zIndex: 5 }}
           onClick={ outsidePress ? () => context.setOpen(false) : undefined }>
-          <FloatingFocusManager context={floatingContext} returnFocus={false}>
+          <FloatingFocusManager context={floatingContext}>
             <div
               ref={ref}
               aria-labelledby={context.labelId}
               aria-describedby={context.descriptionId}
               {...context.getFloatingProps(props)}
               style={{
-                zIndex: 10,
                 position: "absolute",
                 top: "0px",
                 bottom: "0px",

@@ -70,7 +70,7 @@ function useOrientationState(): OrientationState {
 
 type UseReplyingTo = [string, (replyTo: ReplyingToInfo) => void, JSX.Element];
 
-function useReplyingTo(chatWith: string, setHighlight: (highlight: string) => void, belowXL: boolean): UseReplyingTo {
+function useReplyingTo(chatWith: string, setHighlight: (highlight: string) => void, belowXL: boolean, focus: () => void): UseReplyingTo {
   const [replyTo, setReplyTo] = useState<ReplyingToInfo>(null);
 
   const replyToElement = useMemo(() => {
@@ -81,7 +81,12 @@ function useReplyingTo(chatWith: string, setHighlight: (highlight: string) => vo
     return (<ReplyingToMemo {...replyData}/>);
   }, [replyTo]);
 
-  return [replyTo?.replyId, setReplyTo, replyToElement];
+  const setReply = (replyTo: ReplyingToInfo) => {
+    setReplyTo(replyTo);
+    focus();
+  }
+
+  return [replyTo?.replyId, setReply, replyToElement];
 }
 
 function useScrollRestore(scrollbar: () => HTMLDivElement, 
@@ -284,11 +289,12 @@ function useScrollOnResize(scrollbar: () => HTMLDivElement,
 const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastScrolledTo }: ChatViewProps) {
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const mutationRef = useRef<MutationObserver>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messageRef = useRef(message);
+  const clickedInside = useRef(false);
   const wasScrolledDownRef = useRef(true);
-  const isFocusedRef = useRef(false);
   const waitingHighlightRef = useRef("");
   const [chatDetails, setChatDetails] = useState(chat.details);
   const { displayName } = chatDetails;
@@ -299,7 +305,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   const [loadingMore, setLoadingMore] = useState(false);
   const scrollbar = () => scrollRef.current;
   const orientationState = useOrientationState();
-  const [replyId, setReplyTo, replyToElement] = useReplyingTo(displayName, setHighlight, belowXL);
+  const [replyId, setReplyTo, replyToElement] = useReplyingTo(displayName, setHighlight, belowXL, () => textareaRef.current.focus());
   const [width, ] = useSize(scrollRef, "content");
   const toggleScroll = (scrollOn: boolean) => { 
     scrollbar().style.overflowY = scrollOn ? "scroll" : "hidden";
@@ -361,7 +367,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   };
 
   const debouncedSendTyping = _.debounce(() => {
-    if (isFocusedRef.current && chatDetails.isOnline) {
+    if (chatDetails.isOnline) {
       chat.sendTyping("typing", Date.now());
     }
   }, 1000, { maxWait: 1000, leading: true, trailing: true });
@@ -410,9 +416,18 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
     scrollbar().addEventListener("scroll", debouncedScrollHandler);
     window.visualViewport.addEventListener("resize", updateHeight);
     mutationRef.current = new MutationObserver(mutationCallback);
+    const onMouseDown = () => {
+      clickedInside.current = true;
+      textareaRef.current.focus();
+    }
+    const onClick = () => clickedInside.current = false;
+    mainRef.current.addEventListener("mousedown", onMouseDown, { capture: true });
+    mainRef.current.addEventListener("click", onClick, { capture: true });
 
     return () => {
-      scrollbar().removeEventListener("scroll", debouncedScrollHandler);
+      scrollbar()?.removeEventListener("scroll", debouncedScrollHandler);
+      mainRef.current?.removeEventListener("mousedown", onMouseDown, { capture: true });
+      mainRef.current?.removeEventListener("click", onClick, { capture: true });
       window.visualViewport.removeEventListener("resize", updateHeight);
       mutationRef.current?.disconnect();
       mutationRef.current = null;
@@ -433,7 +448,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   }
 
   return (
-    <StyledSheet sx={{ height: "100%", display: "flex", flexDirection: "column", overflow: "clip" }}>
+    <StyledSheet ref={mainRef} sx={{ height: "100%", display: "flex", flexDirection: "column", overflow: "clip" }}>
       <Stack direction="column" spacing={1} sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column", overflow: "clip" }}>
         <ChatHeaderMemo {...{ belowXL, chatDetails }}/>
         <StyledScrollbar ref={scrollRef} sx={{ paddingBottom: 0, paddingTop: chat.canLoadFurther ? "1px" : 0 }}>
@@ -464,9 +479,10 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
             borderTopRightRadius: 20,
             borderBottomRightRadius: 20,
             paddingBottom: "8px",
-            paddingInline: "2px",
-            zIndex: 20 }}>
+            paddingInline: "2px" }}>
           <StyledScrollingTextarea
+            openKeyboardManual
+            autoFocus={true}
             ref={textareaRef}
             placeholder="Type a message"
             defaultValue={message}
@@ -475,12 +491,9 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
               debouncedSendTyping();
              }}
             onSubmit={sendMessage}
-            onFocus={() => {
-              isFocusedRef.current = true;
-            } }
-            onBlur={() => {
-              isFocusedRef.current = false;
+            onBlur={(e) => {
               chatDetails.isOnline && chat.sendTyping("stopped-typing", Date.now());
+              if (clickedInside.current) e.target.focus();
             }}
             minRows={1}
             maxRows={5} 

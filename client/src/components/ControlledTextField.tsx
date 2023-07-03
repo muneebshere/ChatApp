@@ -20,10 +20,11 @@ export type ControlledTextFieldProps = {
   autoComplete?: string;
   role?: React.AriaRole;
   autoFocus?: boolean;
+  forceFocus?: boolean;
 } & React.HTMLProps<HTMLInputElement>
 
 export default function ControlledTextField(args: ControlledTextFieldProps) {
-  const { placeholder, setValue, type, valid, defaultValue, value, disabled, errorMessage, forceInvalid, helperText, label, onEnter, preventSpaces, variant, autoComplete, role, autoFocus } = args;
+  const { placeholder, setValue, type, valid, defaultValue, value, disabled, errorMessage, forceInvalid, helperText, label, onEnter, preventSpaces, variant, autoComplete, role, autoFocus, forceFocus } = args;
   const [cursor, setCursor] = useState(0);
   const [touched, setTouched] = useState<boolean>(null);
   const [enterDown, setEnterDown] = useState(false);
@@ -31,6 +32,7 @@ export default function ControlledTextField(args: ControlledTextFieldProps) {
   const ref = useRef<HTMLInputElement>(null);
   const errorText = () => (touched || forceInvalid) && !valid && !!errorMessage;
   useEffect(() => ref?.current?.setSelectionRange?.(cursor, cursor), [ref, cursor, args, value]);
+
 
   function onChange(e: React.ChangeEvent<HTMLInputElement>) {
     e.preventDefault();
@@ -49,6 +51,7 @@ export default function ControlledTextField(args: ControlledTextFieldProps) {
         setValue("");
       }
     }
+    if (forceFocus) e.target?.focus();
   }
 
   function onFocus(e: React.FocusEvent<HTMLInputElement>) {

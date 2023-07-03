@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from "react";
 import { Grid, IconButton, Button, Sheet, Stack } from "@mui/joy";
 import { CloseSharp, SendRounded } from "@mui/icons-material";
 import { Popover, PopoverTrigger, PopoverContent } from "./Popover";
@@ -110,6 +110,9 @@ type NewMessageDialogProps = {
 export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, setWarn, setNewChatWith, setNewMessage, validate, sendRequest }: NewMessageDialogProps) {
   const [isPopupOpen, setIsPopupOpen] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState((navigator as any).virtualKeyboard.boundingRect.height);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const clickedInside = useRef(false);
+  const keepFocusIn = useMemo(() => [textareaRef, clickedInside] as const, []);
 
   useEffect(() => {
     const updateHeight = () => setKeyboardHeight((navigator as any).virtualKeyboard.boundingRect.height);
@@ -124,7 +127,8 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
       <Dialog 
         outsidePress
         overlayBackdrop="opacity(100%) blur(4px)"
-        controlledOpen={!!newChatWith} 
+        controlledOpen={!!newChatWith}
+        keepFocusIn={keepFocusIn} 
         setControlledOpen={(open) => { 
           if (!open) {
             if (isPopupOpen) {
@@ -150,7 +154,17 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
               backgroundColor: "rgba(246, 246, 246, 0.8)",
               boxShadow: "lg", 
               backdropFilter: "blur(4px)"}}>
-            <CloseButton onClick={ () => setWarn(true) }>
+            <CloseButton onClick={ () => {   
+                if (isPopupOpen) {
+                  setIsPopupOpen(false);
+                }
+                else if (isMessageEmpty()) {
+                  setNewChatWith("");
+                }
+                else {
+                  setWarn(true);
+                }              
+              } }>
               <CloseSharp sx={{ fontSize: "1.5rem" }}/>
             </CloseButton>
             <Stack direction="row" spacing={0.7} sx={{ flexWrap: "wrap", alignContent: "center" }}>
@@ -205,17 +219,21 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
                 paddingBottom: "8px",
                 zIndex: 20 }}>
               <StyledScrollingTextarea
+                ref={textareaRef}
+                openKeyboardManual={false}
+                autoFocus={true}
                 placeholder="Type a message"
                 outerProps={{ style: { marginTop: "12px" } }}
                 onChange={ (e) => setNewMessage(e?.target?.value || "") }
-                onSubmit={() => sendRequest()}
+                onSubmit={() => isMessageEmpty() || sendRequest()}
+                onBlur={(e) => clickedInside.current && e.target.focus()}
                 minRows={3}
                 maxRows={5} 
                 style={{ flex: 1 }}/>
                 <IconButton 
                   variant="outlined"
                   color="success" 
-                  onClick={() => sendRequest()}
+                  onClick={() => isMessageEmpty() || sendRequest()}
                   sx={{ flexGrow: 0, flexBasis: "content", height: "fit-content", alignSelf: "center", borderRadius: 20, backgroundColor: "var(--joy-palette-success-plainHoverBg)" }}>
                   <SendRounded sx={{ fontSize: "2rem"}}/>
                 </IconButton>

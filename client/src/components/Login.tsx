@@ -1,11 +1,10 @@
 import _ from "lodash";
 import { match } from "ts-pattern";
 import React, { useRef, useEffect, useContext, createContext, Dispatch, useState, useCallback } from "react";
-import { FormControl, FormLabel, Stack, Button, CircularProgress, Alert } from "@mui/joy";
+import { FormControl, FormLabel, Stack, Button, CircularProgress, Alert, FormHelperText } from "@mui/joy";
 import { SubmitResponse } from "../App";
 import { DisableSelectTypography, StyledJoySwitch } from "./CommonElementStyles";
 import ControlledTextField from "./ControlledTextField";
-import WarnSavePassword from "./WarnSavePassword";
 import { ErrorStrings, Failure, LogInPermitted } from "../../../shared/commonTypes";
 
 type LogInData = {
@@ -19,7 +18,6 @@ type LogInData = {
   readonly tryCount: number;
   readonly failed: boolean;
   readonly submitted: boolean;
-  readonly warned: boolean;
   readonly userLoginPermitted: (username: string) => Promise<LogInPermitted>;
   readonly submit: (response: SubmitResponse) => Promise<Failure>;
 }
@@ -50,8 +48,7 @@ export const defaultLogInData: Omit<LogInData, "submit" | "userLoginPermitted"> 
   tryAgainIn: 0,
   tryCount: 0,
   submitted: false,
-  failed: false,
-  warned: false
+  failed: false
 };
 
 export const defaultLogInDataReducer: LogInDataReducer = (data, action) => {
@@ -67,7 +64,6 @@ export const defaultLogInDataReducer: LogInDataReducer = (data, action) => {
     .with("tryCount", () => ({ ...data, tryCount: value as number }))
     .with("failed", () => ({ ...data, failed: value as boolean }))
     .with("submitted", () => ({ ...data, submitted: value as boolean }))
-    .with("warned", () => ({ ...data, warned: value as boolean }))
     .with("clear", () => ({ ...defaultLogInData ,..._.pick(data, "userLoginPermitted", "submit") }))
     .otherwise(() => data);
 }
@@ -75,7 +71,7 @@ export const defaultLogInDataReducer: LogInDataReducer = (data, action) => {
 export const LogInContext = createContext<LogInContextType>(null);
 
 export default function LogInForm() {
-  const { logInData: { username, usernameEntered, password, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, failed, submitted, warned, userLoginPermitted, submit },  logInDispatch } = useContext(LogInContext);
+  const { logInData: { username, usernameEntered, password, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, failed, submitted, userLoginPermitted, submit },  logInDispatch } = useContext(LogInContext);
   const [usernameError, setUsernameError] = useState("");
   const setUsername = (username: string) => logInDispatch(logInAction("username", username));
   const setUsernameEntered = (usernameEntered: boolean) => logInDispatch(logInAction("usernameEntered", usernameEntered));
@@ -85,7 +81,6 @@ export default function LogInForm() {
   const setSavePassword = (savePassword: boolean) => logInDispatch(logInAction("savePassword", savePassword));
   const setFailed = (failed: boolean) => logInDispatch(logInAction("failed", failed));
   const setSubmitted = (submitted: boolean) => logInDispatch(logInAction("submitted", submitted));
-  const setWarned = (warned: boolean) => logInDispatch(logInAction("warned", warned));
   const setTryAgainIn = (tryAgainIn: number) => logInDispatch(logInAction("tryAgainIn", tryAgainIn));
   const setTryCount = (tryCount: number) => logInDispatch(logInAction("tryCount", tryCount));
   const canSubmit = !submitted && password && validatePassword(password) || tryAgainIn <= 0;
@@ -170,6 +165,7 @@ export default function LogInForm() {
             forceInvalid={!!username}
             errorMessage={usernameError}
             autoFocus={!usernameEntered}
+            forceFocus={!usernameEntered}
             onEnter={onUsernameEntered}/>
           <Button variant="solid"
             onClick={onUsernameEntered} 
@@ -193,6 +189,7 @@ export default function LogInForm() {
             forceInvalid={!validatePassword(password) || tryAgainIn > 0}
             errorMessage={ tryAgainIn <= 0 ? (!password ? "Please provide password" : "Incorrect password.") : `Incorrect password entered ${tryCount} times. Try again in ${ (tryAgainIn / 1000).toFixed(0) }s.`}
             autoFocus={usernameEntered}
+            forceFocus={usernameEntered}
             onEnter={submitLocal}/>
           <FormControl orientation="horizontal">
             <FormLabel>Show Password</FormLabel>
@@ -200,14 +197,20 @@ export default function LogInForm() {
               disabled={submitted}
               onChange={ (e) => setShowPassword(e?.target?.checked) } 
               color={showPassword ? "primary" : "neutral"}/>
-          </FormControl>
-          <FormControl orientation="horizontal">
-            <FormLabel>Save password</FormLabel>
-            <StyledJoySwitch checked={savePassword} 
-              disabled={submitted}
-              onChange={ (e) => setSavePassword(e?.target?.checked) }
-              color={savePassword ? "primary" : "neutral"}/>
-          </FormControl>
+            </FormControl>
+          <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
+            <FormControl orientation="horizontal" sx={{ width: "100%" }}>
+              <FormLabel>Save password</FormLabel>
+              <StyledJoySwitch checked={savePassword} 
+                disabled={submitted}
+                onChange={ (e) => setSavePassword(e?.target?.checked) }
+                color={savePassword ? "primary" : "neutral"}/>
+            </FormControl>
+            {savePassword &&
+              <FormHelperText sx={{ width: "100%", paddingTop: "4px", justifyItems: "flex-start", textAlign: "start", color: "var(--joy-palette-danger-outlinedColor)" }}>
+                Please don't use this option on a shared computer.
+              </FormHelperText>}
+          </div>
           <Stack direction="row" spacing={2}>
             <Button variant="solid"
               onClick={ () => setUsernameEntered(false) }
@@ -229,7 +232,6 @@ export default function LogInForm() {
               </Stack>
             </Button>
           </Stack>
-          <WarnSavePassword open={savePassword && !warned} setWarned={setWarned}/>
         </React.Fragment>
       }
       {failed &&

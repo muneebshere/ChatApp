@@ -36,7 +36,7 @@ export default function Sidebar({ currentChatWith, openChat, chats, client, belo
         newChatWith={newChatWith} 
         warn={warn} 
         setWarn={setWarn}
-        isMessageEmpty={() => !newMessageRef.current} 
+        isMessageEmpty={() => !newMessageRef.current?.trim()} 
         belowXL={belowXL} 
         setNewChatWith={(newChatWith) => setNewChatWith(newChatWith)}
         setNewMessage={(message) => { newMessageRef.current = message; }}
