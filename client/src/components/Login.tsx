@@ -192,7 +192,7 @@ export default function LogInForm() {
             forceFocus={usernameEntered}
             onEnter={submitLocal}/>
           <FormControl orientation="horizontal">
-            <FormLabel>Show Password</FormLabel>
+            <FormLabel>Show password</FormLabel>
             <StyledJoySwitch checked={showPassword}
               disabled={submitted}
               onChange={ (e) => setShowPassword(e?.target?.checked) } 

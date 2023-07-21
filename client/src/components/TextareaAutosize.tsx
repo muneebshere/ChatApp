@@ -18,6 +18,7 @@ declare module "React" {
 interface TextareaAutosizeProps
   extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "children" | "rows" | "onSubmit"> {
   ref?: React.Ref<HTMLTextAreaElement>;
+  tabbedOutside?: React.MutableRefObject<boolean>;
   /**
    * Maximum number of rows to display.
    */
@@ -98,7 +99,7 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
   props: TextareaAutosizeProps,
   ref: ForwardedRef<Element>,
 ) {
-  const { onChange, onHeightUpdate, maxRows, minRows = 1, style, value, onSubmit, openKeyboardManual, ...other } = props;
+  const { onChange, onHeightUpdate, maxRows, minRows = 1, style, value, onSubmit, openKeyboardManual, tabbedOutside, ...other } = props;
 
   const virtualkeyboardpolicy = openKeyboardManual ? "manual" : "auto";
   const { current: isControlled } = useRef(value != null);
@@ -285,10 +286,19 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
             event.stopPropagation();
             return false;
           }
+          else if (tabbedOutside && event.key === "Tab") {
+            tabbedOutside.current = true;
+          }
         }
       : undefined;
 
   }, [onSubmit]);
+
+  const handleKeyUp = useMemo(() => {
+    return tabbedOutside
+      ? () => tabbedOutside.current = false
+      : undefined;
+  }, [tabbedOutside]);
 
   const onClick = openKeyboardManual ? () => (navigator as any).virtualKeyboard?.show() : undefined;
 
@@ -298,6 +308,7 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
         value={value}
         onChange={handleChange}
         onKeyDown={handleSubmit}
+        onKeyUp={handleKeyUp}
         virtualkeyboardpolicy={virtualkeyboardpolicy}
         onClick={onClick}
         ref={handleRef}
@@ -417,7 +428,7 @@ const StyledInnerTextarea = styled(TextareaAutosize)`
   }`;
 
 export const StyledScrollingTextarea = forwardRef(function(props: TextareaAutosizeProps, ref: ForwardedRef<HTMLTextAreaElement>) {
-  const { startDecorator, startDecoratorStyle = {}, outerProps = {}, ...innerProps } = props || {}; 
+  const { startDecorator, startDecoratorStyle = {}, outerProps = {}, ...innerProps } = props; 
   return (
   <TextareaBorder {...outerProps}>
     {startDecorator &&

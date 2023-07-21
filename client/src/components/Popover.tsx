@@ -1,4 +1,4 @@
-import React, { ButtonHTMLAttributes, Dispatch, HTMLProps, ReactNode, SetStateAction, cloneElement, createContext, forwardRef, isValidElement, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import React, { HTMLProps, ReactNode, cloneElement, createContext, forwardRef, isValidElement, useContext, useEffect, useMemo, useState } from "react";
 import {
   useFloating,
   autoUpdate,
@@ -12,8 +12,7 @@ import {
   useMergeRefs,
   Placement,
   FloatingPortal,
-  FloatingFocusManager,
-  useId
+  FloatingFocusManager
 } from "@floating-ui/react";
 
 interface PopoverOptions {
@@ -21,47 +20,39 @@ interface PopoverOptions {
   modal?: boolean;
   controlledOpen?: boolean;
   setControlledOpen?: (open: boolean) => void;
-  changeOpenTo?: boolean;
-  notifyChange?: (open: boolean) => void;
 };
 
-export function usePopover({
+type ContextType = ReturnType<typeof useFloating> & ReturnType<typeof useInteractions> & { 
+  modal: boolean;
+  open: boolean;
+  setOpen: (open: boolean) => void;
+}
+
+const PopoverContext = createContext<ContextType>(null);
+
+const usePopoverContext = () => {
+  const context = useContext(PopoverContext);
+
+  if (context == null) {
+    throw new Error("Popover components must be wrapped in <Popover/>");
+  }
+
+  return context;
+};
+
+export default function Popover({
+  children,
+  modal = false,
   placement = "bottom",
-  modal,
   controlledOpen,
   setControlledOpen,
-  changeOpenTo,
-  notifyChange
-}: PopoverOptions = {}) {
-  const [uncontrolledOpen, setUncontrolledOpen] = useState(!!changeOpenTo);
-  const [labelId, setLabelId] = useState<string | undefined>();
-  const [descriptionId, setDescriptionId] = useState<
-    string | undefined
-  >();
-
-  const controlled = controlledOpen !== undefined;
-  let open: boolean;
-  let setOpen: (open: boolean) => void;
-
-  if (controlled && setControlledOpen) {
-    open = controlledOpen;
-    setOpen = setControlledOpen;
-  }
-  else {
-    setOpen = notifyChange 
-              ? (open) => {
-                notifyChange(open);
-                setUncontrolledOpen(open);
-              }
-              : setUncontrolledOpen;
-    open = uncontrolledOpen;
-  }
-
-  useEffect(() => {
-    if (!controlled && changeOpenTo !== undefined) {
-      setUncontrolledOpen(changeOpenTo);
-    }
-  }, [changeOpenTo]);
+}: {
+  children: ReactNode;
+} & PopoverOptions) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const controlled = controlledOpen !== undefined && setControlledOpen !== undefined;
+  const open = controlled ? controlledOpen : uncontrolledOpen;
+  const setOpen = controlled ? setControlledOpen : setUncontrolledOpen;
 
   const data = useFloating({
     placement,
@@ -78,64 +69,16 @@ export function usePopover({
   });
 
   const context = data.context;
-
-  const click = useClick(context, {
-    enabled: !controlled
-  });
+  const click = useClick(context);
   const dismiss = useDismiss(context, { ancestorScroll: true });
   const role = useRole(context);
-
   const interactions = useInteractions([click, dismiss, role]);
 
-  return useMemo(
-    () => ({
-      open,
-      setOpen,
-      ...interactions,
-      ...data,
-      modal,
-      labelId,
-      descriptionId,
-      setLabelId,
-      setDescriptionId
-    }),
-    [open, setOpen, interactions, data, modal, labelId, descriptionId]
-  );
-}
+  const popoverContext = useMemo(() => ({ open, setOpen, modal, ...interactions, ...data }),
+    [open, setOpen, interactions, data, modal]);
 
-type ContextType =
-  | (ReturnType<typeof usePopover> & {
-      setLabelId: Dispatch<SetStateAction<string | undefined>>;
-      setDescriptionId: Dispatch<
-        SetStateAction<string | undefined>
-      >;
-    })
-  | null;
-
-const PopoverContext = createContext<ContextType>(null);
-
-export const usePopoverContext = () => {
-  const context = useContext(PopoverContext);
-
-  if (context == null) {
-    throw new Error("Popover components must be wrapped in <Popover />");
-  }
-
-  return context;
-};
-
-export function Popover({
-  children,
-  modal = false,
-  ...restOptions
-}: {
-  children: ReactNode;
-} & PopoverOptions) {
-  // This can accept any props as options, e.g. `placement`,
-  // or other positioning options.
-  const popover = usePopover({ modal, ...restOptions });
   return (
-    <PopoverContext.Provider value={popover}>
+    <PopoverContext.Provider value={popoverContext}>
       {children}
     </PopoverContext.Provider>
   );
@@ -205,8 +148,6 @@ export const PopoverContent = forwardRef<
               zIndex: 6,
               ...props.style
             }}
-            aria-labelledby={context.labelId}
-            aria-describedby={context.descriptionId}
             {...context.getFloatingProps(props)}
           >
             {props.children}
@@ -214,59 +155,5 @@ export const PopoverContent = forwardRef<
         </FloatingFocusManager>
       )}
     </FloatingPortal>
-  );
-});
-
-export const PopoverHeading = forwardRef<
-  HTMLHeadingElement,
-  HTMLProps<HTMLHeadingElement>
->(function PopoverHeading({ children, ...props }, ref) {
-  const { setLabelId } = usePopoverContext();
-  const id = useId();
-
-  // Only sets `aria-labelledby` on the Popover root element
-  // if this component is mounted inside it.
-  useLayoutEffect(() => {
-    setLabelId(id);
-    return () => setLabelId(undefined);
-  }, [id, setLabelId]);
-
-  return (
-    <h2 {...props} ref={ref} id={id}>
-      {children}
-    </h2>
-  );
-});
-
-export const PopoverDescription = forwardRef<
-  HTMLParagraphElement,
-  HTMLProps<HTMLParagraphElement>
->(function PopoverDescription({ children, ...props }, ref) {
-  const { setDescriptionId } = usePopoverContext();
-  const id = useId();
-
-  // Only sets `aria-describedby` on the Popover root element
-  // if this component is mounted inside it.
-  useLayoutEffect(() => {
-    setDescriptionId(id);
-    return () => setDescriptionId(undefined);
-  }, [id, setDescriptionId]);
-
-  return (
-    <p {...props} ref={ref} id={id}>
-      {children}
-    </p>
-  );
-});
-
-export const PopoverClose = forwardRef<
-  HTMLButtonElement,
-  ButtonHTMLAttributes<HTMLButtonElement>
->(function PopoverClose({ children, ...props }, ref) {
-  const { setOpen } = usePopoverContext();
-  return (
-    <button type="button" {...props} ref={ref} onClick={() => setOpen(false)}>
-      {children}
-    </button>
   );
 });

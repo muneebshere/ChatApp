@@ -31,14 +31,16 @@ export default function ControlledTextField(args: ControlledTextFieldProps) {
   const timeoutRef = useRef<number>(null);
   const ref = useRef<HTMLInputElement>(null);
   const errorText = () => (touched || forceInvalid) && !valid && !!errorMessage;
-  useEffect(() => ref?.current?.setSelectionRange?.(cursor, cursor), [ref, cursor, args, value]);
-
+  useEffect(() => ref?.current?.setSelectionRange?.(cursor, cursor), [cursor, args, value]);
 
   function onChange(e: React.ChangeEvent<HTMLInputElement>) {
     e.preventDefault();
-    setCursor(e?.target?.selectionStart || 0);
-    let newValue = e?.target?.value || "";
+    let currentCursor = e?.target?.selectionStart || 0;
+    const oldValue = e?.target?.value || "";
+    let newValue = oldValue;
     if (preventSpaces) newValue = newValue.replace(/\s+/g, "");
+    if (currentCursor && newValue !== oldValue) currentCursor -= 1;
+    setCursor(currentCursor);
     setValue(newValue);
   }
 
@@ -84,7 +86,9 @@ export default function ControlledTextField(args: ControlledTextFieldProps) {
         {label}
       </FormLabel>}
       <Input
-        ref={ref} 
+        ref={(elem) => {
+          ref.current = elem?.querySelector("input");
+        }} 
         autoComplete={autoComplete}
         autoFocus={autoFocus}
         role={role}

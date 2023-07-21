@@ -1,12 +1,13 @@
-import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Grid, IconButton, Button, Sheet, Stack } from "@mui/joy";
 import { CloseSharp, SendRounded } from "@mui/icons-material";
-import { Popover, PopoverTrigger, PopoverContent } from "./Popover";
-import { Dialog, DialogContent } from "./Dialog";
+import Popover, { PopoverTrigger, PopoverContent } from "./Popover";
+import Dialog from "./Dialog";
 import { CloseButton, DisableSelectTypography } from "./CommonElementStyles";
 import ControlledTextField from "./ControlledTextField";
 import { StyledScrollingTextarea } from "./TextareaAutosize";
 import { Placement } from "@floating-ui/react";
+import { flushSync } from "react-dom";
 
 type NewChatPopupProps = {
   initialChatWith?: string,
@@ -47,8 +48,8 @@ export function NewChatPopup({ validate, escOnEnter, initialChatWith, returnUser
   return (
     <Popover modal={true}
       placement={placement}
-      changeOpenTo={isPopupOpen}
-      notifyChange={(open) => {
+      controlledOpen={isPopupOpen}
+      setControlledOpen={(open) => {
         setNewChatWith("");
         setIsPopupOpen(open);
       }}>
@@ -84,8 +85,7 @@ export function NewChatPopup({ validate, escOnEnter, initialChatWith, returnUser
                       }
                     }
                     else if (escOnEnter) {
-                      setNewChatWith("");
-                      setIsPopupOpen(false);
+                      returnUser("");
                     }
                   }}/>
               </div>
@@ -127,163 +127,167 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
       <Dialog 
         outsidePress
         overlayBackdrop="opacity(100%) blur(4px)"
-        controlledOpen={!!newChatWith}
-        keepFocusIn={keepFocusIn} 
-        setControlledOpen={(open) => { 
-          if (!open) {
-            if (isPopupOpen) {
-              setIsPopupOpen(false);
-            }
-            else if (isMessageEmpty()) {
-              setNewChatWith("");
-            }
-            else {
-              setWarn(true);
-            }
+        open={!!newChatWith}
+        keepFocusIn={keepFocusIn}
+        onDismiss={() => { 
+          if (isPopupOpen) {
+            setIsPopupOpen(false);
+          }
+          else if (isMessageEmpty()) {
+            setNewChatWith("");
+          }
+          else {
+            setWarn(true);
           }
         }}>
-        <DialogContent>
-          <Sheet
-            variant="outlined"
+        <Sheet
+          variant="outlined"
+          sx={{
+            width: belowXL ? "90vw" : "40vw",
+            borderRadius: "md",
+            position: "relative",
+            bottom: keyboardHeight ? "100px" : 0,
+            p: 3,
+            backgroundColor: "rgba(246, 246, 246, 0.8)",
+            boxShadow: "lg", 
+            backdropFilter: "blur(4px)"}}>
+          <CloseButton onClick={ () => {   
+              if (isPopupOpen) {
+                setIsPopupOpen(false);
+              }
+              else if (isMessageEmpty()) {
+                setNewChatWith("");
+              }
+              else {
+                setWarn(true);
+              }              
+            } }>
+            <CloseSharp sx={{ fontSize: "1.5rem" }}/>
+          </CloseButton>
+          <Stack direction="row" spacing={0.7} sx={{ flexWrap: "wrap", alignContent: "center" }}>
+            <DisableSelectTypography
+              component="h2"
+              level="h6"
+              textColor="inherit"
+              fontWeight="lg"
+              mb={1} 
+              sx={{ display: "flex", textAlign: "center", flexWrap: "wrap", alignContent: "center", marginBottom: 0 }}>
+                Send chat request to
+            </DisableSelectTypography>
+            <NewChatPopup
+              key="0"
+              escOnEnter
+              initialChatWith={newChatWith}
+              isPopupOpen={isPopupOpen}
+              setIsPopupOpen={setIsPopupOpen}
+              belowXL={belowXL} 
+              placement="bottom"
+              validate={validate} 
+              returnUser={(chatWith) => {
+                flushSync(() => setIsPopupOpen(false));
+                textareaRef.current?.focus();
+                if (chatWith) setNewChatWith(chatWith);
+              }}>
+              <Sheet sx={{ 
+                marginBlock: "8px", 
+                paddingBlock: "2px", 
+                paddingInline: "6px", 
+                border: "solid 0.8px black", 
+                backgroundColor: "#d8d8df", 
+                borderRadius: "12px", 
+                textAlign: "center",
+                ":hover" : {
+                  filter: "brightness(0.9)" 
+                },
+                ...(isPopupOpen ? { filter: "brightness(0.9)" } : {}) }}>
+                <DisableSelectTypography
+                  component="h2"
+                  level="h6"
+                  textColor="inherit"
+                  fontWeight="md"
+                  sx={{ display: "flex", textAlign: "center", flexWrap: "wrap", alignContent: "center", marginBottom: 0, cursor: "default" }}
+                  mb={1}>
+                    {newChatWith}
+                </DisableSelectTypography>
+              </Sheet>
+            </NewChatPopup>
+          </Stack>
+          <Stack
+            direction="row" 
+            spacing={1} 
             sx={{
-              width: belowXL ? "90vw" : "40vw",
-              borderRadius: "md",
-              position: "relative",
-              bottom: keyboardHeight ? "100px" : 0,
-              p: 3,
-              backgroundColor: "rgba(246, 246, 246, 0.8)",
-              boxShadow: "lg", 
-              backdropFilter: "blur(4px)"}}>
-            <CloseButton onClick={ () => {   
-                if (isPopupOpen) {
-                  setIsPopupOpen(false);
-                }
-                else if (isMessageEmpty()) {
-                  setNewChatWith("");
-                }
-                else {
-                  setWarn(true);
-                }              
-              } }>
-              <CloseSharp sx={{ fontSize: "1.5rem" }}/>
-            </CloseButton>
-            <Stack direction="row" spacing={0.7} sx={{ flexWrap: "wrap", alignContent: "center" }}>
-              <DisableSelectTypography
-                component="h2"
-                level="h6"
-                textColor="inherit"
-                fontWeight="lg"
-                mb={1} 
-                sx={{ display: "flex", textAlign: "center", flexWrap: "wrap", alignContent: "center", marginBottom: 0 }}>
-                  Send chat request to
-              </DisableSelectTypography>
-              <NewChatPopup
-                key="0"
-                escOnEnter
-                initialChatWith={newChatWith}
-                isPopupOpen={isPopupOpen}
-                setIsPopupOpen={setIsPopupOpen}
-                belowXL={belowXL} 
-                placement="bottom"
-                validate={validate} 
-                returnUser={(chatWith) => {
-                  setIsPopupOpen(false);
-                  setNewChatWith(chatWith);
-                }}>
-                <Sheet sx={{ marginBlock: "8px", paddingBlock: "2px", paddingInline: "6px", border: "solid 0.8px black", backgroundColor: "#d8d8df", borderRadius: "12px", textAlign: "center", ":hover" : {
-                  filter: "brightness(0.9)"
-                } }}>
-                  <DisableSelectTypography
-                    component="h2"
-                    level="h6"
-                    textColor="inherit"
-                    fontWeight="md"
-                    sx={{ display: "flex", textAlign: "center", flexWrap: "wrap", alignContent: "center", marginBottom: 0, cursor: "default" }}
-                    mb={1}>
-                      {newChatWith}
-                  </DisableSelectTypography>
-                </Sheet>
-              </NewChatPopup>
-            </Stack>
-            <Stack
-              direction="row" 
-              spacing={1} 
-              sx={{
-                flex: 0, 
-                flexBasis: "content", 
-                display: "flex", 
-                flexDirection: "row", 
-                flexWrap: "nowrap",
-                borderTopRightRadius: 20,
-                borderBottomRightRadius: 20,
-                paddingBottom: "8px",
-                zIndex: 20 }}>
-              <StyledScrollingTextarea
-                ref={textareaRef}
-                openKeyboardManual={false}
-                autoFocus={true}
-                placeholder="Type a message"
-                outerProps={{ style: { marginTop: "12px" } }}
-                onChange={ (e) => setNewMessage(e?.target?.value || "") }
-                onSubmit={() => isMessageEmpty() || sendRequest()}
-                onBlur={(e) => clickedInside.current && e.target.focus()}
-                minRows={3}
-                maxRows={5} 
-                style={{ flex: 1 }}/>
-                <IconButton 
-                  variant="outlined"
-                  color="success" 
-                  onClick={() => isMessageEmpty() || sendRequest()}
-                  sx={{ flexGrow: 0, flexBasis: "content", height: "fit-content", alignSelf: "center", borderRadius: 20, backgroundColor: "var(--joy-palette-success-plainHoverBg)" }}>
-                  <SendRounded sx={{ fontSize: "2rem"}}/>
-                </IconButton>
-            </Stack>
-          </Sheet>      
-        </DialogContent>
+              flex: 0, 
+              flexBasis: "content", 
+              display: "flex", 
+              flexDirection: "row", 
+              flexWrap: "nowrap",
+              borderTopRightRadius: 20,
+              borderBottomRightRadius: 20,
+              paddingBottom: "8px",
+              zIndex: 20 }}>
+            <StyledScrollingTextarea
+              ref={textareaRef}
+              openKeyboardManual={false}
+              autoFocus={true}
+              tabbedOutside={clickedInside}
+              placeholder="Type a message"
+              outerProps={{ style: { marginTop: "12px" } }}
+              onChange={ (e) => setNewMessage(e?.target?.value || "") }
+              onSubmit={() => isMessageEmpty() || sendRequest()}
+              onBlur={(e) => clickedInside.current && e.target.focus()}
+              minRows={3}
+              maxRows={5} 
+              style={{ flex: 1 }}/>
+              <IconButton 
+                variant="outlined"
+                color="success" 
+                onClick={() => isMessageEmpty() || sendRequest()}
+                sx={{ flexGrow: 0, flexBasis: "content", height: "fit-content", alignSelf: "center", borderRadius: 20, backgroundColor: "var(--joy-palette-success-plainHoverBg)" }}>
+                <SendRounded sx={{ fontSize: "2rem"}}/>
+              </IconButton>
+          </Stack>
+        </Sheet>      
       </Dialog>
       <Dialog 
         outsidePress={false}
-        controlledOpen={warn}
-        setControlledOpen={() => {}}>
-        <DialogContent>
-          <Sheet
-            variant="outlined"
-            sx={{
-              width: belowXL ? "70vw" : "25vw",
-              borderRadius: "md",
-              p: 3,
-              boxShadow: "lg"}}>
-            <DisableSelectTypography
-              textAlign="center"
-              component="h2"
-              id="modal-title"
-              level="h4"
-              textColor="inherit"
-              fontWeight="lg"
-              mb={1}>
-              Cancel message request?
-            </DisableSelectTypography>
-            <DisableSelectTypography id="modal-desc" textColor="text.tertiary" textAlign="center">
-              You'll lose the message you're typing.
-            </DisableSelectTypography>
-            <Grid container direction="row" sx={{ paddingTop: "15px" }}>
-              <Grid xs={6} sx={{ display: "flex", justifyContent: "center", paddingInline: "20px" }}>
-                <Button variant="solid" color="success" sx={{ flexGrow: 1 }} onClick={ () => setWarn(false) }>
-                  Go back
-                </Button>
-              </Grid>
-              <Grid xs={6} sx={{ display: "flex", justifyContent: "center", paddingInline: "20px" }}>
-                <Button variant="solid" color="danger" sx={{ flexGrow: 1 }} onClick={ () => {
-                  setWarn(false);
-                  setNewChatWith("");
-                  setNewMessage("");
-                } }>
-                  Close
-                </Button>
-              </Grid>
+        open={warn}>
+        <Sheet
+          variant="outlined"
+          sx={{
+            width: belowXL ? "70vw" : "25vw",
+            borderRadius: "md",
+            p: 3,
+            boxShadow: "lg"}}>
+          <DisableSelectTypography
+            textAlign="center"
+            component="h2"
+            id="modal-title"
+            level="h4"
+            textColor="inherit"
+            fontWeight="lg"
+            mb={1}>
+            Cancel message request?
+          </DisableSelectTypography>
+          <DisableSelectTypography id="modal-desc" textColor="text.tertiary" textAlign="center">
+            You'll lose the message you're typing.
+          </DisableSelectTypography>
+          <Grid container direction="row" sx={{ paddingTop: "15px" }}>
+            <Grid xs={6} sx={{ display: "flex", justifyContent: "center", paddingInline: "20px" }}>
+              <Button variant="solid" color="success" sx={{ flexGrow: 1 }} onClick={ () => setWarn(false) }>
+                Go back
+              </Button>
             </Grid>
-          </Sheet>      
-        </DialogContent>
+            <Grid xs={6} sx={{ display: "flex", justifyContent: "center", paddingInline: "20px" }}>
+              <Button variant="solid" color="danger" sx={{ flexGrow: 1 }} onClick={ () => {
+                setWarn(false);
+                setNewChatWith("");
+                setNewMessage("");
+              } }>
+                Close
+              </Button>
+            </Grid>
+          </Grid>
+        </Sheet>      
       </Dialog>
     </>);
 }

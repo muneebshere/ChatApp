@@ -1,13 +1,12 @@
 import _ from "lodash";
 import isEqual from "react-fast-compare";
-import React, { memo, useRef, useState } from "react";
+import React, { memo, useRef, useState, useEffect } from "react";
 import { Card, List, ListItem, ListSubheader } from "@mui/joy";
 import { DateTime } from "luxon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip";
 import MessageCard from "./MessageCard";
 import { ElementRects } from "@floating-ui/react";
 import { DisableSelectTypography } from "./CommonElementStyles";
-import { useEffectOnce } from "usehooks-ts";
 import { ChatMessageList } from "../ChatClasses";
 
 function formatDate(date: string): string {
@@ -55,12 +54,12 @@ export function DayCard({ date }: { date: string }) {
 const MessageSubList = function({ chatMessageList }: { chatMessageList: ChatMessageList }) {
   const [chatMessages, setChatMessages] = useState(chatMessageList.messageList);
   
-  useEffectOnce(() => {
+  useEffect(() => {
     chatMessageList.subscribe(() => {
       setChatMessages(chatMessageList.messageList);
     });
     return () => chatMessageList.unsubscribe();
-  })
+  }, [])
 
   return (
     <ListItem nested key={chatMessageList.date} sx={{ display: "grid" }}>

@@ -5,7 +5,7 @@ import { SxProps, Theme, useMediaQuery } from "@mui/material";
 import { ReplayCircleFilledSharp, ReportProblem, CloudOff, WifiOff, MobiledataOffSharp, KeyboardArrowDown, StopCircleSharp } from "@mui/icons-material";
 import { DisableSelectTypography } from "./CommonElementStyles";
 import { ClientConnectionStatus } from "./Main";
-import { Dialog, DialogContent } from "./Dialog";
+import Dialog from "./Dialog";
 
 export type DisconnectedStatus = Exclude<ClientConnectionStatus, "Online">;
 
@@ -199,94 +199,91 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
       </Stack>
       <Dialog
         outsidePress={false}
-        controlledOpen={warnReload}
-        setControlledOpen={() => {}}>
-        <DialogContent>
-          <Sheet
-            variant="outlined"
-            sx={{
-              width: belowXL ? "70vw" : "35vw",
-              borderRadius: "md",
-              p: 3,
-              boxShadow: "lg"}}>
-            <div style={{ width: "100%", display: "flex", flexDirection: "row", flexWrap: "wrap", justifyContent: "center", alignContent: "center", marginBottom: "20px" }}>
-              <ReportProblem sx={{ marginTop: "4px", marginLeft: "-53.8px", marginRight: "25px", fontSize: "1.8rem", color: "warning.200" }}/>
-              <DisableSelectTypography
-                textAlign="center"
-                component="h2"
-                id="modal-title"
-                level="h4"
-                textColor="warning.200"
-                fontWeight="lg"
-                mb={1}
-                sx={{ margin: 0 }}>
-                Encrypted session corrupted.
-              </DisableSelectTypography>
-            </div>
-            <DisableSelectTypography textColor="text.tertiary" textAlign="left" sx={{ marginBottom: "3px" }}>
-              The encrypted session with the server has been disrupted, and cannot be re-established until the page is reloaded.
+        open={warnReload}>
+        <Sheet
+          variant="outlined"
+          sx={{
+            width: belowXL ? "70vw" : "35vw",
+            borderRadius: "md",
+            p: 3,
+            boxShadow: "lg"}}>
+          <div style={{ width: "100%", display: "flex", flexDirection: "row", flexWrap: "wrap", justifyContent: "center", alignContent: "center", marginBottom: "20px" }}>
+            <ReportProblem sx={{ marginTop: "4px", marginLeft: "-53.8px", marginRight: "25px", fontSize: "1.8rem", color: "warning.200" }}/>
+            <DisableSelectTypography
+              textAlign="center"
+              component="h2"
+              id="modal-title"
+              level="h4"
+              textColor="warning.200"
+              fontWeight="lg"
+              mb={1}
+              sx={{ margin: 0 }}>
+              Encrypted session corrupted.
             </DisableSelectTypography>
-            <DisableSelectTypography textColor="text.tertiary" textAlign="left" sx={{ marginBottom: "3px" }}>
-              <span>
-                You may be logged out on reloading if you didn't select 
-              </span>
-              <span style={{ fontWeight: "bold", whiteSpace: "pre-wrap" }}>
-                {" Save password "}
-              </span>
-              <span>
-                when logging in.
-              </span>
+          </div>
+          <DisableSelectTypography textColor="text.tertiary" textAlign="left" sx={{ marginBottom: "3px" }}>
+            The encrypted session with the server has been disrupted, and cannot be re-established until the page is reloaded.
+          </DisableSelectTypography>
+          <DisableSelectTypography textColor="text.tertiary" textAlign="left" sx={{ marginBottom: "3px" }}>
+            <span>
+              You may be logged out on reloading if you didn't select 
+            </span>
+            <span style={{ fontWeight: "bold", whiteSpace: "pre-wrap" }}>
+              {" Save password "}
+            </span>
+            <span>
+              when logging in.
+            </span>
+          </DisableSelectTypography>
+          <DisableSelectTypography textColor="text.tertiary" textAlign="left" sx={{ marginBottom: "3px" }}>
+            If you choose to continue offline, you won't be able to send or receive messages, or load older messages in your chats.
+          </DisableSelectTypography>
+          <Stack direction="row" spacing={3} sx={{ paddingTop: "10px", flexWrap: "wrap", alignContent: "center", justifyContent: "center" }}>
+            <DisableSelectTypography sx={{ marginBlock: "auto", marginInline: 0 }}>
+              Ask me again in:
             </DisableSelectTypography>
-            <DisableSelectTypography textColor="text.tertiary" textAlign="left" sx={{ marginBottom: "3px" }}>
-              If you choose to continue offline, you won't be able to send or receive messages, or load older messages in your chats.
-            </DisableSelectTypography>
-            <Stack direction="row" spacing={3} sx={{ paddingTop: "10px", flexWrap: "wrap", alignContent: "center", justifyContent: "center" }}>
-              <DisableSelectTypography sx={{ marginBlock: "auto", marginInline: 0 }}>
-                Ask me again in:
-              </DisableSelectTypography>
-              <Select 
-                size="sm"
-                defaultValue={waitValueRef.current}
-                indicator={<KeyboardArrowDown/>}
-                onChange={(e, value) => waitValueRef.current = value}
-                sx={{
-                  height: "20px",
-                  paddingInline: "25px",
-                  [`& .${selectClasses.indicator}`]: {
-                    transition: '0.2s',
-                    [`&.${selectClasses.expanded}`]: {
-                      transform: 'rotate(-180deg)',
-                    },
+            <Select 
+              size="sm"
+              defaultValue={waitValueRef.current}
+              indicator={<KeyboardArrowDown/>}
+              onChange={(e, value) => waitValueRef.current = value}
+              sx={{
+                height: "20px",
+                paddingInline: "25px",
+                [`& .${selectClasses.indicator}`]: {
+                  transition: '0.2s',
+                  [`&.${selectClasses.expanded}`]: {
+                    transform: 'rotate(-180deg)',
                   },
-                }}>
-                <Option value={30}>30s</Option>
-                <Option value={60}>1m</Option>
-                <Option value={300}>5m</Option>
-                <Option value={""}>never</Option>
-              </Select>
-            </Stack>
-            <Grid container direction="row" sx={{ paddingTop: "20px", width: "100%" }}>
-              <Grid xs={6} sx={{ display: "flex", flexWrap: "wrap", justifyContent: "center", paddingInline: "45px" }}>
-                <Button variant="solid" color="primary" sx={{ flexGrow: 1 }} onClick={ () => {
-                    setWarnReload(false);
-                    window.history.go(); 
-                  } }>
-                    Reload page
-                </Button>
-              </Grid>
-              <Grid xs={6} sx={{ display: "flex", flexWrap: "wrap", justifyContent: "center", paddingInline: "45px" }}>
-                <Button variant="solid" color="danger" sx={{ flexGrow: 1 }} onClick={ () => {
-                  const waitValue = waitValueRef.current;
-                  waitTillRef.current = waitValue ? Date.now() + (waitValue * 1000) : null;
-                  if (!waitValue) countdownTick.pause();
+                },
+              }}>
+              <Option value={30}>30s</Option>
+              <Option value={60}>1m</Option>
+              <Option value={300}>5m</Option>
+              <Option value={""}>never</Option>
+            </Select>
+          </Stack>
+          <Grid container direction="row" sx={{ paddingTop: "20px", width: "100%" }}>
+            <Grid xs={6} sx={{ display: "flex", flexWrap: "wrap", justifyContent: "center", paddingInline: "45px" }}>
+              <Button variant="solid" color="primary" sx={{ flexGrow: 1 }} onClick={ () => {
                   setWarnReload(false);
-                  } }>
-                  Continue offline
-                </Button>
-              </Grid>
+                  window.history.go(); 
+                } }>
+                  Reload page
+              </Button>
             </Grid>
-          </Sheet>      
-        </DialogContent>
+            <Grid xs={6} sx={{ display: "flex", flexWrap: "wrap", justifyContent: "center", paddingInline: "45px" }}>
+              <Button variant="solid" color="danger" sx={{ flexGrow: 1 }} onClick={ () => {
+                const waitValue = waitValueRef.current;
+                waitTillRef.current = waitValue ? Date.now() + (waitValue * 1000) : null;
+                if (!waitValue) countdownTick.pause();
+                setWarnReload(false);
+                } }>
+                Continue offline
+              </Button>
+            </Grid>
+          </Grid>
+        </Sheet>      
       </Dialog>
     </div>
   )

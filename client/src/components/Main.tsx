@@ -26,6 +26,8 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
   const typedMessages = useRef(new Map<string, string>());
   const lastScrollPositions = useRef(new Map<string, ScrollState>());
   const [chats, setChats] = useState(client.chatsList);
+  const allowLeaveFocus = useRef(false);
+  const giveBackFocus = useRef<() => void>(null);
   
   useEffect(() => {
     const popStateListener = (event: PopStateEvent) => setCurrentChatWith(event.state?.currentChatWith);
@@ -55,7 +57,9 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
           if (currentChatWith) {
             lastScrollPositions.current.set(currentChatWith, lastScrolledTo);
           }
-        }}/>);
+        }}
+        allowLeaveFocus={allowLeaveFocus}
+        giveBackFocus={giveBackFocus}/>);
     }
     else if (chat?.type === "ChatRequest") {
       return (<ChatRequestView key={currentChatWith ?? ""} chatRequest={chat}/>);
@@ -85,7 +89,14 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
       sx={{ flex: 1, flexBasis: 0, minHeight: 0 }}>
       {(!belowXL || !currentChatWith) &&
       <Grid xs={12} xl={3} sx={{ minHeight: 0, maxHeight: "100%", display: "flex", flexDirection: "column" }}>
-        <Sidebar currentChatWith={currentChatWith} chats={chats} openChat={openChat} client={client} belowXL={belowXL}/>
+        <Sidebar 
+          currentChatWith={currentChatWith} 
+          chats={chats} 
+          openChat={openChat} 
+          client={client} 
+          belowXL={belowXL}
+          allowLeaveFocus={allowLeaveFocus}
+          giveBackFocus={giveBackFocus}/>
       </Grid>}
       {(!belowXL || currentChatWith) &&
       <Grid xs={12} xl={9} sx={{ minHeight: 0, maxHeight: "100%" }}>

@@ -1,5 +1,5 @@
 import _ from "lodash";
-import React, { useState, memo, useRef, useLayoutEffect, useEffect, useMemo } from "react";
+import React, { useState, memo, useRef, useLayoutEffect, useEffect, useMemo, RefObject } from "react";
 import { useUpdateEffect } from "usehooks-ts";
 import styled from "@emotion/styled";
 import { Theme, useMediaQuery } from "@mui/material";
@@ -7,15 +7,15 @@ import { CircularProgress, IconButton, Stack } from "@mui/joy";
 import { SendRounded, KeyboardDoubleArrowDownOutlined } from "@mui/icons-material";
 import { MessageListMemo } from "./MessageList";
 import { useSize } from "./Hooks/useSize";
-import { StyledSheet, StyledScrollbar } from "./CommonElementStyles";
+import { StyledSheet, StyledScrollbar, DisableSelectTypography } from "./CommonElementStyles";
 import { StyledScrollingTextarea } from "./TextareaAutosize";
 import { ReplyingToProps, ReplyingToMemo } from "./ReplyingTo";
-import { MessageCardContext } from "./MessageCard";
+import { MessageCardContext, MessageCardContextData } from "./MessageCard";
 import { ReplyingToInfo } from "../../../shared/commonTypes";
-import useResizeObserver from "@react-hook/resize-observer";
 import { Chat } from "../ChatClasses";
 import { truncateText } from "../../../shared/commonFunctions";
 import { ChatHeaderMemo } from "./ChatHeader";
+import Toast from "./Toast";
 
 const ScrollDownButton = styled.div`
   display: grid;
@@ -50,10 +50,12 @@ type ChatViewProps = {
   message: string,
   setMessage: (m: string) => void,
   lastScrolledTo: ScrollState,
-  setLastScrolledTo: (lastScrolledTo: ScrollState) => void
+  setLastScrolledTo: (lastScrolledTo: ScrollState) => void,
+  allowLeaveFocus: React.RefObject<boolean>,
+  giveBackFocus: React.MutableRefObject<() => void>
 }
 
-const getIsScrolledDown = (scrollbar: HTMLDivElement, tolerance = 1) => scrollbar.scrollTop >= scrollbar.scrollHeight - scrollbar.clientHeight - tolerance;
+const getIsScrolledDown = (scrollElement: HTMLDivElement, tolerance = 1) => scrollElement.scrollTop >= scrollElement.scrollHeight - scrollElement.clientHeight - tolerance;
 
 function useOrientationState(): OrientationState {
   const orientationRef = useRef(orientation());
@@ -89,16 +91,17 @@ function useReplyingTo(chatWith: string, setHighlight: (highlight: string) => vo
   return [replyTo?.replyId, setReply, replyToElement];
 }
 
-function useScrollRestore(scrollbar: () => HTMLDivElement, 
+function useScrollRestore(scrollRef: RefObject<HTMLDivElement>, 
                           lastScrolledTo: ScrollState, 
                           setLastScrolledTo: (scroll: ScrollState) => void, 
-                          orientationState: OrientationState): [() => void, (element: HTMLDivElement) => void] {
+                          orientationState: OrientationState): [() => void, (element: HTMLDivElement) => void, boolean] {
   
   const inViewRef = useRef(new Map<string, number>());
   const messagesRef = useRef(new Map<string, [HTMLDivElement, boolean]>());
   const currentScroll = useRef<ScrollState>(lastScrolledTo);
   const observerRef = useRef<IntersectionObserver>(null);
   const selectingRef = useRef(false);
+  const [rendered, setRendered] = useState(false);
 
   function registerMessageRef(element: HTMLDivElement) {
     if (!element) return;
@@ -130,7 +133,7 @@ function useScrollRestore(scrollbar: () => HTMLDivElement,
     const element = messagesRef.current.get(id)?.[0];
     if (!element) return null;
     const elementRect = element.getBoundingClientRect();
-    const scrollRect = scrollbar().getBoundingClientRect();
+    const scrollRect = scrollRef.current.getBoundingClientRect();
     const topOffset = elementRect.top - scrollRect.top - 8;
     return [elementRect.top < scrollRect.bottom && elementRect.bottom > scrollRect.top + 10, topOffset];
   }
@@ -143,7 +146,7 @@ function useScrollRestore(scrollbar: () => HTMLDivElement,
       return;
     }
     selectingRef.current = true;
-    if (inViewRef.current.size === 0 || getIsScrolledDown(scrollbar())) {
+    if (inViewRef.current.size === 0 || getIsScrolledDown(scrollRef.current)) {
       currentScroll.current = null;
       selectingRef.current = false;
       return;
@@ -168,7 +171,7 @@ function useScrollRestore(scrollbar: () => HTMLDivElement,
   function calculateScrollState (id: string): ScrollState {
     const mainElement = messagesRef.current.get(id)?.[0];
     if (!mainElement) return null;
-    const scrollRect = scrollbar().getBoundingClientRect();
+    const scrollRect = scrollRef.current.getBoundingClientRect();
     const listTop = scrollRect.top;
     const replyElement = mainElement.querySelector("div > div > div > button > div > div > div > span > div > span");
     const paraElements = mainElement.querySelectorAll("div > div > div > span > div > p");
@@ -196,8 +199,8 @@ function useScrollRestore(scrollbar: () => HTMLDivElement,
   function calculateScrollPosition({ id, index, offset, isRatio }: ScrollState) {
     const element = messagesRef.current.get(id)?.[0];
     if (!element) return null;
-    const scrollRect = scrollbar().getBoundingClientRect();
-    const scrollTop = scrollbar().scrollTop;
+    const scrollRect = scrollRef.current.getBoundingClientRect();
+    const scrollTop = scrollRef.current.scrollTop;
     let selectedElement: Element = null;
     if (index < 0) {
       selectedElement = element;
@@ -219,7 +222,7 @@ function useScrollRestore(scrollbar: () => HTMLDivElement,
   function onOrientationChange() {
     setTimeout(() => {
       const lastScrolledTo = currentScroll.current && calculateScrollPosition(currentScroll.current);
-      const scrollElement = scrollbar();
+      const scrollElement = scrollRef.current;
       const top = lastScrolledTo || scrollElement.scrollHeight;
       scrollElement.scrollTo({ top, behavior: "instant" });
       setTimeout(() => orientationState.setNewOrientation(), 50);
@@ -228,7 +231,7 @@ function useScrollRestore(scrollbar: () => HTMLDivElement,
 
   useLayoutEffect(() => {
     const threshold = _.range(0, 21).map((n) => n / 20);
-    const observer = new IntersectionObserver(onIntersect, { threshold, root: scrollbar() });
+    const observer = new IntersectionObserver(onIntersect, { threshold, root: scrollRef.current });
     messagesRef.current.forEach(([element, visited], ) => {
       if (!visited) {
         observer.observe(element);
@@ -245,55 +248,55 @@ function useScrollRestore(scrollbar: () => HTMLDivElement,
   useLayoutEffect(() => {
     let top = lastScrolledTo && calculateScrollPosition(lastScrolledTo);
     setTimeout(() => {
-      const scrollElement = scrollbar();
+      const scrollElement = scrollRef.current;
       top ||= scrollElement.scrollHeight;
       scrollElement.scrollTo({ top, behavior: "instant" });
-    }, 50);
+      setRendered(true);
+    }, 200);
     window.screen.orientation.addEventListener("change", onOrientationChange);
 
     return () => {
       window.screen.orientation.removeEventListener("change", onOrientationChange);
-      const lastScrolledTo = !getIsScrolledDown(scrollbar()) ? currentScroll.current : null;
+      const lastScrolledTo = !getIsScrolledDown(scrollRef.current) ? currentScroll.current : null;
       setLastScrolledTo(lastScrolledTo);
     }
   }, []);
 
-  return [selectCurrentElement, registerMessageRef];
+  return [selectCurrentElement, registerMessageRef, rendered];
 }
 
-function useScrollOnResize(scrollbar: () => HTMLDivElement,
+function useScrollOnResize(scrollRef: RefObject<HTMLDivElement>,
                   lastOrientation: () => OrientationType,
                   setIsScrolledDown: (isScrolledDown: boolean) => void) {
   const previousHeightRef = useRef(0);
-  const [scrollHeight, setScrollHeight] = useState(0);
-  useResizeObserver(scrollbar(), (entry) => setScrollHeight(entry.contentRect.height));
+  const [, scrollHeight] = useSize(scrollRef, "content");
 
   useUpdateEffect(() => {
     if (previousHeightRef.current === 0) {
       previousHeightRef.current = scrollHeight;
       return;
     }
+    const scrollElement = scrollRef.current;
     const heightDiff = scrollHeight - previousHeightRef.current;
     previousHeightRef.current = scrollHeight; 
     if (orientation() === lastOrientation()) {
-      if (heightDiff < 0 || (heightDiff > 0 && !getIsScrolledDown(scrollbar(), 2))) {
-        scrollbar().scrollBy({ top: -heightDiff, behavior: "instant" });
+      if (heightDiff < 0 || (heightDiff > 0 && !getIsScrolledDown(scrollElement, 2))) {
+        scrollRef.current.scrollBy({ top: -heightDiff, behavior: "instant" });
       }
     }
-    if (scrollbar().scrollHeight <= scrollbar().clientHeight + Number.EPSILON) {
+    if (scrollElement.scrollHeight <= scrollElement.clientHeight + Number.EPSILON) {
       setIsScrolledDown(true);
     }
   }, [scrollHeight]);
 }
 
-const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastScrolledTo }: ChatViewProps) {
+const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastScrolledTo, allowLeaveFocus, giveBackFocus }: ChatViewProps) {
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const mutationRef = useRef<MutationObserver>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messageRef = useRef(message);
-  const clickedInside = useRef(false);
   const wasScrolledDownRef = useRef(true);
   const waitingHighlightRef = useRef("");
   const [chatDetails, setChatDetails] = useState(chat.details);
@@ -303,15 +306,19 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [chatMessageLists, setChatMessageLists] = useState(chat.messages);
   const [loadingMore, setLoadingMore] = useState(false);
-  const scrollbar = () => scrollRef.current;
+  const [toastTrigger, triggerToast] = useState<{ off?: boolean }>({ off: true });
   const orientationState = useOrientationState();
   const [replyId, setReplyTo, replyToElement] = useReplyingTo(displayName, setHighlight, belowXL, () => textareaRef.current.focus());
   const [width, ] = useSize(scrollRef, "content");
+  const [updateCurrentElement, registerMessageRef, rendered] = useScrollRestore(scrollRef, lastScrolledTo, setLastScrolledTo, orientationState);
+  const notRenderedCSS: React.CSSProperties = useMemo(() => 
+    !rendered
+      ? { visibility: "hidden" }
+      : {}, [rendered]);
   const toggleScroll = (scrollOn: boolean) => { 
-    scrollbar().style.overflowY = scrollOn ? "scroll" : "hidden";
-    scrollbar().style.paddingRight = scrollOn ? "8px" : "14px"
+    scrollRef.current.style.overflowY = scrollOn ? "scroll" : "hidden";
+    scrollRef.current.style.paddingRight = scrollOn ? "8px" : "14px"
   }
-  const [updateCurrentElement, registerMessageRef] = useScrollRestore(scrollbar, lastScrolledTo, setLastScrolledTo, orientationState);
 
   const highlightReplied = (messageId: string) => {
     if (!messageId && waitingHighlightRef.current) {
@@ -324,13 +331,13 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
       waitingHighlightRef.current = messageId;
       setLoadingMore(true);
       setTimeout(() => {
-        scrollbar().scrollTo({ top: 0, behavior: "smooth" });
-        mutationRef.current.observe(scrollbar(), { attributes: false, characterData: false, childList: true, subtree: true });
+        scrollRef.current.scrollTo({ top: 0, behavior: "smooth" });
+        mutationRef.current.observe(scrollRef.current, { attributes: false, characterData: false, childList: true, subtree: true });
         chat.loadUptoId(messageId);
       }, 10);
     }
   }
-  const contextData = useMemo(() => ({ chatWith: displayName, highlighted, highlightReplied, registerMessageRef, setReplyTo, toggleScroll }), [displayName, highlighted]);
+  const contextData = useMemo<MessageCardContextData>(() => ({ chatWith: displayName, highlighted, highlightReplied, registerMessageRef, setReplyTo, toggleScroll, displayToast: () => triggerToast({}) }), [displayName, highlighted]);
 
   const scrollHandler = (event: Event) => {
     const scrollbar = event.target as HTMLDivElement;
@@ -358,7 +365,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
             mutationRef.current.disconnect();
             window.setTimeout(() => setHighlight(waitingHighlightRef.current), 50);
           }
-          else if (element.getBoundingClientRect().top < scrollbar().getBoundingClientRect().top) {
+          else if (element.getBoundingClientRect().top < scrollRef.current.getBoundingClientRect().top) {
             element.scrollIntoView({ behavior: "smooth", block: "start" });
           }
         }
@@ -374,7 +381,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
 
   useEffect(() => () => debouncedScrollHandler.cancel());
   
-  useScrollOnResize(scrollbar, orientationState.lastOrientation, setIsScrolledDown);
+  useScrollOnResize(scrollRef, orientationState.lastOrientation, setIsScrolledDown);
 
   useUpdateEffect(() => {
     wasScrolledDownRef.current = isScrolledDown;
@@ -398,7 +405,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
       else if (event === "received-new") {
         if (wasScrolledDownRef.current) {
           setTimeout(() => {
-            scrollbar().scrollTo({ top: scrollbar().scrollHeight, behavior: "instant" });
+            scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "instant" });
           }, 10);
         }
       }
@@ -413,24 +420,17 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   useLayoutEffect(() => {
     const updateHeight = () => setKeyboardHeight((navigator as any).virtualKeyboard.boundingRect.height || 0);
     updateHeight();
-    scrollbar().addEventListener("scroll", debouncedScrollHandler);
+    scrollRef.current.addEventListener("scroll", debouncedScrollHandler);
     window.visualViewport.addEventListener("resize", updateHeight);
     mutationRef.current = new MutationObserver(mutationCallback);
-    const onMouseDown = () => {
-      clickedInside.current = true;
-      textareaRef.current.focus();
-    }
-    const onClick = () => clickedInside.current = false;
-    mainRef.current.addEventListener("mousedown", onMouseDown, { capture: true });
-    mainRef.current.addEventListener("click", onClick, { capture: true });
+    giveBackFocus.current = () => textareaRef.current?.focus();
 
     return () => {
-      scrollbar()?.removeEventListener("scroll", debouncedScrollHandler);
-      mainRef.current?.removeEventListener("mousedown", onMouseDown, { capture: true });
-      mainRef.current?.removeEventListener("click", onClick, { capture: true });
+      scrollRef.current?.removeEventListener("scroll", debouncedScrollHandler);
       window.visualViewport.removeEventListener("resize", updateHeight);
       mutationRef.current?.disconnect();
       mutationRef.current = null;
+      giveBackFocus.current = null;
     }
   }, []);
 
@@ -439,7 +439,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
     if (!text.trim()) return;
     const timestamp = Date.now();
     chat.sendMessage({ text, timestamp, replyId}).then((success) => {
-      scrollbar().scrollTo({ top: scrollbar().scrollHeight, behavior: "instant" });
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "instant" });
     });
     chat.sendTyping("stopped-typing", Date.now());
     setReplyTo(null);
@@ -451,18 +451,18 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
     <StyledSheet ref={mainRef} sx={{ height: "100%", display: "flex", flexDirection: "column", overflow: "clip" }}>
       <Stack direction="column" spacing={1} sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column", overflow: "clip" }}>
         <ChatHeaderMemo {...{ belowXL, chatDetails }}/>
-        <StyledScrollbar ref={scrollRef} sx={{ paddingBottom: 0, paddingTop: chat.canLoadFurther ? "1px" : 0 }}>
-          {loadingMore &&
-            <div style={{ width: "100%", display: "flex", justifyContent: "center", paddingBlock: "4px"}}>
-              <CircularProgress size="sm" variant="soft" color="success"/>            
-            </div>}
+        {(!rendered || loadingMore) &&
+          <div style={{ width: "100%", display: "flex", justifyContent: "center", paddingBlock: "4px"}}>
+            <CircularProgress size="sm" variant="soft" color="success"/>
+          </div>}
+        <StyledScrollbar ref={scrollRef} sx={{ paddingBottom: 0, paddingTop: chat.canLoadFurther ? "1px" : 0, ...notRenderedCSS }}>
           <MessageCardContext.Provider value={contextData}>
             <MessageListMemo 
-              key={displayName} 
+              key={displayName}
               chatMessageLists={chatMessageLists}/>
           </MessageCardContext.Provider>
             {!isScrolledDown &&
-          <ScrollDownButton onClick={ () => scrollbar().scrollTo({ top: scrollbar().scrollHeight, behavior: "instant" }) } style={{ bottom: `${keyboardHeight + 150}px` }}>
+          <ScrollDownButton onClick={ () => scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "instant" }) } style={{ bottom: `${keyboardHeight + 150}px` }}>
             <KeyboardDoubleArrowDownOutlined sx={{ color: "#6e6e6e", fontSize: "2rem", placeSelf: "center" }}/>
           </ScrollDownButton>}
         </StyledScrollbar>
@@ -493,7 +493,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
             onSubmit={sendMessage}
             onBlur={(e) => {
               chatDetails.isOnline && chat.sendTyping("stopped-typing", Date.now());
-              if (clickedInside.current) e.target.focus();
+              if (!allowLeaveFocus.current) e.target.focus();
             }}
             minRows={1}
             maxRows={5} 
@@ -509,6 +509,24 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
             </IconButton>
         </Stack>
       </Stack>
+      <Toast 
+        trigger={toastTrigger}
+        containerStyle={{ 
+          position: "fixed",
+          top: undefined,
+          left: undefined,
+          bottom: "150px",
+          right: `${(width)/2 - (belowXL ? 0 : 10)}px`,
+          width: "80px", 
+          height: "30px", 
+          borderRadius: "15px",
+          display: "flex",
+          backgroundColor: "#d2d2d2",
+          boxShadow: "0px 0px 2px 1px #d6d6d6" }}>
+        <DisableSelectTypography sx={{ margin: "auto", width: "fit-content", height: "fit-content", fontWeight: "bold", fontSize: "13px", color: "#696969" }}>
+          Copied!
+        </DisableSelectTypography>
+      </Toast>
     </StyledSheet>);
 }
 

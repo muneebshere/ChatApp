@@ -1,5 +1,5 @@
 import _ from "lodash";
-import React, { useState, useRef, useMemo, useLayoutEffect } from "react";
+import React, { useState, useRef, useMemo, useLayoutEffect, useEffect } from "react";
 import { Avatar, Badge, IconButton, Input, List, ListItem, ListItemButton, Stack } from "@mui/joy";
 import { PersonAddAltOutlined, Search, ClearSharp, HourglassTop, DoneAllSharp, DoneSharp } from "@mui/icons-material";
 import { NewChatPopup, NewMessageDialog } from "./NewChat";
@@ -8,21 +8,32 @@ import Client from "../Client";
 import { DateTime } from "luxon";
 import { truncateText } from "../../../shared/commonFunctions";
 import { AwaitedRequest, Chat, ChatRequest } from "../ChatClasses";
+import { flushSync } from "react-dom";
+import { useUpdateEffect } from "usehooks-ts";
 
 type SidebarProps = {
   currentChatWith: string,
   openChat: (chatWith: string) => void,
   client: Client,
   chats: (Chat | ChatRequest | AwaitedRequest)[],
-  belowXL: boolean
+  belowXL: boolean,
+  allowLeaveFocus: React.MutableRefObject<boolean>,
+  giveBackFocus: React.MutableRefObject<() => void>
 }
 
-export default function Sidebar({ currentChatWith, openChat, chats, client, belowXL }: SidebarProps) {
+export default function Sidebar({ currentChatWith, openChat, chats, client, belowXL, allowLeaveFocus, giveBackFocus }: SidebarProps) {
   const [search, setSearch] = useState("");
   const [newChatWith, setNewChatWith] = useState("");
   const [isPopupOpen, setIsPopupOpen] = useState(false);
   const [warn, setWarn] = useState(false);
   const newMessageRef = useRef("");
+
+  const mouseDown = () => allowLeaveFocus.current = true;
+  const mouseUp = () => allowLeaveFocus.current = false;
+
+  useUpdateEffect(() => {
+    if (!newChatWith && !isPopupOpen && !allowLeaveFocus.current) giveBackFocus.current?.();
+  }, [newChatWith, isPopupOpen]);
   
   async function validateNewChat(username: string) {
     if (!username) return "";
@@ -32,70 +43,80 @@ export default function Sidebar({ currentChatWith, openChat, chats, client, belo
 
   return (
   <Stack direction="column" style={{ height: "100%" }}>
-      <NewMessageDialog
-        newChatWith={newChatWith} 
-        warn={warn} 
-        setWarn={setWarn}
-        isMessageEmpty={() => !newMessageRef.current?.trim()} 
+    <NewMessageDialog
+      newChatWith={newChatWith} 
+      warn={warn} 
+      setWarn={setWarn}
+      isMessageEmpty={() => !newMessageRef.current?.trim()} 
+      belowXL={belowXL} 
+      setNewChatWith={(newChatWith) => setNewChatWith(newChatWith)}
+      setNewMessage={(message) => { newMessageRef.current = message; }}
+      validate={validateNewChat}
+      sendRequest={() => {
+        client.sendChatRequest(newChatWith, newMessageRef.current, Date.now()).then(({ reason }) => {
+          if (!reason) {
+            setNewChatWith("");
+          }
+        });
+      }}
+      />
+    <div style={{ display: "flex" }}>
+      <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-start", alignContent: "center", paddingLeft: 20 }}>
+        <DisableSelectTypography level="h4" fontWeight="md">
+          Chats
+        </DisableSelectTypography>
+      </div>
+      <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-end", alignContent: "center", paddingRight: 40 }}>
+      <NewChatPopup
+        isPopupOpen={isPopupOpen}
+        setIsPopupOpen={setIsPopupOpen}
         belowXL={belowXL} 
-        setNewChatWith={(newChatWith) => setNewChatWith(newChatWith)}
-        setNewMessage={(message) => { newMessageRef.current = message; }}
-        validate={validateNewChat}
-        sendRequest={() => {
-          client.sendChatRequest(newChatWith, newMessageRef.current, Date.now()).then(({ reason }) => {
-            if (!reason) {
-              setNewChatWith("");
-            }
-          });
-        }}
-        />
-      <div style={{ display: "flex" }}>
-        <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-start", alignContent: "center", paddingLeft: 20 }}>
-          <DisableSelectTypography level="h4" fontWeight="md">
-            Chats
-          </DisableSelectTypography>
-        </div>
-        <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-end", alignContent: "center", paddingRight: 40 }}>
-        <NewChatPopup
-          isPopupOpen={isPopupOpen}
-          setIsPopupOpen={setIsPopupOpen}
-          belowXL={belowXL} 
-          placement={ belowXL ? "bottom-end" : "bottom-start" }
-          validate={validateNewChat} 
-          returnUser={(chatWith) => {
-              setIsPopupOpen(false);
-              setNewChatWith(chatWith);
-            }}>
-            <IconButton variant="plain" color="success" sx={ isPopupOpen ? { backgroundColor: "var(--joy-palette-success-plainHoverBg)" } : {} }>
-              <PersonAddAltOutlined color="success" sx={{ fontSize: "1.5rem" }}/>
-            </IconButton>
-        </NewChatPopup>
-        </div>
+        placement={ belowXL ? "bottom-end" : "bottom-start" }
+        validate={validateNewChat} 
+        returnUser={(chatWith) => {
+          if (chatWith) allowLeaveFocus.current = true;
+          flushSync(() => setIsPopupOpen(false));
+          allowLeaveFocus.current = false;
+          setNewChatWith(chatWith);
+        }}>
+          <IconButton 
+            variant="plain" 
+            color="success" 
+            sx={ isPopupOpen ? { backgroundColor: "var(--joy-palette-success-plainHoverBg)" } : {} }
+            onMouseDown={mouseDown}
+            onMouseUp={mouseUp}>
+            <PersonAddAltOutlined color="success" sx={{ fontSize: "1.5rem" }}/>
+          </IconButton>
+      </NewChatPopup>
       </div>
-      <div style={{ display: "flex", alignContent: "center", justifyContent: "stretch", paddingBlock: 10, paddingInline: 15 }}>
-        <Input 
-          placeholder="Search for chat"
-          value={search}
-          style={{ width: "100%" }}
-          onChange={(e: any) => setSearch(e?.target?.value || "")}
-          endDecorator={
-            search 
-              ? (<IconButton variant="soft" color="neutral" onClick={() => setSearch("")}>
-                  <ClearSharp sx={{ fontSize: "1.2rem" }}/>
-                </IconButton>)
-              : (<Search sx={{ fontSize: "1.2rem" }}/>) 
-          }/>
-      </div>
-      <StyledScrollbar>
-        <List variant="plain" color="neutral">
-          {chats
-            .filter((chat) => !search || chat.matchesName(search))
-            .map((chat) => (<ListItem key={chat.otherUser}>
-              <ChatCard chat={chat} isCurrent={currentChatWith === chat.otherUser} setCurrent={() => openChat(chat.otherUser) }/>
-            </ListItem>))}
-        </List>            
-      </StyledScrollbar>
-    </Stack>)
+    </div>
+    <div style={{ display: "flex", alignContent: "center", justifyContent: "stretch", paddingBlock: 10, paddingInline: 15 }}>
+      <Input 
+        placeholder="Search for chat"
+        value={search}
+        style={{ width: "100%" }}
+        onChange={(e: any) => setSearch(e?.target?.value || "")}
+        onMouseDown={mouseDown}
+        onMouseUp={mouseUp}
+        onBlur={() => giveBackFocus.current?.()}
+        endDecorator={
+          search 
+            ? (<IconButton variant="soft" color="neutral" onClick={() => setSearch("")}>
+                <ClearSharp sx={{ fontSize: "1.2rem" }}/>
+              </IconButton>)
+            : (<Search sx={{ fontSize: "1.2rem" }}/>) 
+        }/>
+    </div>
+    <StyledScrollbar>
+      <List variant="plain" color="neutral">
+        {chats
+          .filter((chat) => !search || chat.matchesName(search))
+          .map((chat) => (<ListItem key={chat.otherUser}>
+            <ChatCard chat={chat} isCurrent={currentChatWith === chat.otherUser} setCurrent={() => openChat(chat.otherUser) }/>
+          </ListItem>))}
+      </List>            
+    </StyledScrollbar>
+  </Stack>)
 }
 
 type ChatCardProps = Readonly<{

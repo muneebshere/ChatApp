@@ -1,11 +1,10 @@
 import _ from "lodash";
-import isEqual from "react-fast-compare";
 import React, { createContext, memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useEffectOnce, useUpdateEffect } from "usehooks-ts";
 import { Grid, Stack } from "@mui/joy";
 import { DoneSharp, DoneAllSharp, HourglassTop } from "@mui/icons-material";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip";
-import { Popover, PopoverTrigger, PopoverContent } from "./Popover";
+import Popover, { PopoverTrigger, PopoverContent } from "./Popover";
 import { DisableSelectTypography, StyledSheet } from "./CommonElementStyles";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -17,7 +16,7 @@ import SvgMessageCard from "./SvgMessageCard";
 import "katex/dist/katex.min.css";
 import { ReplyingToMemo } from "./ReplyingTo";
 import { StyledReactMarkdownVariable } from "./CommonElementStyles";
-import { DisplayMessage, ReplyingToInfo, DeliveryInfo } from "../../../shared/commonTypes";
+import { ReplyingToInfo, DeliveryInfo } from "../../../shared/commonTypes";
 import { ElementRects } from "@floating-ui/react";
 import useSwipeDrag from "./Hooks/useSwipeDrag";
 import { ChatMessage } from "../ChatClasses";
@@ -33,6 +32,7 @@ export type MessageCardContextData = Readonly<{
   highlightReplied: (id: string) => void;
   setReplyTo: (replyingTo: ReplyingToInfo) => void;
   registerMessageRef: (ref: HTMLDivElement) => void;
+  displayToast: () => void;
   toggleScroll?: (scrollOn: boolean) => void;
 }>;
 
@@ -94,7 +94,7 @@ function formatTooltipDate(timestamp: number) {
 }
 
 function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & MessageCardContextData) {
-  const { highlighted, highlightReplied, setReplyTo, registerMessageRef, chatWith, toggleScroll, chatMessage } = message;
+  const { highlighted, highlightReplied, setReplyTo, displayToast, registerMessageRef, chatWith, toggleScroll, chatMessage } = message;
   const { messageId, text, timestamp, replyingToInfo, sentByMe } = chatMessage.displayMessage;
   const [darken, setDarken] = useState(false);
   const [isFirstOfType, setIsFirstOfType] = useState(chatMessage.isFirstOfType);
@@ -196,7 +196,20 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
             <Stack direction="column"
               sx={{ maxWidth: "max-content", width: "fit-content", padding: 1.5, paddingBottom: 0.5, alignContent: "flex-start", textAlign: "start" }}>
                 {repliedMessage && repliedMessage}
-              <DisableSelectTypography ref={bodyRef} component="span" sx={{ width: "fit-content", maxWidth: "max-content" }}>
+              <DisableSelectTypography 
+                ref={bodyRef} 
+                component="span"
+                onClick={async (event) => {
+                  if (event.button === 0 && event.detail >= 2) {
+                    await navigator.clipboard.writeText(text);
+                    displayToast();
+                    if (window.navigator.userActivation.isActive) {
+                      window.navigator.vibrate(10);
+                    }
+                    event.stopPropagation();
+                  }
+                }}
+                sx={{ width: "fit-content", maxWidth: "max-content" }}>
                 <StyledReactMarkdownBody 
                   className="react-markdown" 
                   children={text} 

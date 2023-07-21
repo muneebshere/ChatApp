@@ -127,6 +127,11 @@ function App() {
 
   useEffect(() => {
     const updateHeight = () => setVisualHeight(window.visualViewport.height - (navigator as any).virtualKeyboard.boundingRect.height);
+    const onContextMenu = (e: Event) => {
+      e.preventDefault();
+      return false;
+    }
+    document.body.addEventListener("contextmenu", onContextMenu, { capture: true });
     window.addEventListener("online", updateStatus);
     window.addEventListener("offline", updateStatus);
     window.addEventListener("beforeunload", (e) => {
@@ -138,6 +143,7 @@ function App() {
     AuthClient.subscribeConnectionStatus(updateConnectionStatus);
     initiate();
     return () => {
+      document.body.removeEventListener("contextmenu", onContextMenu, { capture: true });
       window.removeEventListener("online", updateStatus);
       window.removeEventListener("offline", updateStatus);
       window.visualViewport.removeEventListener("resize", updateHeight);
