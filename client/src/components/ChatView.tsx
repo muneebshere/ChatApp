@@ -1,11 +1,12 @@
 import _ from "lodash";
+import { Subject } from "rxjs";
 import React, { useState, memo, useRef, useLayoutEffect, useEffect, useMemo, RefObject } from "react";
 import { useUpdateEffect } from "usehooks-ts";
 import styled from "@emotion/styled";
 import { Theme, useMediaQuery } from "@mui/material";
 import { CircularProgress, IconButton, Stack } from "@mui/joy";
 import { SendRounded, KeyboardDoubleArrowDownOutlined } from "@mui/icons-material";
-import { MessageListMemo } from "./MessageList";
+import { DayCardContext, MessageListMemo } from "./MessageList";
 import { useSize } from "./Hooks/useSize";
 import { StyledSheet, StyledScrollbar, DisableSelectTypography } from "./CommonElementStyles";
 import { StyledScrollingTextarea } from "./TextareaAutosize";
@@ -310,6 +311,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   const orientationState = useOrientationState();
   const [replyId, setReplyTo, replyToElement] = useReplyingTo(displayName, setHighlight, belowXL, () => textareaRef.current.focus());
   const [width, ] = useSize(scrollRef, "content");
+  const maxTop = useRef(new Subject<number>);
   const [updateCurrentElement, registerMessageRef, rendered] = useScrollRestore(scrollRef, lastScrolledTo, setLastScrolledTo, orientationState);
   const notRenderedCSS: React.CSSProperties = useMemo(() => 
     !rendered
@@ -341,6 +343,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
 
   const scrollHandler = (event: Event) => {
     const scrollbar = event.target as HTMLDivElement;
+    maxTop.current.next(scrollbar.getBoundingClientRect().top);
     if (scrollbar.scrollTop < 1 && chat.canLoadFurther) {
       scrollbar.scrollTo({ top: 1, behavior: "instant" });
       if (!waitingHighlightRef.current && !orientationState.changed()) chat.loadNext();
@@ -420,6 +423,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   useLayoutEffect(() => {
     const updateHeight = () => setKeyboardHeight((navigator as any).virtualKeyboard.boundingRect.height || 0);
     updateHeight();
+    maxTop.current.next(scrollRef.current?.getBoundingClientRect()?.top || 0);
     scrollRef.current.addEventListener("scroll", debouncedScrollHandler);
     window.visualViewport.addEventListener("resize", updateHeight);
     mutationRef.current = new MutationObserver(mutationCallback);
@@ -457,9 +461,11 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
           </div>}
         <StyledScrollbar ref={scrollRef} sx={{ paddingBottom: 0, paddingTop: chat.canLoadFurther ? "1px" : 0, ...notRenderedCSS }}>
           <MessageCardContext.Provider value={contextData}>
-            <MessageListMemo 
-              key={displayName}
-              chatMessageLists={chatMessageLists}/>
+            <DayCardContext.Provider value={maxTop.current.asObservable()}>
+              <MessageListMemo 
+                  key={displayName}
+                  chatMessageLists={chatMessageLists}/>
+            </DayCardContext.Provider>
           </MessageCardContext.Provider>
             {!isScrolledDown &&
           <ScrollDownButton onClick={ () => scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "instant" }) } style={{ bottom: `${keyboardHeight + 150}px` }}>

@@ -1,6 +1,6 @@
 import _ from "lodash";
 import isEqual from "react-fast-compare";
-import React, { memo, useRef, useState, useEffect } from "react";
+import React, { memo, useRef, useState, useEffect, createContext, useContext, useLayoutEffect } from "react";
 import { Card, List, ListItem, ListSubheader } from "@mui/joy";
 import { DateTime } from "luxon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip";
@@ -8,6 +8,10 @@ import MessageCard from "./MessageCard";
 import { ElementRects } from "@floating-ui/react";
 import { DisableSelectTypography } from "./CommonElementStyles";
 import { ChatMessageList } from "../ChatClasses";
+import { SxProps } from "@mui/material";
+import { Observable } from "rxjs";
+
+export const DayCardContext = createContext<Observable<number>>(null);
 
 function formatDate(date: string): string {
   const dt = DateTime.fromISO(date);
@@ -17,21 +21,47 @@ function formatDate(date: string): string {
   return dt.toFormat("dd/LL/y");
 }
 
+const inlineCardSx: SxProps = { 
+  padding: 1,
+  width: "fit-content",
+  textTransform: "capitalize",
+  backgroundColor: "rgba(255, 255, 255, 0)",
+  boxShadow: "none"
+}
+
+const floatingCardSx: SxProps = {
+  ...inlineCardSx,
+  backgroundColor: "rgba(255, 255, 255, 0.7)", 
+  backdropFilter: "blur(30px)",
+  boxShadow: undefined
+}
+
 export function DayCard({ date }: { date: string }) {
+  const observeMaxTop = useContext(DayCardContext);
   const floatingRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [inline, setInline] = useState(false);
   const offsetFunc = (rects: ElementRects) => {
     const crossAxis = (-floatingRef.current?.getBoundingClientRect()?.width || 0) - 10;
     const mainAxis = (-rects.reference.height / 2) - ((floatingRef.current?.getBoundingClientRect()?.height || 0) / 2);
     return { crossAxis, mainAxis }
   }
 
+  useLayoutEffect(() => {
+    const subscription = observeMaxTop.subscribe((maxTop) => {
+      setInline((cardRef.current?.getBoundingClientRect()?.top || 0) > (maxTop + 8));
+    });
+    return () => subscription.unsubscribe();
+  }, [observeMaxTop]);
+
   return (
     <Tooltip placement="bottom-start" offsetFunc={offsetFunc}>
       <TooltipTrigger>
         <Card
-          variant="outlined" 
-          sx={{ padding: 1, width: "fit-content", backgroundColor: "rgba(235, 234, 232, 0.7)", backdropFilter: "blur(30px)", textTransform: "capitalize" }}>
-          <DisableSelectTypography level="body3" >
+          ref={cardRef}
+          variant={inline ? "plain" : "outlined"} 
+          sx={ inline ? inlineCardSx : floatingCardSx }>
+          <DisableSelectTypography level="body3">
             {formatDate(date)}
           </DisableSelectTypography>
         </Card>
