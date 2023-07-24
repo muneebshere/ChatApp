@@ -74,7 +74,7 @@ export const CloseButton = styled.button`
   }`;
 
 export const DisableSelectTypography: OverridableComponent<TypographyTypeMap<{}, "span">> = styled(Typography)`
-  user-select: none;`
+  user-select: none;` as any;
 
 export const ReactMarkdownMemo = React.memo(ReactMarkdown, (prev, next) => prev.children === next.children);
 

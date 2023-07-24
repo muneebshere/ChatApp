@@ -21,6 +21,7 @@ import { ElementRects } from "@floating-ui/react";
 import useSwipeDrag from "./Hooks/useSwipeDrag";
 import { ChatMessage } from "../ChatClasses";
 import { useSize } from "./Hooks/useSize";
+import styled from "@emotion/styled";
 
 interface HTMLDivElementScroll extends HTMLDivElement {
   scrollIntoViewIfNeeded(centerIfNeeded?: boolean): void;
@@ -29,6 +30,7 @@ interface HTMLDivElementScroll extends HTMLDivElement {
 export type MessageCardContextData = Readonly<{
   chatWith: string; 
   highlighted: string;
+  totalWidth: number;
   highlightReplied: (id: string) => void;
   setReplyTo: (replyingTo: ReplyingToInfo) => void;
   registerMessageRef: (ref: HTMLDivElement) => void;
@@ -39,6 +41,22 @@ export type MessageCardContextData = Readonly<{
 export const MessageCardContext = createContext<MessageCardContextData>(null);
 
 const StyledReactMarkdownBody = StyledReactMarkdownVariable(22);
+
+const ScrollingTypography: typeof DisableSelectTypography = styled(DisableSelectTypography)`
+scrollbar-width: thin;
+scrollbar-color: #afafaf #d1d1d1;
+
+::-webkit-scrollbar {
+  height: 3px;
+}
+::-webkit-scrollbar-track {
+  background-color: #d1d1d1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb {
+  background-color: #7c7c7c;
+  border-radius: 4px;
+}` as any;
 
 function StatusButton({ delivery }: { delivery: DeliveryInfo }) {
   if (!delivery) {
@@ -94,7 +112,7 @@ function formatTooltipDate(timestamp: number) {
 }
 
 function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & MessageCardContextData) {
-  const { highlighted, highlightReplied, setReplyTo, displayToast, registerMessageRef, chatWith, toggleScroll, chatMessage } = message;
+  const { highlighted, highlightReplied, setReplyTo, displayToast, registerMessageRef, chatWith, toggleScroll, chatMessage, totalWidth } = message;
   const { messageId, text, timestamp, replyingToInfo, sentByMe } = chatMessage.displayMessage;
   const [darken, setDarken] = useState(false);
   const [isFirstOfType, setIsFirstOfType] = useState(chatMessage.isFirstOfType);
@@ -105,6 +123,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
   const floatingRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const statusSize = useSize(statusRef, "client");
+  const [fixedWidth, setFixedWidth] = useState(0);
   const offsetFunc = (rects: ElementRects) => {
     const crossAxis = (-floatingRef.current?.getBoundingClientRect()?.width || 0) + rects.reference.width;
     return { crossAxis }
@@ -121,7 +140,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
     return false;
   };
   const action = useCallback(() => setReplyTo(replyingData), []);
-  const handlers = useSwipeDrag(scrollRef, 100, 70, action, toggleScroll);
+  const handlers = useSwipeDrag(scrollRef, 100, 70, action, toggleScroll, fixedWidth ? bodyRef : null);
 
   useEffectOnce(() => {
     chatMessage.subscribe((event) => {
@@ -149,7 +168,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
   }, [darken]);
 
   useLayoutEffect(() => {
-    if (!bodyRef.current) return;
+    if (!bodyRef.current || fixedWidth) return;
     const bodyElement = bodyRef.current.querySelector("div.react-markdown > p:last-child");
     const calcDist = () => Math.abs(sheetRef.current.getBoundingClientRect().bottom - bodyElement.getBoundingClientRect().top);
     const [width, height] = statusSize;
@@ -161,6 +180,12 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
       }
     }
   });
+
+  useLayoutEffect(() => {
+    if (!bodyRef.current || totalWidth <= 0) return;
+    const maxAllowableWidth = totalWidth - 72;
+    setFixedWidth(bodyRef.current.scrollWidth > maxAllowableWidth ? maxAllowableWidth : 0);
+  }, [totalWidth])
 
   useLayoutEffect(() => {
     if (!registerMessageRef) return;
@@ -194,11 +219,27 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
         <StyledSheet className="MessageCard" sx={{ width: "100%", display: "flex", flexGrow: 1, justifyContent: side, alignContent: "flex-start", padding: 0, margin: 0 }} ref={sheetRef} id={messageId} data-seen={sentByMe ? 10 : delivery?.seen}>
           <SvgMessageCard background={messageColor} first={isFirstOfType} sentByMe={sentByMe} shadowColor="#adb5bd" darken={darken} darkenFinished={() => setDarken(false) }>
             <Stack direction="column"
-              sx={{ maxWidth: "max-content", width: "fit-content", padding: 1.5, paddingBottom: 0.5, alignContent: "flex-start", textAlign: "start" }}>
+              sx={{ width: "fit-content", 
+                    padding: 1.5, 
+                    paddingBottom: 0.5, 
+                    alignContent: "flex-start", 
+                    textAlign: "start" }}>
                 {repliedMessage && repliedMessage}
-              <DisableSelectTypography 
-                ref={bodyRef} 
+              <ScrollingTypography
+                id={`${messageId}-body`} 
+                ref={bodyRef}
                 component="span"
+                sx={{ 
+                  width: fixedWidth ? `${fixedWidth}px` : "fit-content",
+                  marginBottom: fixedWidth ? "12px" : undefined,
+                  paddingBottom: fixedWidth ? "2px" : undefined,
+                  overflowX: fixedWidth ? "scroll" : "clip",
+                  overflowY: "clip",
+                  "::-webkit-scrollbar-button:end:increment": {
+                    display: "block",
+                    color: "transparent",
+                    width: `${statusSize[0] + 12}px`
+                  } }}
                 onClick={async (event) => {
                   if (event.button === 0 && event.detail >= 2) {
                     await navigator.clipboard.writeText(text);
@@ -208,14 +249,13 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
                     }
                     event.stopPropagation();
                   }
-                }}
-                sx={{ width: "fit-content", maxWidth: "max-content" }}>
+                }}>
                 <StyledReactMarkdownBody 
                   className="react-markdown" 
                   children={text} 
                   remarkPlugins={[remarkGfm, remarkMath, twemoji]}
                   rehypePlugins={[rehypeKatex, rehypeRaw]}/>
-              </DisableSelectTypography>
+              </ScrollingTypography>
               <Stack ref={statusRef} 
                     direction="row" 
                     spacing={1} 
@@ -258,6 +298,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
 const MessageCardMemo = memo(MessageCardWithHighlight, 
   (prev, next) => 
     prev.chatWith === next.chatWith
+    && prev.totalWidth === next.totalWidth
     && prev.chatMessage === next.chatMessage
     && (next.highlighted === next.chatMessage.messageId) === (prev.highlighted === prev.chatMessage.messageId));
 

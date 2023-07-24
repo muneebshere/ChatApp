@@ -310,7 +310,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   const [toastTrigger, triggerToast] = useState<{ off?: boolean }>({ off: true });
   const orientationState = useOrientationState();
   const [replyId, setReplyTo, replyToElement] = useReplyingTo(displayName, setHighlight, belowXL, () => textareaRef.current.focus());
-  const [width, ] = useSize(scrollRef, "content");
+  const [width, ] = useSize(scrollRef, "client");
   const maxTop = useRef(new Subject<number>);
   const [updateCurrentElement, registerMessageRef, rendered] = useScrollRestore(scrollRef, lastScrolledTo, setLastScrolledTo, orientationState);
   const notRenderedCSS: React.CSSProperties = useMemo(() => 
@@ -339,7 +339,15 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
       }, 10);
     }
   }
-  const contextData = useMemo<MessageCardContextData>(() => ({ chatWith: displayName, highlighted, highlightReplied, registerMessageRef, setReplyTo, toggleScroll, displayToast: () => triggerToast({}) }), [displayName, highlighted]);
+  const contextData = useMemo<MessageCardContextData>(() => ({ 
+    chatWith: displayName, 
+    totalWidth: width - 16, 
+    highlighted, 
+    highlightReplied, 
+    registerMessageRef, 
+    setReplyTo, 
+    toggleScroll, 
+    displayToast: () => triggerToast({}) }), [displayName, highlighted, width]);
 
   const scrollHandler = (event: Event) => {
     const scrollbar = event.target as HTMLDivElement;
@@ -522,7 +530,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
           top: undefined,
           left: undefined,
           bottom: "150px",
-          right: `${(width)/2 - (belowXL ? 0 : 10)}px`,
+          right: `${(width - 16)/2 - (belowXL ? 0 : 10)}px`,
           width: "80px", 
           height: "30px", 
           borderRadius: "15px",

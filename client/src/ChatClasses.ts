@@ -754,6 +754,7 @@ export class ChatMessageList {
                 chunks.push([insertIndex, messages.slice(startIndex, stopIndex + 1)]);
                 if (cursor < 0) cursor = ordered.length;
             }
+            return chunks;
         }
 
         private insertChunk(index: number, messages: DisplayMessage[]) {
