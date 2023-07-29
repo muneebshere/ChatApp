@@ -27,7 +27,7 @@ export function AwaitedRequestView({ awaitedRequest }: AwaitedRequestViewProps) 
       <Stack direction="column" spacing={2}>
         <ChatHeaderMemo {...{ belowXL, chatDetails }}/>
         <div style={{ width: "100%", display: "flex", justifyContent: "center" }}>
-          <DayCard date={DateTime.fromMillis(lastActive).toISODate()}/>
+          <DayCard date={DateTime.fromMillis(lastActive).toISODate()} forceInline={true}/>
         </div>
         <DisableSelectTypography level="body2" sx={{ width: "100%", textAlign: "center", color: "lightgrey" }}>
           You sent a chat request to @{otherUser}. Wait for them to respond.

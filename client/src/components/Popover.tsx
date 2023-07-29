@@ -12,7 +12,8 @@ import {
   useMergeRefs,
   Placement,
   FloatingPortal,
-  FloatingFocusManager
+  FloatingFocusManager,
+  OffsetOptions
 } from "@floating-ui/react";
 
 interface PopoverOptions {
@@ -20,6 +21,8 @@ interface PopoverOptions {
   modal?: boolean;
   controlledOpen?: boolean;
   setControlledOpen?: (open: boolean) => void;
+  allowFlip?: boolean;
+  customOffset?: OffsetOptions
 };
 
 type ContextType = ReturnType<typeof useFloating> & ReturnType<typeof useInteractions> & { 
@@ -44,6 +47,8 @@ export default function Popover({
   children,
   modal = false,
   placement = "bottom",
+  allowFlip = true,
+  customOffset = 5,
   controlledOpen,
   setControlledOpen,
 }: {
@@ -60,10 +65,10 @@ export default function Popover({
     onOpenChange: setOpen,
     whileElementsMounted: autoUpdate,
     middleware: [
-      offset(5),
-      flip({
-        fallbackAxisSideDirection: "end"
-      }),
+      offset(customOffset),
+      ...(allowFlip 
+          ? [flip({ fallbackAxisSideDirection: "end" })]
+          : []),
       shift({ padding: 5 })
     ]
   });

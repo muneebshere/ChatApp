@@ -3,13 +3,19 @@ import React, { useState, useRef, useMemo, useLayoutEffect, useEffect } from "re
 import { Avatar, Badge, IconButton, Input, List, ListItem, ListItemButton, Stack } from "@mui/joy";
 import { PersonAddAltOutlined, Search, ClearSharp, HourglassTop, DoneAllSharp, DoneSharp } from "@mui/icons-material";
 import { NewChatPopup, NewMessageDialog } from "./NewChat";
-import { DisableSelectTypography, StyledScrollbar } from "./CommonElementStyles";
+import { DisableSelectTypography, ReactMarkdownVariableEmoji, StyledScrollbar } from "./CommonElementStyles";
 import Client from "../Client";
 import { DateTime } from "luxon";
 import { truncateText } from "../../../shared/commonFunctions";
 import { AwaitedRequest, Chat, ChatRequest } from "../ChatClasses";
 import { flushSync } from "react-dom";
 import { useUpdateEffect } from "usehooks-ts";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import twemoji from "../custom_modules/remark-twemoji";
+import rehypeKatex from "rehype-katex";
+import rehypeRaw from "rehype-raw";
+import { SxProps } from "@mui/material";
 
 type SidebarProps = {
   currentChatWith: string,
@@ -130,12 +136,13 @@ function ChatCard({ chat, isCurrent, setCurrent }: ChatCardProps) {
   const { displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages, draft } = refresh && chat.details; 
   const { text, timestamp, sentByMe, delivery } = lastActivity;
   const status = useMemo(() => {
+    const commonProps: SxProps = { fontSize: "1rem", marginRight: "6px", marginBlock: "auto" };
     if (!sentByMe) return null;
-    if (!delivery) return <HourglassTop sx={{ color: "gold", rotate: "-90deg", fontSize: "1rem", marginRight: "4px" }}/>;
+    if (!delivery) return <HourglassTop sx={{ color: "gold", rotate: "-90deg", ...commonProps }}/>;
     const { delivered, seen } = delivery;
     return delivered 
-            ? (<DoneAllSharp sx={{ color: seen ? "blue" : "gray", fontSize: "1rem", marginRight: "4px" }}/>) 
-            : <DoneSharp sx={{ color: "gray", fontSize: "1rem", marginRight: "4px" }}/>;
+            ? (<DoneAllSharp sx={{ color: seen ? "blue" : "gray", ...commonProps }}/>) 
+            : <DoneSharp sx={{ color: "gray", ...commonProps }}/>;
   }, [delivery]);
 
   function formatTime() {
@@ -176,18 +183,26 @@ function ChatCard({ chat, isCurrent, setCurrent }: ChatCardProps) {
             </DisableSelectTypography>
           </div>
         </div>
-        <div style={{ display: "flex", flexDirection: "row" }}>
-          <DisableSelectTypography sx={{ flexGrow: 1, fontSize: "15px", color: isOtherTyping ? "#1fa855" : "#656565" }}>
-            {!isOtherTyping && status}
-            {isOtherTyping 
-              ? "typing..." 
-              : (draft 
-                  ? (<>
-                      <DisableSelectTypography fontWeight="lg" sx={{ color: "#1fa855" }}>Draft: </DisableSelectTypography>
-                      <DisableSelectTypography sx={{ fontStyle: "italic" }}>{draft}</DisableSelectTypography>
-                    </>)
-                  : truncateText(text, 50))}
-          </DisableSelectTypography>
+        <div style={{ display: "flex", flexDirection: "row", fontSize: "15px" }}>
+            {!isOtherTyping && !draft && status}
+            {isOtherTyping
+              ? (<DisableSelectTypography sx={{ flexGrow: 1, color: isOtherTyping ? "#1fa855" : "#656565" }}>
+                  typing...
+                </DisableSelectTypography>)
+              : (<div style={{ flexGrow: 1, display: "flex", flexDirection: "row" }}>
+                  {draft && 
+                    <DisableSelectTypography fontWeight="lg" sx={{ color: "#1fa855" }}>
+                      Draft:&nbsp;
+                    </DisableSelectTypography>}
+                  <DisableSelectTypography component="span" sx={{ fontStyle: draft ? "italic" : undefined, color: "#656565", "--markdown-emoji-size": "18px" }}>
+                    <ReactMarkdownVariableEmoji 
+                    className="react-markdown" 
+                    components={{ p: "span", div: "span" }}
+                    children={truncateText(draft ? draft : text, 50)}
+                    remarkPlugins={[remarkGfm, remarkMath, twemoji]}
+                    rehypePlugins={[rehypeKatex, rehypeRaw]}/>
+                  </DisableSelectTypography>
+                </div>)}
           {!!unreadMessages &&
             <div style={{ marginBlock: "auto", 
                           marginInline: "5px",

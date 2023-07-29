@@ -686,7 +686,8 @@ export default BufferSerializer;
   * @param {BufferWriter} buffWriter
   */
  function toBufferInternalString(thing, buffWriter) {
-     buffWriter.uint8(0x73); // s
-     buffWriter.size(thing.length);
-     buffWriter.string(thing);
+    buffWriter.uint8(0x73); // s
+    const buffer = Buffer.from(thing, "utf8");
+    buffWriter.size(buffer.length);
+    buffWriter.bufferList.push(buffer);
  }

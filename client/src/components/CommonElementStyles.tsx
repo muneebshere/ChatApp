@@ -5,6 +5,7 @@ import { ReactMarkdownOptions, ReactMarkdown } from "react-markdown/lib/react-ma
 import { styled as joyStyled } from "@mui/joy/styles";
 import { OverridableComponent } from "@mui/types";
 import { TypographyTypeMap } from "@mui/joy/Typography/TypographyProps";
+import EmojiPicker from "emoji-picker-react";
 import styled from "@emotion/styled";
 
 export const StyledSheet = joyStyled(Sheet)(({ theme }) => ({
@@ -78,26 +79,40 @@ export const DisableSelectTypography: OverridableComponent<TypographyTypeMap<{},
 
 export const ReactMarkdownMemo = React.memo(ReactMarkdown, (prev, next) => prev.children === next.children);
 
-export const StyledReactMarkdownVariable = (emojiSize: number) => styled(ReactMarkdownMemo as unknown as React.ComponentClass<ReactMarkdownOptions, {}>)`
+export const ReactMarkdownVariableEmoji = styled(ReactMarkdownMemo as unknown as React.ComponentClass<ReactMarkdownOptions, {}>)`
   img.emoji {
-    height: ${emojiSize}px;
-    width: ${emojiSize}px;
-    background-position:center;
-    background-repeat:no-repeat;
-    background-size:contain;
-    display:inline-block;
-    vertical-align:middle;
-    margin: 0px 1.5px;
-  }
+    height: var(--markdown-emoji-size);
+    width: var(--markdown-emoji-size);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: contain;
+    display: inline-block;
+    vertical-align: sub;
+    margin: 0px 0px;
+    pointer-events: none;
+  }`;
 
+export const ReactMarkdownLastPara = styled(ReactMarkdownVariableEmoji)`
   span.onlyEmoji+img.emoji {
-    height: 66px;
-    width: 66px;
+    height: var(--markdown-large-emoji-size);
+    width: var(--markdown-large-emoji-size);
     margin: 0px 1.5px 5px;
   }
 
   & > p:last-child {
     max-width: 100%;
     padding-bottom: 0px;
-    margin-bottom: 0px;
-  }`;
+    margin-bottom: var(--markdown-margin-bottom);
+  }
+
+  & > p:last-child:after {
+    content: "";
+    display: block;
+    float: right;
+    min-width: var(--markdown-after-width);
+    min-height: var(--markdown-after-height);
+    width: var(--markdown-after-width);
+    height: var(--markdown-after-height);
+    margin: var(--markdown-after-margin-top) 0px 0px var(--markdown-after-margin-left);
+    shape-outside: margin-box;
+  }`

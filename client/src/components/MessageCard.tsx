@@ -15,7 +15,7 @@ import { DateTime } from "luxon";
 import SvgMessageCard from "./SvgMessageCard";
 import "katex/dist/katex.min.css";
 import { ReplyingToMemo } from "./ReplyingTo";
-import { StyledReactMarkdownVariable } from "./CommonElementStyles";
+import { ReactMarkdownLastPara } from "./CommonElementStyles";
 import { ReplyingToInfo, DeliveryInfo } from "../../../shared/commonTypes";
 import { ElementRects } from "@floating-ui/react";
 import useSwipeDrag from "./Hooks/useSwipeDrag";
@@ -28,7 +28,7 @@ interface HTMLDivElementScroll extends HTMLDivElement {
 }
 
 export type MessageCardContextData = Readonly<{
-  chatWith: string; 
+  chatWith: string;
   highlighted: string;
   totalWidth: number;
   highlightReplied: (id: string) => void;
@@ -39,8 +39,6 @@ export type MessageCardContextData = Readonly<{
 }>;
 
 export const MessageCardContext = createContext<MessageCardContextData>(null);
-
-const StyledReactMarkdownBody = StyledReactMarkdownVariable(22);
 
 const ScrollingTypography: typeof DisableSelectTypography = styled(DisableSelectTypography)`
 scrollbar-width: thin;
@@ -57,6 +55,18 @@ scrollbar-color: #afafaf #d1d1d1;
   background-color: #7c7c7c;
   border-radius: 4px;
 }` as any;
+
+function formatTooltipDate(timestamp: number) {
+  const date = DateTime.fromMillis(timestamp);
+  return `${date.toFormat("d LLLL ")}'${date.toFormat("yy")}, ${date.toFormat("h:mm a")}`;
+}
+
+function modifyOnlyEmojies(text: string) {
+  const emojiOnlyInsert = `<span class="onlyEmoji">&#8288;</span>`;
+  const isEmojiOnly = !text.replace(/[\p{Extended_Pictographic}\u{1f3fb}\u{1f3fc}\u{1f3fd}\u{1f3fe}\u{1f3ff}]/gmu, "").trim();
+  if (isEmojiOnly) return text.replace(/(\p{Extended_Pictographic})/gmu, (match, g1) => `${emojiOnlyInsert}${g1}`);
+  else return text;
+}
 
 function StatusButton({ delivery }: { delivery: DeliveryInfo }) {
   if (!delivery) {
@@ -106,11 +116,6 @@ function StatusButton({ delivery }: { delivery: DeliveryInfo }) {
   }
 }
 
-function formatTooltipDate(timestamp: number) {
-  const date = DateTime.fromMillis(timestamp);
-  return `${date.toFormat("d LLLL ")}'${date.toFormat("yy")}, ${date.toFormat("h:mm a")}`;
-}
-
 function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & MessageCardContextData) {
   const { highlighted, highlightReplied, setReplyTo, displayToast, registerMessageRef, chatWith, toggleScroll, chatMessage, totalWidth } = message;
   const { messageId, text, timestamp, replyingToInfo, sentByMe } = chatMessage.displayMessage;
@@ -122,7 +127,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
   const statusRef = useRef<HTMLDivElement>(null);
   const floatingRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
-  const statusSize = useSize(statusRef, "client");
+  const [statusWidth, statusHeight] = useSize(statusRef, "client");
   const [fixedWidth, setFixedWidth] = useState(0);
   const offsetFunc = (rects: ElementRects) => {
     const crossAxis = (-floatingRef.current?.getBoundingClientRect()?.width || 0) + rects.reference.width;
@@ -166,20 +171,6 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
       highlightReplied("");
     }
   }, [darken]);
-
-  useLayoutEffect(() => {
-    if (!bodyRef.current || fixedWidth) return;
-    const bodyElement = bodyRef.current.querySelector("div.react-markdown > p:last-child");
-    const calcDist = () => Math.abs(sheetRef.current.getBoundingClientRect().bottom - bodyElement.getBoundingClientRect().top);
-    const [width, height] = statusSize;
-    if (height && width) {
-      const isOneLine = calcDist() <= 28;
-      bodyElement?.insertAdjacentHTML("beforeend", `<div style="float: right; shape-outside: margin-box; width: ${width}px; height: ${height}px; min-width: ${width}px; min-height: ${height}px; margin: ${isOneLine ? 16 : 4}px 0px ${isOneLine ? 0 : 4}px 10px;">&nbsp;</div>`);
-      if (bodyElement && isOneLine && calcDist() > 38) {
-        bodyElement.querySelector("div").style.margin = "4px 0px 0px 10px";
-      }
-    }
-  });
 
   useLayoutEffect(() => {
     if (!bodyRef.current || totalWidth <= 0) return;
@@ -235,10 +226,17 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
                   paddingBottom: fixedWidth ? "2px" : undefined,
                   overflowX: fixedWidth ? "scroll" : "clip",
                   overflowY: "clip",
+                  "--markdown-emoji-size": "22px",
+                  "--markdown-large-emoji-size": "66px",
+                  "--markdown-margin-bottom": "8px",
+                  "--markdown-after-width": `${statusWidth}px`,
+                  "--markdown-after-height": `${statusHeight}px`,
+                  "--markdown-after-margin-top": "4px",
+                  "--markdown-after-margin-left": "16px",
                   "::-webkit-scrollbar-button:end:increment": {
                     display: "block",
                     color: "transparent",
-                    width: `${statusSize[0] + 12}px`
+                    width: `${statusWidth + 12}px`
                   } }}
                 onClick={async (event) => {
                   if (event.button === 0 && event.detail >= 2) {
@@ -250,9 +248,9 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
                     event.stopPropagation();
                   }
                 }}>
-                <StyledReactMarkdownBody 
+                <ReactMarkdownLastPara
                   className="react-markdown" 
-                  children={text} 
+                  children={modifyOnlyEmojies(text)} 
                   remarkPlugins={[remarkGfm, remarkMath, twemoji]}
                   rehypePlugins={[rehypeKatex, rehypeRaw]}/>
               </ScrollingTypography>

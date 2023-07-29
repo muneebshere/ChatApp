@@ -140,7 +140,7 @@ class BufferReader {
         buff = this.readBuffer.subarray(this.offset, this.offset + length);
         this.offset += length;
 
-        return buff.toString("binary");
+        return buff.toString("utf8");
     }
 
 

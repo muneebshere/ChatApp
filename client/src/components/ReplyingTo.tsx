@@ -10,10 +10,8 @@ import rehypeRaw from "rehype-raw";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css"
 import { MessageCardContextData } from "./MessageCard";
-import { DisableSelectTypography, StyledReactMarkdownVariable } from "./CommonElementStyles";
+import { DisableSelectTypography, ReactMarkdownVariableEmoji } from "./CommonElementStyles";
 import { ReplyingToInfo } from "../../../shared/commonTypes";
-
-const StyledReactMarkdownReply = StyledReactMarkdownVariable(18);
 
 export type ReplyingToProps = ReplyingToInfo & Pick<MessageCardContextData, "chatWith" | "highlightReplied"> & Readonly<{
   sentByMe: boolean;
@@ -31,8 +29,8 @@ const ReplyingTo = forwardRef(function(replyingTo: ReplyingToProps, ref: Forward
       <DisableSelectTypography component="span" level="body3" fontWeight="bold" textColor={repliedOutlineColor}>
         {replyToOwn ? "You" : chatWith }
       </DisableSelectTypography>
-      <DisableSelectTypography component="span" level="body3">
-        <StyledReactMarkdownReply 
+      <DisableSelectTypography component="span" level="body3" sx={{ "--markdown-emoji-size": "18px" }}>
+        <ReactMarkdownVariableEmoji 
           className="react-markdown" 
           components={{ p: "span" }}
           children={displayText}

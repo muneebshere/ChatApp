@@ -1,5 +1,4 @@
 import _ from "lodash";
-import isEqual from "react-fast-compare";
 import React, { memo, useRef, useState, useEffect, createContext, useContext, useLayoutEffect } from "react";
 import { Card, List, ListItem, ListSubheader } from "@mui/joy";
 import { DateTime } from "luxon";
@@ -36,11 +35,11 @@ const floatingCardSx: SxProps = {
   boxShadow: undefined
 }
 
-export function DayCard({ date }: { date: string }) {
+export function DayCard({ date, forceInline = false }: { date: string, forceInline?: boolean }) {
   const observeMaxTop = useContext(DayCardContext);
   const floatingRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
-  const [inline, setInline] = useState(false);
+  const [inline, setInline] = useState(forceInline);
   const offsetFunc = (rects: ElementRects) => {
     const crossAxis = (-floatingRef.current?.getBoundingClientRect()?.width || 0) - 10;
     const mainAxis = (-rects.reference.height / 2) - ((floatingRef.current?.getBoundingClientRect()?.height || 0) / 2);
@@ -48,10 +47,11 @@ export function DayCard({ date }: { date: string }) {
   }
 
   useLayoutEffect(() => {
-    const subscription = observeMaxTop.subscribe((maxTop) => {
+    if (forceInline) return;
+    const subscription = observeMaxTop?.subscribe((maxTop) => {
       setInline((cardRef.current?.getBoundingClientRect()?.top || 0) > (maxTop + 8));
     });
-    return () => subscription.unsubscribe();
+    return () => subscription?.unsubscribe();
   }, [observeMaxTop]);
 
   return (
@@ -61,7 +61,7 @@ export function DayCard({ date }: { date: string }) {
           ref={cardRef}
           variant={inline ? "plain" : "outlined"} 
           sx={ inline ? inlineCardSx : floatingCardSx }>
-          <DisableSelectTypography level="body3">
+          <DisableSelectTypography level="body3" sx={{ fontWeight: 600 }}>
             {formatDate(date)}
           </DisableSelectTypography>
         </Card>
@@ -121,4 +121,4 @@ const MessageList = function({ chatMessageLists }: { chatMessageLists: ChatMessa
 }
 
 export const MessageListMemo = memo(MessageList, 
-  (prev, next) => isEqual(prev.chatMessageLists, next.chatMessageLists));
+  (prev, next) => prev.chatMessageLists.length === next.chatMessageLists.length);

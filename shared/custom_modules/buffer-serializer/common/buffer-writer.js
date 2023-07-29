@@ -83,7 +83,7 @@ class BufferWriter {
      * @param {string} str
      */
     string(str) {
-        this.bufferList.push(Buffer.from(str, "binary"));
+        this.bufferList.push(Buffer.from(str, "utf8"));
     }
 
 

@@ -45,6 +45,10 @@ interface TextareaAutosizeProps
 
   startDecoratorStyle?: React.CSSProperties;
 
+  endDecorator?: JSX.Element;
+
+  endDecoratorStyle?: React.CSSProperties;
+
   openKeyboardManual?: boolean;
 }
 
@@ -99,7 +103,7 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
   props: TextareaAutosizeProps,
   ref: ForwardedRef<Element>,
 ) {
-  const { onChange, onHeightUpdate, maxRows, minRows = 1, style, value, onSubmit, openKeyboardManual, tabbedOutside, ...other } = props;
+  const { onChange, onHeightUpdate, maxRows, minRows = 1, style, value, onSubmit, openKeyboardManual, tabbedOutside, onClick, ...other } = props;
 
   const virtualkeyboardpolicy = openKeyboardManual ? "manual" : "auto";
   const { current: isControlled } = useRef(value != null);
@@ -300,7 +304,13 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
       : undefined;
   }, [tabbedOutside]);
 
-  const onClick = openKeyboardManual ? () => (navigator as any).virtualKeyboard?.show() : undefined;
+  const onClickKeyboard: React.MouseEventHandler<HTMLTextAreaElement> = 
+    openKeyboardManual
+      ? (e) => {
+        (navigator as any).virtualKeyboard?.show();
+        onClick?.(e);
+      }
+      : onClick;
 
   return (
     <React.Fragment>
@@ -310,7 +320,7 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
         onKeyDown={handleSubmit}
         onKeyUp={handleKeyUp}
         virtualkeyboardpolicy={virtualkeyboardpolicy}
-        onClick={onClick}
+        onClick={onClickKeyboard}
         ref={handleRef}
         // Apply the rows prop to get a "correct" first SSR paint
         rows={minRows as number}
@@ -428,15 +438,18 @@ const StyledInnerTextarea = styled(TextareaAutosize)`
   }`;
 
 export const StyledScrollingTextarea = forwardRef(function(props: TextareaAutosizeProps, ref: ForwardedRef<HTMLTextAreaElement>) {
-  const { startDecorator, startDecoratorStyle = {}, outerProps = {}, ...innerProps } = props; 
+  const { startDecorator, endDecorator, startDecoratorStyle = {}, endDecoratorStyle = {}, outerProps = {}, ...innerProps } = props; 
   return (
   <TextareaBorder {...outerProps}>
     {startDecorator &&
     <div style={startDecoratorStyle}>
       {startDecorator}
     </div>}
-    <div style={{ flex: 1, display: "flex", justifyContent: "stretch" }}>
+    <div style={{ flex: 1, display: "flex", flexWrap: "wrap", justifyContent: "stretch", alignContent: "center" }}>
       <StyledInnerTextarea ref={ref} {...innerProps}/>
+      <div style={endDecoratorStyle}>
+        {endDecorator}
+      </div>
     </div>
   </TextareaBorder>);
   })

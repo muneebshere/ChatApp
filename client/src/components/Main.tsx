@@ -41,7 +41,7 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
     setCurrentChatWith(chat);
   }
 
-  function getView(currentChatWith: string) {
+  function getView() {
     const chat = client.getChatByUser(currentChatWith);
     if (chat?.type === "Chat") {
       return (<ChatViewMemo 
@@ -100,7 +100,7 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
       </Grid>}
       {(!belowXL || currentChatWith) &&
       <Grid xs={12} xl={9} sx={{ minHeight: 0, maxHeight: "100%" }}>
-        {chats && getView(currentChatWith)}
+        {getView()}
       </Grid>}
     </Grid>
   </Grid>)

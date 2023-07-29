@@ -137,6 +137,7 @@ export default function LogInForm() {
       }
       else if (reason === ErrorStrings.InvalidRequest && details === "Already Active Elsewhere") {
         setUsernameError("This user is already active elsewhere.");
+        setPassword("");
         setUsernameEntered(false);
       }
       else {

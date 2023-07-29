@@ -147,6 +147,7 @@ export class Chat extends AbstractChat {
     private otherTyping: boolean;
     private typingTimeout: number;
     private draft: string = null;
+    private rendered = false;
     private notify: (event: ChatEvent) => void;
     private notifyActivity: () => void;
     private readonly createdAt: number;
@@ -204,9 +205,11 @@ export class Chat extends AbstractChat {
     set lastDraft(value: string) {
         this.draft = value;
         this.notifyActivity?.();
-    }  
+    }
 
-    get lastActive() { return this.lastActivity?.timestamp || Date.now() }
+    get renderedBefore() { return this.rendered; }
+
+    get lastActive() { return this.lastActivity?.timestamp || Date.now(); }
 
     get details(): ChatDetails {
         const { otherUser, contactDetails: { displayName, profilePicture, contactName }, lastActivity, otherTyping: isOtherTyping, draft } = this;
@@ -242,6 +245,8 @@ export class Chat extends AbstractChat {
             }, 1500);
         }
     }
+
+    markRendered() { this.rendered = true }
 
     subscribe(notifyAdded: (event: ChatEvent) => void) {
         this.notify = notifyAdded;

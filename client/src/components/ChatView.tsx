@@ -4,8 +4,8 @@ import React, { useState, memo, useRef, useLayoutEffect, useEffect, useMemo, Ref
 import { useUpdateEffect } from "usehooks-ts";
 import styled from "@emotion/styled";
 import { Theme, useMediaQuery } from "@mui/material";
-import { CircularProgress, IconButton, Stack } from "@mui/joy";
-import { SendRounded, KeyboardDoubleArrowDownOutlined } from "@mui/icons-material";
+import { CircularProgress, IconButton, Sheet, Stack } from "@mui/joy";
+import { SendRounded, KeyboardDoubleArrowDownOutlined, SentimentSatisfiedRounded } from "@mui/icons-material";
 import { DayCardContext, MessageListMemo } from "./MessageList";
 import { useSize } from "./Hooks/useSize";
 import { StyledSheet, StyledScrollbar, DisableSelectTypography } from "./CommonElementStyles";
@@ -17,6 +17,9 @@ import { Chat } from "../ChatClasses";
 import { truncateText } from "../../../shared/commonFunctions";
 import { ChatHeaderMemo } from "./ChatHeader";
 import Toast from "./Toast";
+import Popover, { PopoverContent, PopoverTrigger } from "./Popover";
+import EmojiPicker, { EmojiStyle, SkinTones } from "emoji-picker-react";
+import { flushSync } from "react-dom";
 
 const ScrollDownButton = styled.div`
   display: grid;
@@ -52,7 +55,7 @@ type ChatViewProps = {
   setMessage: (m: string) => void,
   lastScrolledTo: ScrollState,
   setLastScrolledTo: (lastScrolledTo: ScrollState) => void,
-  allowLeaveFocus: React.RefObject<boolean>,
+  allowLeaveFocus: React.MutableRefObject<boolean>,
   giveBackFocus: React.MutableRefObject<() => void>
 }
 
@@ -93,7 +96,9 @@ function useReplyingTo(chatWith: string, setHighlight: (highlight: string) => vo
 }
 
 function useScrollRestore(scrollRef: RefObject<HTMLDivElement>, 
-                          lastScrolledTo: ScrollState, 
+                          lastScrolledTo: ScrollState,
+                          renderedBefore: boolean,
+                          markRendered: () => void,
                           setLastScrolledTo: (scroll: ScrollState) => void, 
                           orientationState: OrientationState): [() => void, (element: HTMLDivElement) => void, boolean] {
   
@@ -102,7 +107,7 @@ function useScrollRestore(scrollRef: RefObject<HTMLDivElement>,
   const currentScroll = useRef<ScrollState>(lastScrolledTo);
   const observerRef = useRef<IntersectionObserver>(null);
   const selectingRef = useRef(false);
-  const [rendered, setRendered] = useState(false);
+  const [rendered, setRendered] = useState(renderedBefore);
 
   function registerMessageRef(element: HTMLDivElement) {
     if (!element) return;
@@ -247,13 +252,16 @@ function useScrollRestore(scrollRef: RefObject<HTMLDivElement>,
   }, []);
 
   useLayoutEffect(() => {
-    let top = lastScrolledTo && calculateScrollPosition(lastScrolledTo);
     setTimeout(() => {
+      let top = lastScrolledTo && calculateScrollPosition(lastScrolledTo);
       const scrollElement = scrollRef.current;
       top ||= scrollElement.scrollHeight;
       scrollElement.scrollTo({ top, behavior: "instant" });
-      setRendered(true);
-    }, 200);
+      if (!renderedBefore) {
+        markRendered();
+        flushSync(() => setRendered(true));
+      }
+    }, renderedBefore ? 10 : 200);
     window.screen.orientation.addEventListener("change", onOrientationChange);
 
     return () => {
@@ -308,15 +316,12 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   const [chatMessageLists, setChatMessageLists] = useState(chat.messages);
   const [loadingMore, setLoadingMore] = useState(false);
   const [toastTrigger, triggerToast] = useState<{ off?: boolean }>({ off: true });
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const orientationState = useOrientationState();
   const [replyId, setReplyTo, replyToElement] = useReplyingTo(displayName, setHighlight, belowXL, () => textareaRef.current.focus());
   const [width, ] = useSize(scrollRef, "client");
   const maxTop = useRef(new Subject<number>);
-  const [updateCurrentElement, registerMessageRef, rendered] = useScrollRestore(scrollRef, lastScrolledTo, setLastScrolledTo, orientationState);
-  const notRenderedCSS: React.CSSProperties = useMemo(() => 
-    !rendered
-      ? { visibility: "hidden" }
-      : {}, [rendered]);
+  const [updateCurrentElement, registerMessageRef, rendered] = useScrollRestore(scrollRef, lastScrolledTo, chat.renderedBefore, () => chat.markRendered(), setLastScrolledTo, orientationState);
   const toggleScroll = (scrollOn: boolean) => { 
     scrollRef.current.style.overflowY = scrollOn ? "scroll" : "hidden";
     scrollRef.current.style.paddingRight = scrollOn ? "8px" : "14px"
@@ -400,6 +405,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
 
   useEffect(() => {
     chat.lastDraft = null;
+    setChatMessageLists(chat.messages);
     chat.subscribe((event) => {
       if (event === "details-change") {
         setChatDetails(chat.details);
@@ -459,6 +465,62 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
     textareaRef.current.value = "";
   }
 
+  const emojiPicker = (
+    <Sheet
+      sx={{
+        ".epr-body": {
+          scrollbarWidth: "thin",
+          scrollbarColor: "#afafaf #d1d1d1",
+          "::-webkit-scrollbar": {
+            width: "3px"
+          },
+          "::-webkit-scrollbar-track": {
+            backgroundColor: "#d1d1d1",
+            borderRadius: "4px",
+          },
+          "::-webkit-scrollbar-thumb": {
+            backgroundColor: "#7c7c7c",
+            borderRadius: "4px"
+          }
+        }
+      }}>
+      <EmojiPicker
+        onEmojiClick={({ activeSkinTone, unifiedWithoutSkinTone }) => {
+          const textarea = textareaRef.current;
+          const skinTone = activeSkinTone !== "neutral" ? String.fromCodePoint(parseInt(`0x${activeSkinTone}`)) : "";
+          textarea.setRangeText(String.fromCodePoint(parseInt(`0x${unifiedWithoutSkinTone}`)) + skinTone, textarea.selectionStart, textarea.selectionEnd, "end");
+          messageRef.current = textarea.value;
+          debouncedSendTyping();
+        }}
+        emojiStyle={EmojiStyle.TWITTER}
+        defaultSkinTone={SkinTones.LIGHT}
+        searchDisabled
+        lazyLoadEmojis={false}
+        previewConfig={{ showPreview: false }}
+        height="40vh"/>
+    </Sheet>
+  )
+
+  const emojiButton = (<IconButton 
+    variant="plain" 
+    color="neutral"
+    size="sm"
+    onClick={belowXL 
+              ? (e) => {
+                const { virtualKeyboard } = (navigator as any);
+                emojiOpen ? virtualKeyboard?.show() : virtualKeyboard?.hide();
+                setEmojiOpen(!emojiOpen);
+              }
+              : undefined}
+    sx={{ padding: "0px",
+           minWidth: "min-content", 
+           minHeight: "min-content", 
+           borderRadius: "100%",
+           backgroundColor: emojiOpen ? "var(--joy-palette-neutral-plainHoverBg)" : "transparent"
+        }}>
+    <SentimentSatisfiedRounded sx={{ fontSize: "1.5rem" }}/>
+  </IconButton>)
+
   return (
     <StyledSheet ref={mainRef} sx={{ height: "100%", display: "flex", flexDirection: "column", overflow: "clip" }}>
       <Stack direction="column" spacing={1} sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column", overflow: "clip" }}>
@@ -467,7 +529,9 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
           <div style={{ width: "100%", display: "flex", justifyContent: "center", paddingBlock: "4px"}}>
             <CircularProgress size="sm" variant="soft" color="success"/>
           </div>}
-        <StyledScrollbar ref={scrollRef} sx={{ paddingBottom: 0, paddingTop: chat.canLoadFurther ? "1px" : 0, ...notRenderedCSS }}>
+        <StyledScrollbar 
+          ref={scrollRef} 
+          sx={{ paddingBottom: 0, paddingTop: chat.canLoadFurther ? "1px" : 0, visibility: !rendered ? "hidden" : undefined }}>
           <MessageCardContext.Provider value={contextData}>
             <DayCardContext.Provider value={maxTop.current.asObservable()}>
               <MessageListMemo 
@@ -500,8 +564,9 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
             ref={textareaRef}
             placeholder="Type a message"
             defaultValue={message}
-            onChange={(e) => { 
-              messageRef.current = e?.target?.value || "";
+            onClick={belowXL ? () => setEmojiOpen(false) : undefined}
+            onInput={(e) => { 
+              messageRef.current = (e?.target as any)?.value || "";
               debouncedSendTyping();
              }}
             onSubmit={sendMessage}
@@ -511,9 +576,27 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
             }}
             minRows={1}
             maxRows={5} 
-            style={{ flex: 1 }}
+            style={{ flex: 1, marginBlock: "auto" }}
             startDecorator={replyToElement}
-            startDecoratorStyle={{ width: "100%", paddingRight: belowXL ? "0px" : "80px", display: "flex", justifyContent: "flex-start", marginBottom: "4px" }}/>
+            startDecoratorStyle={{ width: "100%", paddingRight: belowXL ? "0px" : "80px", display: "flex", justifyContent: "flex-start", marginBottom: "4px" }}
+            endDecoratorStyle={{ height: "24px", marginBlock: "auto" }}
+            endDecorator={
+            belowXL
+              ? (emojiButton)
+              : (<Popover 
+                placement="top-start" 
+                controlledOpen={emojiOpen}
+                allowFlip={false}
+                customOffset={{ mainAxis: 15, crossAxis: -320 }}
+                setControlledOpen={(open) => setEmojiOpen(open)}>
+                <PopoverTrigger asChild>
+                  {emojiButton}
+                </PopoverTrigger>
+                <PopoverContent>
+                 {emojiPicker}
+                </PopoverContent>
+              </Popover>)
+            }/>
             <IconButton 
               variant="outlined"
               color="success" 
@@ -522,6 +605,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
               <SendRounded sx={{ fontSize: "2rem"}}/>
             </IconButton>
         </Stack>
+        {belowXL && emojiOpen && emojiPicker}
       </Stack>
       <Toast 
         trigger={toastTrigger}
