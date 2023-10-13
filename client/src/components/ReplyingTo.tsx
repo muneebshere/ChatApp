@@ -1,6 +1,6 @@
 import _ from "lodash";
 import isEqual from "react-fast-compare";
-import React, { ForwardedRef, forwardRef, memo, useMemo } from "react";
+import React, { ForwardedRef, forwardRef, memo, useMemo, useState, useEffect } from "react";
 import { IconButton, Link, Sheet, Stack } from "@mui/joy";
 import { ClearSharp } from "@mui/icons-material";
 import remarkGfm from "remark-gfm";
@@ -12,18 +12,26 @@ import "katex/dist/katex.min.css"
 import { MessageCardContextData } from "./MessageCard";
 import { DisableSelectTypography, ReactMarkdownVariableEmoji } from "./CommonElementStyles";
 import { ReplyingToInfo } from "../../../shared/commonTypes";
+import { truncateMarkdown } from "../../../shared/commonFunctions";
 
 export type ReplyingToProps = ReplyingToInfo & Pick<MessageCardContextData, "chatWith" | "highlightReplied"> & Readonly<{
   sentByMe: boolean;
+  maxChars: number;
   renderClose?: () => void;
 }>
 
 const ReplyingTo = forwardRef(function(replyingTo: ReplyingToProps, ref: ForwardedRef<HTMLDivElement>) {
-  const { chatWith, replyId, sentByMe, displayText, replyToOwn, highlightReplied, renderClose } = replyingTo;
+  const [text, setText] = useState("");
+  const { chatWith, replyId, sentByMe, maxChars, displayText, replyToOwn, highlightReplied, renderClose } = replyingTo;
   const repliedColor = sentByMe ? "#e8fae5" : "#f2f2f2";
   const repliedOutlineColor = replyToOwn ? "#53bdeb" : "#06cf9c";
   const repliedBorderColor = sentByMe ? "#bddcb8" : "#c7c7c7";
   const repliedBorder = `thin solid ${repliedBorderColor}`;
+
+  useEffect(() => {
+    truncateMarkdown(displayText, maxChars).then((truncated) => setText(truncated));
+  }, [displayText]);
+  
   const main = useMemo(() => (
     <Stack direction="column" justifyContent="flex-start" sx={{ display: "flex", textAlign: "left", padding: 1 }}>
       <DisableSelectTypography component="span" level="body3" fontWeight="bold" textColor={repliedOutlineColor}>
@@ -33,11 +41,11 @@ const ReplyingTo = forwardRef(function(replyingTo: ReplyingToProps, ref: Forward
         <ReactMarkdownVariableEmoji 
           className="react-markdown" 
           components={{ p: "span" }}
-          children={displayText}
+          children={text}
           remarkPlugins={[remarkGfm, remarkMath, twemoji]}
           rehypePlugins={[rehypeKatex, rehypeRaw]}/>
       </DisableSelectTypography>
-    </Stack>), [repliedOutlineColor, replyToOwn, chatWith, displayText]);
+    </Stack>), [repliedOutlineColor, replyToOwn, chatWith, text]);
 
   const stack = useMemo(() => (
     renderClose

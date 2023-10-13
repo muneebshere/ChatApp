@@ -105,7 +105,7 @@ export const ReactMarkdownLastPara = styled(ReactMarkdownVariableEmoji)`
     margin-bottom: var(--markdown-margin-bottom);
   }
 
-  & > p:last-child:after {
+  & > :last-child:after {
     content: "";
     display: block;
     float: right;

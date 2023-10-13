@@ -5,7 +5,7 @@ import { ChattingSession, SendingMessage, ViewChatRequest } from "./e2e-encrypti
 import * as crypto from "../../shared/cryptoOperator";
 import { MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, SocketServerSideEvents, DeliveryInfo, Receipt, Backup  } from "../../shared/commonTypes";
 import { DateTime } from "luxon";
-import { allSettledResults, awaitCallback, logError, randomFunctions, truncateText } from "../../shared/commonFunctions";
+import { allSettledResults, awaitCallback, logError, randomFunctions } from "../../shared/commonFunctions";
 import { ClientChatInterface, ClientChatRequestInterface } from "./Client";
 import { noProfilePictureImage } from "./noProfilePictureImage";
 
@@ -606,7 +606,7 @@ export class Chat extends AbstractChat {
         const repliedTo = await this.getMessageById(replyId);
         if (!repliedTo) return undefined;
         const replyToOwn = repliedTo.sentByMe;
-        const displayText = truncateText(repliedTo.text);
+        const displayText = repliedTo.text;
         return { replyId, replyToOwn, displayText };
     }
 

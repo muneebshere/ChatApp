@@ -6,7 +6,7 @@ import { NewChatPopup, NewMessageDialog } from "./NewChat";
 import { DisableSelectTypography, ReactMarkdownVariableEmoji, StyledScrollbar } from "./CommonElementStyles";
 import Client from "../Client";
 import { DateTime } from "luxon";
-import { truncateText } from "../../../shared/commonFunctions";
+import { truncateMarkdown } from "../../../shared/commonFunctions";
 import { AwaitedRequest, Chat, ChatRequest } from "../ChatClasses";
 import { flushSync } from "react-dom";
 import { useUpdateEffect } from "usehooks-ts";
@@ -135,6 +135,7 @@ function ChatCard({ chat, isCurrent, setCurrent }: ChatCardProps) {
   const [refresh, setRefresh] = useState({});
   const { displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages, draft } = refresh && chat.details; 
   const { text, timestamp, sentByMe, delivery } = lastActivity;
+  const [displayText, setDisplayText] = useState(""); 
   const status = useMemo(() => {
     const commonProps: SxProps = { fontSize: "1rem", marginRight: "6px", marginBlock: "auto" };
     if (!sentByMe) return null;
@@ -155,6 +156,10 @@ function ChatCard({ chat, isCurrent, setCurrent }: ChatCardProps) {
     if (diff < 7) return dt.weekdayLong;
     return dt.toFormat("dd/LL/y");
   }
+
+  useEffect(() => {
+    truncateMarkdown(draft ? draft : text, 50).then((truncated) => setDisplayText(truncated));
+  }, [draft, text]);
 
   useLayoutEffect(() => {
     chat.subscribeActivity(() => setRefresh({}));
@@ -198,7 +203,7 @@ function ChatCard({ chat, isCurrent, setCurrent }: ChatCardProps) {
                     <ReactMarkdownVariableEmoji 
                     className="react-markdown" 
                     components={{ p: "span", div: "span" }}
-                    children={truncateText(draft ? draft : text, 50)}
+                    children={displayText}
                     remarkPlugins={[remarkGfm, remarkMath, twemoji]}
                     rehypePlugins={[rehypeKatex, rehypeRaw]}/>
                   </DisableSelectTypography>

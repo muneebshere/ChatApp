@@ -1,5 +1,6 @@
 import _ from "lodash";
-import React, { createContext, memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { v4 as uuidv4 } from "uuid";
+import React, { createContext, forwardRef, memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useEffectOnce, useUpdateEffect } from "usehooks-ts";
 import { Grid, Stack } from "@mui/joy";
 import { DoneSharp, DoneAllSharp, HourglassTop } from "@mui/icons-material";
@@ -11,6 +12,7 @@ import remarkMath from "remark-math";
 import twemoji from "../custom_modules/remark-twemoji";
 import rehypeRaw from "rehype-raw";
 import rehypeKatex from "rehype-katex";
+import mermaid from "mermaid";
 import { DateTime } from "luxon";
 import SvgMessageCard from "./SvgMessageCard";
 import "katex/dist/katex.min.css";
@@ -22,6 +24,10 @@ import useSwipeDrag from "./Hooks/useSwipeDrag";
 import { ChatMessage } from "../ChatClasses";
 import { useSize } from "./Hooks/useSize";
 import styled from "@emotion/styled";
+import { logError } from "../../../shared/commonFunctions";
+import { CodeComponent } from "react-markdown/lib/ast-to-react";
+
+mermaid.initialize({ startOnLoad: false });
 
 interface HTMLDivElementScroll extends HTMLDivElement {
   scrollIntoViewIfNeeded(centerIfNeeded?: boolean): void;
@@ -134,7 +140,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
     return { crossAxis }
   }
   const replyingData = useMemo(() => ({ replyId: messageId, replyToOwn: sentByMe, displayText: text }), []);
-  const onClick: React.MouseEventHandler<HTMLDivElement> = (event) => {
+  const onReplyClick: React.MouseEventHandler<HTMLDivElement> = (event) => {
     if (event.detail >= 2) {
       setReplyTo(replyingData);
       if (window.navigator.userActivation.isActive) {
@@ -197,7 +203,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
   const repliedMessage = useMemo(() => {
     const props = replyingToInfo ? { chatWith, sentByMe, highlightReplied, ...replyingToInfo } : null;
     return replyingToInfo
-      ? <ReplyingToMemo { ...props}/>
+      ? <ReplyingToMemo { ...props} maxChars={200}/>
       : null
 
   }, [messageId]);
@@ -205,7 +211,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
   const side = sentByMe ? "flex-end" : "flex-start";
   const messageColor = sentByMe ? "#d7fad1" : "white";
   return (
-    <Grid container sx={{ display: "flex", flexGrow: 1, justifyContent: side, height: "fit-content", maxWidth: "100%" }} onClick={onClick} ref={scrollRef} {...handlers}>
+    <Grid container sx={{ display: "flex", flexGrow: 1, justifyContent: side, height: "fit-content", maxWidth: "100%" }} onClick={onReplyClick} ref={scrollRef} {...handlers}>
       <Grid xs={10} sm={8} lg={7} sx={{ display: "flex", flexGrow: 0, justifyContent: side, height: "fit-content" }}>
         <StyledSheet className="MessageCard" sx={{ width: "100%", display: "flex", flexGrow: 1, justifyContent: side, alignContent: "flex-start", padding: 0, margin: 0 }} ref={sheetRef} id={messageId} data-seen={sentByMe ? 10 : delivery?.seen}>
           <SvgMessageCard background={messageColor} first={isFirstOfType} sentByMe={sentByMe} shadowColor="#adb5bd" darken={darken} darkenFinished={() => setDarken(false) }>
@@ -216,44 +222,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
                     alignContent: "flex-start", 
                     textAlign: "start" }}>
                 {repliedMessage && repliedMessage}
-              <ScrollingTypography
-                id={`${messageId}-body`} 
-                ref={bodyRef}
-                component="span"
-                sx={{ 
-                  width: fixedWidth ? `${fixedWidth}px` : "fit-content",
-                  marginBottom: fixedWidth ? "12px" : undefined,
-                  paddingBottom: fixedWidth ? "2px" : undefined,
-                  overflowX: fixedWidth ? "scroll" : "clip",
-                  overflowY: "clip",
-                  "--markdown-emoji-size": "22px",
-                  "--markdown-large-emoji-size": "66px",
-                  "--markdown-margin-bottom": "8px",
-                  "--markdown-after-width": `${statusWidth}px`,
-                  "--markdown-after-height": `${statusHeight}px`,
-                  "--markdown-after-margin-top": "4px",
-                  "--markdown-after-margin-left": "16px",
-                  "::-webkit-scrollbar-button:end:increment": {
-                    display: "block",
-                    color: "transparent",
-                    width: `${statusWidth + 12}px`
-                  } }}
-                onClick={async (event) => {
-                  if (event.button === 0 && event.detail >= 2) {
-                    await navigator.clipboard.writeText(text);
-                    displayToast();
-                    if (window.navigator.userActivation.isActive) {
-                      window.navigator.vibrate(10);
-                    }
-                    event.stopPropagation();
-                  }
-                }}>
-                <ReactMarkdownLastPara
-                  className="react-markdown" 
-                  children={modifyOnlyEmojies(text)} 
-                  remarkPlugins={[remarkGfm, remarkMath, twemoji]}
-                  rehypePlugins={[rehypeKatex, rehypeRaw]}/>
-              </ScrollingTypography>
+                <MessageBody {...{ chatWith, messageId, fixedWidth, statusWidth, statusHeight, text, displayToast }} ref={(bodyElem) => bodyRef.current = bodyElem}/>
               <Stack ref={statusRef} 
                     direction="row" 
                     spacing={1} 
@@ -292,6 +261,103 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
     </Grid>
   )
 }
+
+type MessageBodyProps = Readonly<{
+  chatWith: string,
+  messageId: string,
+  fixedWidth: number,
+  statusWidth: number,
+  statusHeight: number,
+  text: string,
+  displayToast: () => void
+}>
+
+const MessageBody = forwardRef<HTMLSpanElement>(function ({ chatWith, messageId, fixedWidth, statusWidth, statusHeight, text, displayToast }: MessageBodyProps, bodyRef: (elem: HTMLSpanElement) => void) {
+
+  function killFootnotes(bodyElem: HTMLSpanElement) {
+    bodyRef(bodyElem);
+    const links = bodyElem?.querySelectorAll("a") || [];
+    for (const link of links) {
+      if (link.href.includes("#")) link.removeAttribute("href");
+    }
+  }
+
+  async function doubleClickCopy(event: React.MouseEvent<HTMLSpanElement, MouseEvent>) {
+    if (event.button === 0 && event.detail >= 2) {
+      await navigator.clipboard.writeText(text);
+      displayToast();
+      if (window.navigator.userActivation.isActive) {
+        window.navigator.vibrate(10);
+      }
+      event.stopPropagation();
+    }
+  }
+
+  const handleMermaidOrCode: CodeComponent = 
+    ({ node, inline, className, children, ...props }) => {
+      if (className === "language-mermaid" && !inline) {
+        const definition = (children as string[])[0];
+        async function renderMermaid(elem: HTMLPreElement) {
+          const id = `x${uuidv4().split("-")[0]}`;
+          try {
+            const { svg, bindFunctions } = await mermaid.render(id, definition, elem);
+            elem.innerHTML = svg;
+            bindFunctions(elem);
+            const { height } = elem.getBoundingClientRect();
+            document.querySelector(`#scroll-${chatWith.split(" ")[0]}`).scrollBy({ top: height, behavior: "instant" });
+          }
+          catch(e) {
+            logError(e);
+          }
+        }
+        return (<pre className="mermaid" ref={renderMermaid}>
+          {definition}
+        </pre>);
+      }
+      else {
+        const code = (<code {...props} className={className}>
+                        {children}
+                      </code>);
+        return inline
+                  ? code
+                  : (<pre className={className}>
+                    {code}
+                    </pre>);
+      }
+    }
+
+  return (
+    <ScrollingTypography
+      id={`${messageId}-body`} 
+      ref={killFootnotes}
+      component="span"
+      sx={{ 
+        width: fixedWidth ? `${fixedWidth}px` : "fit-content",
+        marginBottom: fixedWidth ? "12px" : undefined,
+        paddingBottom: fixedWidth ? "2px" : undefined,
+        overflowX: fixedWidth ? "scroll" : "clip",
+        overflowY: "clip",
+        "--markdown-emoji-size": "22px",
+        "--markdown-large-emoji-size": "66px",
+        "--markdown-margin-bottom": "8px",
+        "--markdown-after-width": `${statusWidth}px`,
+        "--markdown-after-height": `${statusHeight}px`,
+        "--markdown-after-margin-top": "4px",
+        "--markdown-after-margin-left": "16px",
+        "::-webkit-scrollbar-button:end:increment": {
+          display: "block",
+          color: "transparent",
+          width: `${statusWidth + 12}px`
+        } }}
+      onClick={doubleClickCopy}>
+      <ReactMarkdownLastPara
+        className="react-markdown"
+        children={modifyOnlyEmojies(text)} 
+        remarkPlugins={[remarkGfm, remarkMath, twemoji]}
+        rehypePlugins={[rehypeKatex, rehypeRaw]}
+        components={{ pre: "div", code: handleMermaidOrCode }}/>
+    </ScrollingTypography>);
+})
 
 const MessageCardMemo = memo(MessageCardWithHighlight, 
   (prev, next) => 

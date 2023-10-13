@@ -14,7 +14,7 @@ import { ReplyingToProps, ReplyingToMemo } from "./ReplyingTo";
 import { MessageCardContext, MessageCardContextData } from "./MessageCard";
 import { ReplyingToInfo } from "../../../shared/commonTypes";
 import { Chat } from "../ChatClasses";
-import { truncateText } from "../../../shared/commonFunctions";
+import { truncateMarkdown, escapeHtml } from "../../../shared/commonFunctions";
 import { ChatHeaderMemo } from "./ChatHeader";
 import Toast from "./Toast";
 import Popover, { PopoverContent, PopoverTrigger } from "./Popover";
@@ -82,8 +82,7 @@ function useReplyingTo(chatWith: string, setHighlight: (highlight: string) => vo
   const replyToElement = useMemo(() => {
     if (!replyTo) return null;
     const { replyId, displayText: content, replyToOwn } = replyTo;
-    const displayText = truncateText(content, belowXL ? 80 : 200);
-    const replyData: ReplyingToProps = { chatWith, replyId, displayText, replyToOwn, sentByMe: false, highlightReplied: setHighlight, renderClose: () => setReplyTo(null) };
+    const replyData: ReplyingToProps = { chatWith, replyId, displayText: content, maxChars: belowXL ? 80 : 200, replyToOwn, sentByMe: false, highlightReplied: setHighlight, renderClose: () => setReplyTo(null) };
     return (<ReplyingToMemo {...replyData}/>);
   }, [replyTo]);
 
@@ -452,11 +451,12 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
     }
   }, []);
 
-  const sendMessage = () => {
-    const text = messageRef.current;
-    if (!text.trim()) return;
+  const sendMessage = async () => {
+    const rawText = messageRef.current;
+    if (!rawText.trim()) return;
+    const text = rawText.includes("<") && rawText.includes(">") ? await escapeHtml(rawText) : rawText;
     const timestamp = Date.now();
-    chat.sendMessage({ text, timestamp, replyId}).then((success) => {
+    chat.sendMessage({ text, timestamp, replyId }).then(() => {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "instant" });
     });
     chat.sendTyping("stopped-typing", Date.now());
@@ -530,6 +530,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
             <CircularProgress size="sm" variant="soft" color="success"/>
           </div>}
         <StyledScrollbar 
+          id={`scroll-${displayName.split(" ")[0]}`}
           ref={scrollRef} 
           sx={{ paddingBottom: 0, paddingTop: chat.canLoadFurther ? "1px" : 0, visibility: !rendered ? "hidden" : undefined }}>
           <MessageCardContext.Provider value={contextData}>
