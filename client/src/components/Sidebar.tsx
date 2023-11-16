@@ -7,7 +7,7 @@ import { DisableSelectTypography, ReactMarkdownVariableEmoji, StyledScrollbar } 
 import Client from "../Client";
 import { DateTime } from "luxon";
 import { truncateMarkdown } from "../../../shared/commonFunctions";
-import { AwaitedRequest, Chat, ChatRequest } from "../ChatClasses";
+import { SentChatRequest, Chat, ReceivedChatRequest } from "../ChatClasses";
 import { flushSync } from "react-dom";
 import { useUpdateEffect } from "usehooks-ts";
 import remarkGfm from "remark-gfm";
@@ -21,7 +21,7 @@ type SidebarProps = {
   currentChatWith: string,
   openChat: (chatWith: string) => void,
   client: Client,
-  chats: (Chat | ChatRequest | AwaitedRequest)[],
+  chats: (Chat | ReceivedChatRequest | SentChatRequest)[],
   belowXL: boolean,
   allowLeaveFocus: React.MutableRefObject<boolean>,
   giveBackFocus: React.MutableRefObject<() => void>
@@ -126,7 +126,7 @@ export default function Sidebar({ currentChatWith, openChat, chats, client, belo
 }
 
 type ChatCardProps = Readonly<{
-  chat: Chat | ChatRequest | AwaitedRequest
+  chat: Chat | ReceivedChatRequest | SentChatRequest
   isCurrent: boolean,
   setCurrent: () => void
 }>;

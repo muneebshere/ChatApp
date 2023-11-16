@@ -4,8 +4,8 @@ import { useMediaQuery, Theme } from "@mui/material";
 import Sidebar from "./Sidebar";
 import { ChatViewMemo, ScrollState } from "./ChatView";
 import Client, { ConnectionStatus } from "../Client";
-import { ChatRequestView } from "./ChatRequestView";
-import { AwaitedRequestView } from "./AwaitedRequestView";
+import { ReceivedChatRequestView } from "./ReceivedChatRequestView";
+import { SentChatRequestView } from "./SentChatRequestView";
 import DisconnectedAlert, { DisconnectedStatus } from "./DisconnectedAlert";
 
 export type ClientConnectionStatus = Exclude<ConnectionStatus, "NotLoaded" | "NotLoggedIn" | "LoggingOut">;
@@ -61,11 +61,11 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
         allowLeaveFocus={allowLeaveFocus}
         giveBackFocus={giveBackFocus}/>);
     }
-    else if (chat?.type === "ChatRequest") {
-      return (<ChatRequestView key={currentChatWith ?? ""} chatRequest={chat}/>);
+    else if (chat?.type === "ReceivedRequest") {
+      return (<ReceivedChatRequestView key={currentChatWith ?? ""} receivedChatRequest={chat}/>);
     }
-    else if (chat?.type === "AwaitedRequest") {
-      return (<AwaitedRequestView key={currentChatWith ?? ""} awaitedRequest={chat}/>);
+    else if (chat?.type === "SentRequest") {
+      return (<SentChatRequestView key={currentChatWith ?? ""} sentChatRequest={chat}/>);
     }
     return null;
   }

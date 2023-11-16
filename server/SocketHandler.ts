@@ -1,11 +1,11 @@
 import _ from "lodash";
 import { Socket } from "socket.io";
 import { SessionCrypto } from "../shared/sessionCrypto";
-import { Failure, ErrorStrings, Username, PublishKeyBundlesRequest, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, UserEncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Receipt, MessageIdentifier, ChatIdentifier, SessionIdentifier, HeaderIdentifier, Backup } from "../shared/commonTypes";
-import { allSettledResults, failure, logError, typedEntries } from "../shared/commonFunctions";
-import MongoHandlerCentral from "./MongoHandler";
+import { Failure, ErrorStrings, Username, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, UserEncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Receipt, MessageIdentifier, ChatIdentifier, SessionIdentifier, HeaderIdentifier, Backup, SocketServerSideEventsKey, SocketServerRequestParameters, SocketServerRequestReturn, ServerMemo } from "../shared/commonTypes";
+import { allSettledResults, awaitCallback, failure, logError, typedEntries } from "../shared/commonFunctions";
+import MongoHandlerCentral, { ServerConfig } from "./MongoHandler";
 
-export type Notify = Readonly<{ type: "Message" | "Receipt", sessionId: string } | { type: "Request" }>;
+export type Notify = Readonly<{ type: "Message" | "Receipt", sessionId: string } | { type: "ServerMemo", serverMemos: ServerMemo[] } | { type: "Request" }>;
 
 type ResponseMap = Readonly<{
     [E in SocketClientSideEventsKey]: (arg: SocketClientRequestParameters[E]) => Promise<SocketClientRequestReturn[E] | Failure>
@@ -90,13 +90,15 @@ function halfCreateRoom(roomUser1: RoomUser, messageTimeoutMs = 20000) {
 }
 
 export default class SocketHandler {
+    static serverConfig: ServerConfig;
     private static socketHandlers = new Map<string, SocketHandler>();
     private static onlineUsers = new Map<string, { sessionReference: string, ipRep: string }>();
 
     private readonly responseMap: ResponseMap = {
+        [SocketClientSideEvents.ClientLoaded]: this.OnClientLoad,
         [SocketClientSideEvents.UsernameExists]: this.UsernameExists,
-        [SocketClientSideEvents.PublishKeyBundles]: this.PublishKeyBundles,
-        [SocketClientSideEvents.UpdateUserData]: this.UpdateUserData,
+        [SocketClientSideEvents.UpdateX3DHInfo]: this.UpdateX3DHInfo,
+        [SocketClientSideEvents.FetchX3DHInfo]: this.FetchX3DHInfo,
         [SocketClientSideEvents.RequestKeyBundle]: this.RequestKeyBundle,
         [SocketClientSideEvents.GetAllChats]: this.GetAllChats,
         [SocketClientSideEvents.GetAllRequests]: this.GetAllRequests,
@@ -116,12 +118,14 @@ export default class SocketHandler {
         [SocketClientSideEvents.StoreBackup]: this.StoreBackup,
         [SocketClientSideEvents.GetBackupById]: this.GetBackupById,
         [SocketClientSideEvents.BackupProcessed]: this.BackupProcessed,
+        [SocketClientSideEvents.ServerMemosProcessed]: this.ServerMemosProcessed,
         [SocketClientSideEvents.SendReceipt]: this.SendReceipt,
         [SocketClientSideEvents.GetAllReceipts]: this.GetAllReceipts,
         [SocketClientSideEvents.ClearAllReceipts]: this.ClearAllReceipts,
         [SocketClientSideEvents.RequestRoom]: this.RoomRequested
     };
     private readonly deleteSelf: () => void;
+    private interval: NodeJS.Timeout;
     #sessionCrypto: SessionCrypto;
     #socket: Socket;
     #mongoHandler: typeof MongoHandlerCentral.UserHandlerType;
@@ -160,7 +164,7 @@ export default class SocketHandler {
         this.#username = username;
         this.#mongoHandler = mongoHandler;
         this.#sessionCrypto = sessionCrypto;
-        this.#mongoHandler.subscribe(this.notifyMessage.bind(this));
+        this.#mongoHandler.subscribe(this.notify.bind(this));
         this.deleteSelf = () => SocketHandler.socketHandlers.delete(sessionReference);
         SocketHandler.socketHandlers.set(sessionReference, this);
         SocketHandler.onlineUsers.set(username, { sessionReference, ipRep });
@@ -172,6 +176,7 @@ export default class SocketHandler {
     }
 
     private async deregisterSocket(reason: string) {
+        clearInterval(this.interval);
         if (this.#socket) {
             console.log(`Disonnected: socket#${this.#socket.id}`);
             this.#disposeRooms.forEach((disposeRoom) => disposeRoom());
@@ -193,24 +198,27 @@ export default class SocketHandler {
             socket.on(event, async (data: string, resolve) => await this.respond(event, data, responseBy, resolve));
         }
         socket.on("disconnect", async () => await this.deregisterSocket(""));
+        this.interval = setInterval(async () => {
+            const response = await this.request(SocketServerSideEvents.PollConnection, [], 9500);
+            if (response?.reason !== false || response.details.alive !== "aliveHere") this.dispose("No response when polled.");
+        })
         return true;
     }
 
-    private async request(event: string, data: any, timeout = 0): Promise<any> {
-        return await new Promise(async (resolve: (result: any) => void) => {
-            this.#socket?.emit(event, await this.#sessionCrypto?.signEncryptToBase64(data, event),
-                async (response: string) => resolve((response && await this.#sessionCrypto?.decryptVerifyFromBase64(response, event)) || failure(ErrorStrings.DecryptFailure)));
+    private async request<E extends SocketServerSideEventsKey>(event: E, data: SocketServerRequestParameters[E], timeout = 0): Promise<SocketServerRequestReturn[E] | Failure> {
+        if (!this.#socket) return failure(ErrorStrings.NoConnectivity);
+        const { payload } = await awaitCallback<any>(async (resolve) => {
+            this.#socket.emit(event, (await this.#sessionCrypto?.signEncryptToBase64({ payload: data }, event)),
+                async (response: string) => resolve((response && await this.#sessionCrypto?.decryptVerifyFromBase64(response, event)) || {}));
             if (timeout > 0) {
                 setTimeout(() => resolve(failure(ErrorStrings.NoConnectivity)), timeout);
             }
-        }).catch((err) => {
-            logError(err);
-            return failure(ErrorStrings.ProcessFailed);
         });
+        return payload || failure(ErrorStrings.DecryptFailure);
     }
 
-    private async respond(event: SocketClientSideEventsKey, data: string, responseBy: (arg: SocketClientRequestParameters[typeof event]) => Promise<SocketClientRequestReturn[typeof event] | Failure>, resolve: (arg0: string) => void) {
-        const encryptResolve = async (response: SocketClientRequestReturn[typeof event] | Failure) => {
+    private async respond<E extends SocketClientSideEventsKey>(event: E, data: string, responseBy: (arg: SocketClientRequestParameters[E]) => Promise<SocketClientRequestReturn[E] | Failure>, resolve: (arg0: string) => void) {
+        const encryptResolve = async (response: SocketClientRequestReturn[E] | Failure) => {
             if (!this.#sessionCrypto) resolve(null);
             else resolve(await this.#sessionCrypto?.signEncryptToBase64({ payload: response }, event));
         }
@@ -218,7 +226,7 @@ export default class SocketHandler {
             const decryptedData = await this.#sessionCrypto?.decryptVerifyFromBase64(data, event);
             if (!decryptedData) await encryptResolve(failure(ErrorStrings.DecryptFailure));
             else {
-                const response = await responseBy(decryptedData);
+                const response = await responseBy(decryptedData.payload);
                 if (!response) await encryptResolve(failure(ErrorStrings.ProcessFailed));
                 else {
                     encryptResolve(response);
@@ -229,6 +237,49 @@ export default class SocketHandler {
             logError(err)
             encryptResolve(failure(ErrorStrings.ProcessFailed, err));
         }
+    }
+
+    private async OnClientLoad(): Promise<Failure> {
+        const { minOneTimeKeys, maxOneTimeKeys, replaceKeyAtMillis } = SocketHandler.serverConfig;
+        const { preKeyLastReplacedAt, currentOneTimeKeysNumber } = this.#mongoHandler.getKeyStats();
+        const preKeyResult = await this.replacePreKey(preKeyLastReplacedAt, replaceKeyAtMillis);
+        const oneTimeKeyResult = await this.newOneTimeKeys(minOneTimeKeys, maxOneTimeKeys, currentOneTimeKeysNumber);
+        if (preKeyResult?.reason !== false || oneTimeKeyResult?.reason !== false) {
+            logError(`${preKeyResult.reason}\n${oneTimeKeyResult.reason}`);
+            return failure(ErrorStrings.ProcessFailed, { preKeyResult, oneTimeKeyResult });
+        }
+        return { reason: false };
+    }
+
+    private async replacePreKey(preKeyLastReplacedAt: number, replaceKeyAtMillis: number): Promise<Failure> {
+        if (preKeyLastReplacedAt === 0 || (Date.now() - preKeyLastReplacedAt) > replaceKeyAtMillis) {
+            const response = await this.request(SocketServerSideEvents.RequestIssueNewKeys, { n: 0 });
+            if ("reason" in response) {
+                logError(response);
+                return failure(ErrorStrings.ProcessFailed, response);
+            }
+            if (!(await this.#mongoHandler.rotateKeys(response))) {
+                logError("Couldn't change preKey in database.");
+                return failure(ErrorStrings.ProcessFailed);
+            };
+        }
+        return { reason: false };
+    }
+
+    private async newOneTimeKeys(minOneTimeKeys: number, maxOneTimeKeys: number, currentOneTimeKeysNumber: number): Promise<Failure> {
+        if (currentOneTimeKeysNumber < minOneTimeKeys) {
+            const n = maxOneTimeKeys - currentOneTimeKeysNumber;
+            const response = await this.request(SocketServerSideEvents.RequestIssueNewKeys, { n });
+            if ("reason" in response) {
+                logError(response);
+                return failure(ErrorStrings.ProcessFailed, response);
+            }
+            if (!(await this.#mongoHandler.rotateKeys(response))) {
+                logError("Couldn't set oneTimeKeys in database.");
+                return failure(ErrorStrings.ProcessFailed);
+            };
+        }
+        return { reason: false };
     }
 
     private async UsernameExists({ username }: Username): Promise<{ exists: boolean }> {
@@ -242,21 +293,20 @@ export default class SocketHandler {
 
     }
 
-    private async UpdateUserData(userData: { x3dhInfo?: UserEncryptedData, chatsData?: UserEncryptedData } & Username): Promise<Failure> {
-        if (!this.#username || this.#username !== userData.username) return failure(ErrorStrings.InvalidRequest);
-        if (!(await this.#mongoHandler.updateUserData(userData))) return failure(ErrorStrings.ProcessFailed);
+    private async UpdateX3DHInfo(userData: { x3dhInfo: UserEncryptedData }): Promise<Failure> {
+        if (!this.#username) return failure(ErrorStrings.InvalidRequest);
+        if (!(await this.#mongoHandler.updateX3dhInfo(userData))) return failure(ErrorStrings.ProcessFailed);
         return { reason: false };
     }
-
-    private async PublishKeyBundles(keyBundles: PublishKeyBundlesRequest): Promise<Failure> {
+ 
+    private async FetchX3DHInfo(): Promise<{ x3dhIdentity: UserEncryptedData, x3dhInfo: UserEncryptedData } | Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
-        if (!(await this.#mongoHandler.publishKeyBundles(keyBundles))) return failure(ErrorStrings.ProcessFailed);
-        return { reason: false };
+        return _.pick(this.#mongoHandler.getUserData(), "x3dhIdentity", "x3dhInfo");
     }
 
     private async RequestKeyBundle({ username }: Username): Promise<RequestKeyBundleResponse | Failure> {
         if (!this.#username || username === this.#username) return failure(ErrorStrings.InvalidRequest);
-        const keyBundle = await MongoHandlerCentral.getKeyBundle(username);
+        const keyBundle = await this.#mongoHandler.getKeyBundle(username);
         if (!keyBundle) return failure(ErrorStrings.ProcessFailed);
         return { keyBundle };
     }
@@ -374,6 +424,12 @@ export default class SocketHandler {
         return { reason: false };
     }
 
+    private async ServerMemosProcessed({ processed, x3dhInfo }: { processed: string[], x3dhInfo: UserEncryptedData }): Promise<Failure> {
+        if (!this.#username) return failure(ErrorStrings.InvalidRequest);
+        if (!(await this.#mongoHandler.discardMemos(processed, x3dhInfo))) return failure(ErrorStrings.ProcessFailed);
+        return { reason: false };
+    }
+
     private async SendReceipt(receipt: Receipt): Promise<Failure> {
         if (!this.#username || this.#username === receipt.toAlias) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.depositReceipt(receipt))) return failure(ErrorStrings.ProcessFailed);
@@ -412,12 +468,15 @@ export default class SocketHandler {
         });
     }
 
-    private async notifyMessage(notify: Notify) {
+    private async notify(notify: Notify) {
         if (notify.type === "Request") {
             await this.request(SocketServerSideEvents.ChatRequestReceived, []);
         }
         else if (notify.type === "Message") {
             await this.request(SocketServerSideEvents.MessageReceived, _.pick(notify, "sessionId"));
+        }
+        else if (notify.type === "ServerMemo") {
+            await this.request(SocketServerSideEvents.ServerMemoDeposited, _.pick(notify, "serverMemos"));
         }
         else {
             await this.request(SocketServerSideEvents.ReceiptReceived, _.pick(notify, "sessionId"));

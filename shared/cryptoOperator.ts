@@ -245,8 +245,11 @@ export async function exportSignedKeyPair(signedKeyPair: SignedKeyPair, keyBits:
     return { exportedPublicKey, wrappedPrivateKey, signature };
 }
 
-export async function verifyKey(signedKey: ExposedSignedPublicKey, verifyingKey: CryptoKey): Promise<CryptoKey> {
+export async function verifyKey(signedKey: ExposedSignedPublicKey, verifyingKey: CryptoKey | BufferSource): Promise<CryptoKey> {
     const { exportedPublicKey, signature } = signedKey;
+    if (!("algorithm" in verifyingKey)) {
+        verifyingKey = await importKey(verifyingKey, "ECDSA", "public", false);   
+    }
     if (!(await verify(exportedPublicKey, signature, verifyingKey)))
         return null;
     return await importKey(exportedPublicKey, "ECDH", "public", true);

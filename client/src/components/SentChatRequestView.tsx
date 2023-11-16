@@ -6,16 +6,16 @@ import { DayCard } from "./MessageList";
 import { StyledSheet, DisableSelectTypography } from "./CommonElementStyles";
 import MessageCard from "./MessageCard";
 import { DateTime } from "luxon";
-import { AwaitedRequest } from "../ChatClasses";
+import { SentChatRequest } from "../ChatClasses";
 import { ChatHeaderMemo } from "./ChatHeader";
 
 
-type AwaitedRequestViewProps = {
-  awaitedRequest: AwaitedRequest;
+type SentChatRequestViewProps = {
+  sentChatRequest: SentChatRequest;
 }
 
-export function AwaitedRequestView({ awaitedRequest }: AwaitedRequestViewProps) {
-  const { details: chatDetails, chatMessage, otherUser } = awaitedRequest;
+export function SentChatRequestView({ sentChatRequest }: SentChatRequestViewProps) {
+  const { details: chatDetails, chatMessage, otherUser } = sentChatRequest;
   const { lastActivity: { timestamp: lastActive } } = chatDetails;
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
 

@@ -1,12 +1,12 @@
 import _ from "lodash";
 import { Socket } from "socket.io-client";
 import { SessionCrypto } from "../../shared/sessionCrypto";
-import { ChattingSession, SendingMessage, ViewChatRequest } from "./e2e-encryption";
+import { ChattingSession, SendingMessage, ViewReceivedRequest } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
 import { MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, SocketServerSideEvents, DeliveryInfo, Receipt, Backup  } from "../../shared/commonTypes";
 import { DateTime } from "luxon";
 import { allSettledResults, awaitCallback, logError, randomFunctions } from "../../shared/commonFunctions";
-import { ClientChatInterface, ClientChatRequestInterface } from "./Client";
+import { ClientChatInterface, ClientReceivedChatRequestInterface } from "./Client";
 import { noProfilePictureImage } from "./noProfilePictureImage";
 
 const { getRandomString } = randomFunctions();
@@ -25,7 +25,7 @@ export type ChatDetails = Readonly<{
 export abstract class AbstractChat {
     abstract get sessionId(): string;
     abstract get details(): ChatDetails;
-    abstract get type(): "Chat" | "ChatRequest" | "AwaitedRequest";
+    abstract get type(): "Chat" | "ReceivedRequest" | "SentRequest";
     abstract get lastActive(): number;
     abstract subscribeActivity(notifyActivity: () => void): void;
     abstract unsubscribeActivity(): void;
@@ -39,12 +39,12 @@ export abstract class AbstractChat {
     }
 }
 
-export class AwaitedRequest extends AbstractChat {
+export class SentChatRequest extends AbstractChat {
     readonly sessionId: string;
     readonly otherUser: string;
     readonly chatMessage: ChatMessage;
     readonly lastActive: number;
-    readonly type = "AwaitedRequest";
+    readonly type = "SentRequest";
     readonly details: ChatDetails;
 
     constructor(otherUser: string, sessionId: string, messageId: string, timestamp: number, text: string) {
@@ -78,15 +78,14 @@ export class AwaitedRequest extends AbstractChat {
     }
 }
 
-export class ChatRequest extends AbstractChat {
-    readonly type = "ChatRequest";
+export class ReceivedChatRequest extends AbstractChat {
+    readonly type = "ReceivedRequest";
     readonly otherUser: string;
     readonly chatMessage: ChatMessage;
     readonly sessionId: string;
     readonly lastActive: number;
     private readonly contactDetails: Omit<Contact, "username">;
-    private readonly chatRequestHeader: ChatRequestHeader;
-    private readonly clientInterface: ClientChatRequestInterface;
+    private readonly clientInterface: ClientReceivedChatRequestInterface;
     private readonly isOnline = false;
     private readonly isOtherTyping = false;
     private unreadMessages = 1;
@@ -98,7 +97,7 @@ export class ChatRequest extends AbstractChat {
         return { otherUser, displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages, draft: null };
     }
 
-    constructor(chatRequestHeader: ChatRequestHeader, clientInterface: ClientChatRequestInterface, viewRequest: ViewChatRequest) {
+    constructor(clientInterface: ClientReceivedChatRequestInterface, viewRequest: ViewReceivedRequest) {
         super();
         const { text, messageId, sessionId, timestamp, profile: { username: otherUser, ...contactDetails } } = viewRequest;
         this.sessionId = sessionId;
@@ -106,16 +105,15 @@ export class ChatRequest extends AbstractChat {
         this.lastActive = timestamp;
         this.contactDetails = contactDetails;
         this.chatMessage = ChatMessage.new({ messageId, text, timestamp, sentByMe: false }, true)[0];
-        this.chatRequestHeader = chatRequestHeader;
         this.clientInterface = clientInterface;
     }
 
     async rejectRequest() {
-        return await this.clientInterface.rejectRequest(this.otherUser, this.sessionId, this.chatRequestHeader.yourOneTimeKeyIdentifier);
+        return await this.clientInterface.rejectReceivedRequest(this.sessionId);
     }
 
     async respondToRequest(respondingAt: number) {
-        return await this.clientInterface.acceptRequest(this.chatRequestHeader, respondingAt);
+        return await this.clientInterface.acceptReceivedRequest(this.sessionId, respondingAt);
     }
 
     markVisited() {
@@ -189,7 +187,7 @@ export class Chat extends AbstractChat {
     static async instantiate(encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chatData: ChatData, firstMessage?: { messageId: string, text: string, timestamp: number, sentByMe: boolean, respondedAt: number }) {
         const { chatDetails, exportedChattingSession } = chatData;
         const { chatId, contactDetails, timeRatio }: { chatId: string, contactDetails: Contact, timeRatio: number } = await crypto.deriveDecrypt(chatDetails, encryptionBaseVector, "ChatDetails");
-        const chattingSession = await ChattingSession.importSession(exportedChattingSession, encryptionBaseVector);
+        const chattingSession = await clientInterface.importSession(exportedChattingSession);
         const chat = new Chat(chatId, timeRatio, contactDetails, encryptionBaseVector, clientInterface, chattingSession);
         if (firstMessage) {
             const { messageId, text, timestamp, sentByMe, respondedAt } = firstMessage;
@@ -242,7 +240,7 @@ export class Chat extends AbstractChat {
         if (value) {
             this.typingTimeout = window.setTimeout(() => {
                 this.isOtherTyping = false;
-            }, 1500);
+            }, 3000);
         }
     }
 
@@ -564,7 +562,7 @@ export class Chat extends AbstractChat {
         let displayMessage: DisplayMessage;
         if ("event" in messageBody) {
             if (messageBody.event !== "delivered" && messageBody.event !== "seen") {
-                if ((Date.now() - timestamp) < 1500) {
+                if ((Date.now() - timestamp) < 3000) {
                     this.isOtherTyping = messageBody.event === "typing";
                 }
                 return sendReceipt({ bounced: false });
@@ -633,16 +631,12 @@ export class Chat extends AbstractChat {
             await this.clientInterface.BackupProcessed({ byAlias: toAlias, sessionId, headerId });
         }
         else {
-            let sendingMessage: SendingMessage
             const backup = await this.clientInterface.GetBackupById({ byAlias: toAlias, sessionId, headerId });
             if ("reason" in backup) {
                 logError(backup);
                 return;
             }
-            else {
-                sendingMessage: sendingMessage = await crypto.deriveDecrypt(backup.content, this.#encryptionBaseVector, this.sessionId);
-                await this.clientInterface.BackupProcessed({ byAlias: toAlias, sessionId, headerId });
-            }
+            const sendingMessage: SendingMessage = await crypto.deriveDecrypt(backup.content, this.#encryptionBaseVector, this.sessionId);
             await this.dispatchSendingMessage(sendingMessage, true);
         }
 

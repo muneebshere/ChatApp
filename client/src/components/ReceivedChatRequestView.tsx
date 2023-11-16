@@ -6,20 +6,20 @@ import { DayCard } from "./MessageList";
 import { StyledSheet, DisableSelectTypography } from "./CommonElementStyles";
 import MessageCard from "./MessageCard";
 import { DateTime } from "luxon";
-import { ChatRequest } from "../ChatClasses";
+import { ReceivedChatRequest } from "../ChatClasses";
 import { ChatHeaderMemo } from "./ChatHeader";
 
 
-type ChatRequestViewProps = {
-  chatRequest: ChatRequest;
+type ReceivedChatRequestViewProps = {
+  receivedChatRequest: ReceivedChatRequest;
 }
 
-export function ChatRequestView({ chatRequest }: ChatRequestViewProps) {
-  const { details: chatDetails, chatMessage, otherUser } = chatRequest;
+export function ReceivedChatRequestView({ receivedChatRequest }: ReceivedChatRequestViewProps) {
+  const { details: chatDetails, chatMessage, otherUser } = receivedChatRequest;
   const { lastActivity: { timestamp: lastActive } } = chatDetails;
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
 
-  useLayoutEffect(() => chatRequest.markVisited(), []);
+  useLayoutEffect(() => receivedChatRequest.markVisited(), []);
 
   return (
     <StyledSheet sx={{ height: "100%", 
@@ -38,7 +38,7 @@ export function ChatRequestView({ chatRequest }: ChatRequestViewProps) {
       </Stack>
       <Stack direction="column" spacing={1.5} sx={{ flexGrow: 1, display: "flex", flexWrap: "wrap", justifyContent: "center", alignContent: "center" }}>
         <Stack direction="row" spacing={2}>
-          <Button variant="solid" color="success" onClick={() => chatRequest.respondToRequest(Date.now())} style={{ width: "100px" }}>
+          <Button variant="solid" color="success" onClick={() => receivedChatRequest.respondToRequest(Date.now())} style={{ width: "100px" }}>
             Accept
           </Button>
           <DisableSelectTypography level="body2" sx={{ width: "100%", textAlign: "start", color: "lightgrey" }} style={{ marginBlock: "auto" }}>
@@ -46,7 +46,7 @@ export function ChatRequestView({ chatRequest }: ChatRequestViewProps) {
           </DisableSelectTypography>
         </Stack>
         <Stack direction="row" spacing={2}>
-          <Button variant="solid" color="danger" onClick={() => chatRequest.rejectRequest()} style={{ width: "100px" }}>
+          <Button variant="solid" color="danger" onClick={() => receivedChatRequest.rejectRequest()} style={{ width: "100px" }}>
             Reject 
           </Button>
           <DisableSelectTypography level="body2" sx={{ width: "100%", textAlign: "start", color: "lightgrey" }} style={{ marginBlock: "auto" }}>

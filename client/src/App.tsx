@@ -134,11 +134,7 @@ function App() {
     document.body.addEventListener("contextmenu", onContextMenu, { capture: true });
     window.addEventListener("online", updateStatus);
     window.addEventListener("offline", updateStatus);
-    window.addEventListener("beforeunload", (e) => {
-      e.preventDefault();
-      AuthClient.terminateCurrentSession();
-      return false;
-    }, { capture: true, once: true });
+    window.addEventListener("beforeunload", (e) => AuthClient.terminateCurrentSession(), { capture: true, once: true });
     window.visualViewport.addEventListener("resize", updateHeight);
     AuthClient.subscribeConnectionStatus(updateConnectionStatus);
     initiate();

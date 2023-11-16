@@ -12,7 +12,7 @@ import * as crypto from "../shared/cryptoOperator";
 import { serialize, deserialize } from "../shared/cryptoOperator";
 import { SignUpRequest, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, LogInSavedRequest, SavePasswordRequest } from "../shared/commonTypes";
 import { fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
-import MongoHandlerCentral from "./MongoHandler";
+import MongoHandlerCentral, { ServerConfig } from "./MongoHandler";
 import AuthHandler from "./AuthHandler";
 import SocketHandler from "./SocketHandler";
 
@@ -64,6 +64,12 @@ async function watchForJsHashChange() {
     }
 }
 
+export const defaultServerConfig: ServerConfig = {
+    minOneTimeKeys: 50,
+    maxOneTimeKeys: 50,
+    replaceKeyAtMillis: 1000 * 60
+}
+
 async function main() {
     
     const PORT = 8080;
@@ -84,7 +90,8 @@ async function main() {
 
     watchForJsHashChange();
     MongoHandlerCentral.connect(mongoUrl);
-    const { signingKey, verifyingKey, cookieSign } = await MongoHandlerCentral.setupIdentity();
+    const { signingKey, verifyingKey, cookieSign, serverConfig } = await MongoHandlerCentral.setupServer();
+    SocketHandler.serverConfig = serverConfig;
     const authHandler = AuthHandler.initiate(signingKey, verifyingKey);
     const cookieParserMiddle = cookieParser(cookieSign);
     const cookieOptions: CookieOptions = { httpOnly: true, secure: true, sameSite: "strict", signed: true };
@@ -255,9 +262,9 @@ async function main() {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { sessionReference, sessionIp } = req.signedCookies?.authenticated || {};
         const timeout = interruptedAuthentications.get(sessionReference);
+        clearTimeout(timeout);
         if (!timeout) return res.clearCookie("authenticated").json({ resumed: false });
         if (!ipRep || ipRep !== sessionIp) return res.status(400).end();
-        clearTimeout(timeout);
         interruptedAuthentications.delete(sessionReference);
         const saveSessionKeyBase64 = saveSessionKeys.get(sessionReference);
         return res.json({ resumed: true, saveSessionKeyBase64 });

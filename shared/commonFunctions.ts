@@ -3,7 +3,7 @@ import { isBrowser, isNode, isWebWorker } from "./node_modules/browser-or-node";
 import { ErrorStrings, Failure } from "./commonTypes";
 import { Node, Parent, Literal } from "unist";
 
-const logOff = true;
+const logOff = false;
 
 export function failure(reason: ErrorStrings, details: any = null): Failure {
     return details ? { reason, details } : { reason };

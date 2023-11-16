@@ -7,7 +7,7 @@ export type ExposedSignedPublicKey = Readonly<{
 
 export type SignedKeyPair = ExposedSignedPublicKey & {
     readonly keyPair: CryptoKeyPair;
-}
+};
 
 export type ExportedSigningKeyPair = Readonly<{
     wrappedPrivateKey: UserEncryptedData;
@@ -16,12 +16,31 @@ export type ExportedSigningKeyPair = Readonly<{
 
 export type ExportedSignedKeyPair = ExportedSigningKeyPair & {
     readonly signature: Buffer;
-}
+};
+
+export type ServerMemo = Readonly<{
+    memoId: string,
+    encryptionPublicKey: Buffer,
+    memoData: {
+        ciphertext: Buffer,
+        hSalt: Buffer,
+        signature: Buffer }
+}>;
+
+export type PublicIdentity = Readonly<{ 
+    publicIdentityVerifyingKey: Buffer, 
+    publicDHIdentityKey: ExposedSignedPublicKey 
+}>;
+
+export type KeyBundleId = Readonly<{ 
+    bundleId: string;
+    preKeyVersion: number;
+    oneTimeKeyIdentifier?: string; 
+}>;
 
 export type KeyBundle = Readonly<{
+    bundleId: string;
     owner: string;
-    identifier: string;
-    preKeyVersion: number;
     verifyingIdentityKey: Buffer;
     publicDHIdentityKey: ExposedSignedPublicKey;
     publicSignedPreKey: ExposedSignedPublicKey;
@@ -35,20 +54,20 @@ export type PasswordDeriveInfo = Readonly<{
 
 export type PasswordEntangleInfo = PasswordDeriveInfo & {
     readonly passwordEntangledPoint: Buffer;
-}
+};
 
 export type EncryptInfo = Readonly<{
     encryptKey: CryptoKey;
     iv: Buffer
-}>
+}>;
 
 export type EncryptedData = {
     readonly ciphertext: Buffer;
-}
+};
 
 export type SignedEncryptedData = EncryptedData & {
     readonly signature: Buffer; 
-}
+};
 
 export type UserEncryptedData = EncryptedData & { hSalt: Buffer };
 
@@ -65,7 +84,7 @@ export type Profile = Readonly<{
 
 export type Contact = Profile & {
     readonly contactName?: string;
-}
+};
 
 export type ReplyingToInfo = Readonly<{ replyId: string, replyToOwn: boolean, displayText: string }>;
 
@@ -105,8 +124,7 @@ export type ChatRequestHeader = Readonly<{
     myVerifyingIdentityKey: Buffer;
     myPublicDHIdentityKey: ExposedSignedPublicKey;
     myPublicEphemeralKey: ExposedSignedPublicKey;
-    yourSignedPreKeyVersion: number;
-    yourOneTimeKeyIdentifier?: string;
+    yourBundleId: string;
     initialMessage: SignedEncryptedData; 
 }>;
 
@@ -196,7 +214,7 @@ export type SavePasswordResponse = Readonly<{
 
 export type NewAuthData = Readonly<{
     verifierPoint: Buffer,
-    clientIdentityVerifyingKey: Buffer
+    publicIdentity: PublicIdentity
 }>;
 
 export type SignUpRequest = LogInRequest & NewAuthData;
@@ -231,12 +249,12 @@ export type LogInResponse = SignUpResponse & UserData;
 
 export type LogInSavedResponse = Omit<LogInResponse, "encryptionBaseDerive"> & {
     readonly coreKeyBits: Buffer;
-}
+};
 
 export type UserData = Readonly<{
     encryptionBaseDerive: PasswordEntangleInfo,
-    clientIdentitySigning: UserEncryptedData,
     serverIdentityVerifying: UserEncryptedData,
+    x3dhIdentity: UserEncryptedData,
     x3dhInfo: UserEncryptedData,
     profileData: UserEncryptedData
 }>;
@@ -245,23 +263,30 @@ export type NewUserData = Readonly<{
     userData: UserData;
     verifierDerive: PasswordDeriveInfo,
     databaseAuthKeyDerive: PasswordEntangleInfo;
-    keyBundles: PublishKeyBundlesRequest;
 }>;
 
-export type PublishKeyBundlesRequest = {
-    defaultKeyBundle: KeyBundle;
-    oneTimeKeyBundles: KeyBundle[];
-}
-
 export type RequestKeyBundleResponse = {
-    keyBundle: KeyBundle;
+    readonly keyBundle: KeyBundle;
 };
+
+export type IssueOneTimeKeysResponse = Readonly<{
+    x3dhInfo: UserEncryptedData;
+    oneTimeKeys: [string, ExposedSignedPublicKey][];
+}>;
+
+export type ReplacePreKeyResponse = Readonly<{
+    x3dhInfo: UserEncryptedData;
+    preKey: [number, ExposedSignedPublicKey];
+}>
+
+export type RequestIssueNewKeysResponse = IssueOneTimeKeysResponse | ReplacePreKeyResponse;
 
 
 enum SocketClientSideEventsEnum {
+    ClientLoaded,
     UsernameExists,
-    PublishKeyBundles,
-    UpdateUserData,
+    UpdateX3DHInfo,
+    FetchX3DHInfo,
     RequestKeyBundle,
 
     GetAllChats,
@@ -285,6 +310,7 @@ enum SocketClientSideEventsEnum {
     StoreBackup,
     GetBackupById,
     BackupProcessed,
+    ServerMemosProcessed,
 
     SendReceipt,
     GetAllReceipts,
@@ -310,9 +336,10 @@ function constructSocketClientSideEvents() {
 export const SocketClientSideEvents = constructSocketClientSideEvents();
 
 type SocketClientRequestParametersMap = {
+    ClientLoaded: [],
     UsernameExists: Username,
-    PublishKeyBundles: PublishKeyBundlesRequest,
-    UpdateUserData: { x3dhInfo?: UserEncryptedData } & Username,
+    UpdateX3DHInfo: { x3dhInfo: UserEncryptedData },
+    FetchX3DHInfo: [],
     RequestKeyBundle: Username,
     GetAllChats: [],
     GetAllRequests: [],
@@ -332,6 +359,7 @@ type SocketClientRequestParametersMap = {
     StoreBackup: Backup,
     GetBackupById: HeaderIdentifier & { byAlias: string },
     BackupProcessed: HeaderIdentifier & { byAlias: string },
+    ServerMemosProcessed: { processed: string[], x3dhInfo: UserEncryptedData },
     SendReceipt: Receipt,
     GetAllReceipts: SessionIdentifier,
     ClearAllReceipts: SessionIdentifier,
@@ -343,9 +371,10 @@ export type SocketClientRequestParameters = {
 }
 
 type SocketClientRequestReturnMap = {
+    ClientLoaded: never,
     UsernameExists: { exists: boolean },
-    PublishKeyBundles: never,
-    UpdateUserData: never,
+    UpdateX3DHInfo: never,
+    FetchX3DHInfo: { x3dhIdentity: UserEncryptedData, x3dhInfo: UserEncryptedData },
     RequestKeyBundle: RequestKeyBundleResponse,
     GetAllChats: ChatData[],
     GetAllRequests: ChatRequestHeader[],
@@ -365,6 +394,7 @@ type SocketClientRequestReturnMap = {
     StoreBackup: never,
     GetBackupById: Backup,
     BackupProcessed: never,
+    ServerMemosProcessed: never,
     SendReceipt: never,
     GetAllReceipts: Receipt[],
     ClearAllReceipts: never,
@@ -376,6 +406,9 @@ export type SocketClientRequestReturn = {
 }
 
 enum SocketServerSideEventsEnum {
+    RequestIssueNewKeys,
+    ServerMemoDeposited,
+    PollConnection,
     MessageReceived,
     ChatRequestReceived,
     ReceiptReceived,
@@ -400,6 +433,40 @@ function constructSocketServerSideEvents() {
 }
 
 export const SocketServerSideEvents = constructSocketServerSideEvents();
+
+type SocketServerRequestParametersMap = {
+    RequestIssueNewKeys: { n: number },
+    ServerMemoDeposited: { serverMemos: ServerMemo[] },
+    PollConnection: [],
+    MessageReceived: { sessionId: string },
+    ChatRequestReceived: {},
+    ReceiptReceived: { sessionId: string },
+    RoomRequested: Username,
+    ClientRoomReady: string,
+    ServerRoomReady: string,
+    ServerDisconnecting: { reason: string }
+}
+
+export type SocketServerRequestParameters = {
+    [E in SocketServerSideEventsKey]: SocketServerRequestParametersMap[E];
+}
+
+type SocketServerRequestReturnMap = {
+    RequestIssueNewKeys: RequestIssueNewKeysResponse,
+    ServerMemoDeposited: never,
+    PollConnection: never,
+    MessageReceived: never,
+    ChatRequestReceived: never,
+    ReceiptReceived: never,
+    RoomRequested: Failure,
+    ClientRoomReady: never,
+    ServerRoomReady: never,
+    ServerDisconnecting: {}
+}
+
+export type SocketServerRequestReturn = {
+    [E in SocketServerSideEventsKey]: SocketServerRequestReturnMap[E];
+}
 
 
 export enum ErrorStrings {

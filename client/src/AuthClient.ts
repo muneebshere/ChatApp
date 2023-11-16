@@ -2,13 +2,12 @@ import _ from "lodash";
 import axios, { AxiosError } from "axios";
 import isOnline from "is-online";
 import { Queue } from "async-await-queue";
-import { SessionCrypto } from "../../shared/sessionCrypto";
-import {  X3DHUser } from "./e2e-encryption";
+import { X3DHManager } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
 import { serialize, deserialize } from "../../shared/cryptoOperator";
 import * as esrp from "../../shared/ellipticSRP";
 import { awaitCallback, failure, fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
-import { ErrorStrings, Failure, Username, SignUpRequest, NewUserData, Profile, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, SavePasswordRequest, SavePasswordResponse, SignUpChallenge, LogInResponse, LogInChallenge, LogInSavedRequest, LogInSavedResponse, LogInPermitted, SignUpResponse, UserEncryptedData  } from "../../shared/commonTypes";
+import { ErrorStrings, Failure, Username, SignUpRequest, NewUserData, Profile, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, SavePasswordRequest, SavePasswordResponse, SignUpChallenge, LogInResponse, LogInChallenge, LogInSavedRequest, LogInSavedResponse, LogInPermitted, SignUpResponse, UserEncryptedData, UserData  } from "../../shared/commonTypes";
 import Client, { ConnectionStatus } from "./Client";
 
 const { getRandomVector, getRandomString } = randomFunctions();
@@ -19,6 +18,14 @@ type SavedAuthData = Readonly<{
     laterConfirmation: esrp.ClientAuthChallengeLaterResult;
     databaseAuthKeyBuffer: Buffer;
 }>;
+
+type SavedSessionData = Readonly<{ 
+    username: string, 
+    clientReference: string, 
+    sharedKeyBitsBuffer: Buffer, 
+    encryptionBase: Buffer, 
+    sessionRecordKey: Buffer, 
+    userData: Omit<UserData, "encryptionBaseDerive">}>;
 
 const PORT = 8080;
 const { hostname, protocol } = window.location;
@@ -125,16 +132,19 @@ export default class AuthClient {
             const { clientEphemeralPublic, processAuthChallenge } = await esrp.clientSetupAuthProcess(passwordString);
             const [encryptionBaseDerive, encryptionBase] = await esrp.entanglePassword(passwordString);
             const encryptionBaseVector = await crypto.importRaw(encryptionBase);
+            const [x3dhManager, x3dhIdentity] = await X3DHManager.new(username, encryptionBaseVector);
+            if (!x3dhManager) {
+                throw new Error("Failed to create user");
+            }
+            const { publicIdentity } = x3dhManager;
             const [databaseAuthKeyDerive, databaseAuthKeyBuffer] = await esrp.entanglePassword(passwordString);
-            const identitySigningKeypair = await crypto.generateKeyPair("ECDSA");
-            const { exportedPublicKey: clientIdentityVerifyingKey, wrappedPrivateKey: clientIdentitySigning } = await crypto.exportSigningKeyPair(identitySigningKeypair, encryptionBaseVector, "Client Identity Signing Key");
             const clientReference = getRandomString(16, "base64");
             const signUpRequest: SignUpRequest = {
                 clientReference,
                 username,
                 verifierPoint,
                 clientEphemeralPublic,
-                clientIdentityVerifyingKey               
+                publicIdentity        
             };
             const resultInit: SignUpChallenge | Failure = await this.post("initiateSignUp", signUpRequest);
             if ("reason" in resultInit) {
@@ -145,15 +155,10 @@ export default class AuthClient {
             const { clientConfirmationCode, sharedKeyBitsBuffer, confirmServer } = await processAuthChallenge(verifierEntangled, verifierDerive, "now");
             const sharedKeyBits = await crypto.importRaw(sharedKeyBitsBuffer);
             const serverIdentityVerifying = await crypto.deriveEncrypt({ serverIdentityVerifyingKey }, encryptionBaseVector, "Server Identity Verifying Key");
-            const x3dhUser = await X3DHUser.new(username, encryptionBaseVector);
-            if (!x3dhUser) {
-                throw new Error("Failed to create user");
-            }
-            const keyBundles = await x3dhUser.publishKeyBundles();
-            const x3dhInfo = await x3dhUser.exportUser();
+            const x3dhInfo = await x3dhManager.export();
             const profileData = await crypto.deriveEncrypt(profile, encryptionBaseVector, "User Profile");
-            const newUserData: NewUserData =  { userData: { encryptionBaseDerive, profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying }, verifierDerive, databaseAuthKeyDerive, keyBundles };
-            const newUserDataSigned = await crypto.deriveSignEncrypt(sharedKeyBits, newUserData, Buffer.alloc(32), "New User Data", identitySigningKeypair.privateKey);
+            const newUserData: NewUserData =  { userData: { encryptionBaseDerive, profileData, x3dhIdentity, x3dhInfo, serverIdentityVerifying }, verifierDerive, databaseAuthKeyDerive };
+            const newUserDataSigned = await x3dhManager.deriveSignEncrypt(sharedKeyBits, newUserData, Buffer.alloc(32), "New User Data");
             const concludeSignUp: SignUpChallengeResponse = { clientConfirmationCode, newUserDataSigned, databaseAuthKeyBuffer };
             const resultConc: SignUpResponse | Failure = await this.post("concludeSignUp", concludeSignUp);
             if ("reason" in resultConc) {
@@ -165,15 +170,17 @@ export default class AuthClient {
                 logError(new Error("Server confirmation code incorrect."))
                 return failure(ErrorStrings.ProcessFailed);
             }
-            const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, identitySigningKeypair.privateKey, await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false));
+            const sessionCrypto = await x3dhManager.createSession(clientReference, sharedKeyBits, serverIdentityVerifyingKey);
             const sessionRecordKey = await crypto.deriveHKDF(sharedKeyBits, sessionRecordKeyDeriveSalt, "Session Record", 512);
-            const savingSession = serialize(await crypto.deriveEncrypt({ username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying } }, saveSessionKey, "SavedSession")).toString("base64");
+            const savedSessionData: SavedSessionData = { username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhIdentity, x3dhInfo, serverIdentityVerifying }};
+            const savingSession = serialize(await crypto.deriveEncrypt(savedSessionData, saveSessionKey, "SavedSession")).toString("base64");
             window.sessionStorage.setItem("SavedSession", savingSession);
             if (savePassword) {
                 const savePasswordSuccess = await this.savePassword(username, passwordString, encryptionBase, databaseAuthKeyBuffer);
                 console.log(savePasswordSuccess ? "Password saved successfully." : "Failed to save password.");
             }
-            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
+            const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
+            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhManager, sessionCrypto, serverVerifyingKey);
         }
         catch (err) {
             logError(err);
@@ -203,7 +210,7 @@ export default class AuthClient {
                 logError(resultConc);
                 return resultConc;
             }
-            const { serverConfirmationCode, sessionRecordKeyDeriveSalt, saveSessionKey, encryptionBaseDerive, clientIdentitySigning, serverIdentityVerifying, profileData, x3dhInfo } = resultConc;
+            const { serverConfirmationCode, sessionRecordKeyDeriveSalt, saveSessionKey, encryptionBaseDerive, serverIdentityVerifying, profileData, x3dhIdentity, x3dhInfo } = resultConc;
             if (!(await confirmServer(serverConfirmationCode))) {
                 logError(new Error("Server confirmation code incorrect."))
                 return failure(ErrorStrings.ProcessFailed);
@@ -211,25 +218,25 @@ export default class AuthClient {
             const encryptionBase = await esrp.disentanglePasswordToBits(passwordString, encryptionBaseDerive);
             const encryptionBaseVector = await crypto.importRaw(encryptionBase);
             const { serverIdentityVerifyingKey } = (await crypto.deriveDecrypt(serverIdentityVerifying, encryptionBaseVector, "Server Identity Verifying Key")) ?? {};
-            const clientIdentitySigningKey = await crypto.deriveUnwrap(encryptionBaseVector, clientIdentitySigning, "ECDSA", "Client Identity Signing Key", false);
-            if (!encryptionBaseVector || !serverIdentityVerifyingKey || !clientIdentitySigningKey) {
+            if (!encryptionBaseVector || !serverIdentityVerifyingKey) {
                 return failure(ErrorStrings.ProcessFailed);
             }
-            const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
-            const x3dhUser = await X3DHUser.importUser(x3dhInfo, encryptionBaseVector);
+            const x3dhManager = await X3DHManager.import(x3dhInfo, x3dhIdentity, encryptionBaseVector);
             const profile: Profile = await crypto.deriveDecrypt(profileData, encryptionBaseVector, "User Profile");
-            if (!serverVerifyingKey || !x3dhUser || !profile) {
+            if (!x3dhManager || !profile) {
                 return failure(ErrorStrings.ProcessFailed);
             }
-            const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, clientIdentitySigningKey, serverVerifyingKey);
+            const sessionCrypto = await x3dhManager.createSession(clientReference, sharedKeyBits, serverIdentityVerifyingKey);
             const sessionRecordKey = await crypto.deriveHKDF(sharedKeyBits, sessionRecordKeyDeriveSalt, "Session Record", 512);
-            const savingSession = serialize(await crypto.deriveEncrypt({ username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying } }, saveSessionKey, "SavedSession")).toString("base64");
+            const savedSessionData: SavedSessionData = { username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhIdentity, x3dhInfo, serverIdentityVerifying }};
+            const savingSession = serialize(await crypto.deriveEncrypt(savedSessionData, saveSessionKey, "SavedSession")).toString("base64");
             window.sessionStorage.setItem("SavedSession", savingSession);
             if (savePassword) {
                 const savePasswordSuccess = await this.savePassword(username, passwordString, encryptionBase, databaseAuthKeyBuffer);
                 console.log(savePasswordSuccess ? "Password saved successfully." : "Failed to save password.");
             }
-            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
+            const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
+            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhManager, sessionCrypto, serverVerifyingKey);
         }
         catch (err) {
             logError(err);
@@ -273,7 +280,7 @@ export default class AuthClient {
                 logError(resultConc);
                 return resultConc;
             }
-            const { coreKeyBits, serverConfirmationCode, sessionRecordKeyDeriveSalt, saveSessionKey, x3dhInfo, profileData, clientIdentitySigning, serverIdentityVerifying } = resultConc;
+            const { coreKeyBits, serverConfirmationCode, sessionRecordKeyDeriveSalt, saveSessionKey, x3dhIdentity, x3dhInfo, profileData, serverIdentityVerifying } = resultConc;
             if (!(await esrp.processConfirmationData(sharedSecret, serverConfirmationCode, serverConfirmationData))) {
                 logError(new Error("Server confirmation code incorrect."));
                 return failure(ErrorStrings.ProcessFailed);
@@ -284,18 +291,18 @@ export default class AuthClient {
             }
             const encryptionBaseVector = await crypto.importRaw(encryptionBase);
             const { serverIdentityVerifyingKey } = (await crypto.deriveDecrypt(serverIdentityVerifying, encryptionBaseVector, "Server Identity Verifying Key")) ?? {};
-            const clientSigningKey = await crypto.deriveUnwrap(encryptionBaseVector, clientIdentitySigning, "ECDSA", "Client Identity Signing Key", false);
-            const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
-            const x3dhUser = await X3DHUser.importUser(x3dhInfo, encryptionBaseVector);
+            const x3dhManager = await X3DHManager.import(x3dhInfo, x3dhIdentity, encryptionBaseVector);
             const profile: Profile = await crypto.deriveDecrypt(profileData, encryptionBase, "User Profile");
-            if (!profile || !x3dhUser) {
+            if (!profile || !x3dhManager) {
                 return failure(ErrorStrings.ProcessFailed);
             }
-            const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, clientSigningKey, serverVerifyingKey);
+            const sessionCrypto = await x3dhManager.createSession(clientReference, sharedKeyBits, serverIdentityVerifyingKey);
             const sessionRecordKey = await crypto.deriveHKDF(sharedKeyBits, sessionRecordKeyDeriveSalt, "Session Record", 512);
-            const savingSession = serialize(await crypto.deriveEncrypt({ username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying } }, saveSessionKey, "SavedSession")).toString("base64");
+            const savedSessionData: SavedSessionData = { username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhIdentity, x3dhInfo, serverIdentityVerifying }};
+            const savingSession = serialize(await crypto.deriveEncrypt(savedSessionData, saveSessionKey, "SavedSession")).toString("base64");
             window.sessionStorage.setItem("SavedSession", savingSession);
-            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
+            const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
+            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhManager, sessionCrypto, serverVerifyingKey);
         }
         catch (err) {
             logError(err);
@@ -328,7 +335,7 @@ export default class AuthClient {
                 return failure(ErrorStrings.ProcessFailed);
             }
             const saveSessionKey = Buffer.from(saveSessionKeyBase64, "base64");
-            const { username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying } } = await crypto.deriveDecrypt({ ciphertext, hSalt }, saveSessionKey, "SavedSession");
+            const { username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhIdentity, x3dhInfo, serverIdentityVerifying } }: SavedSessionData = await crypto.deriveDecrypt({ ciphertext, hSalt }, saveSessionKey, "SavedSession");
             if (!username) {
                 logError("Couldn't resume");
                 return failure(ErrorStrings.ProcessFailed);
@@ -336,17 +343,17 @@ export default class AuthClient {
             const sharedKeyBits = await crypto.importRaw(sharedKeyBitsBuffer);
             const encryptionBaseVector = await crypto.importRaw(encryptionBase);
             const { serverIdentityVerifyingKey } = (await crypto.deriveDecrypt(serverIdentityVerifying, encryptionBaseVector, "Server Identity Verifying Key")) ?? {};
-            const clientSigningKey = await crypto.deriveUnwrap(encryptionBaseVector, clientIdentitySigning, "ECDSA", "Client Identity Signing Key", false);
-            const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
-            const x3dhUser = await X3DHUser.importUser(x3dhInfo, encryptionBaseVector);
+            const x3dhManager = await X3DHManager.import(x3dhInfo, x3dhIdentity, encryptionBaseVector);
             const profile: Profile = await crypto.deriveDecrypt(profileData, encryptionBase, "User Profile");
-            if (!profile || !x3dhUser) {
+            if (!profile || !x3dhManager) {
                 return failure(ErrorStrings.ProcessFailed);
             }
-            const savingSession = serialize(await crypto.deriveEncrypt({ username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhInfo, clientIdentitySigning, serverIdentityVerifying } }, saveSessionKey, "SavedSession")).toString("base64");
+            const savedSessionData: SavedSessionData = { username, clientReference, sharedKeyBitsBuffer, encryptionBase, sessionRecordKey, userData: { profileData, x3dhIdentity, x3dhInfo, serverIdentityVerifying }};
+            const savingSession = serialize(await crypto.deriveEncrypt(savedSessionData, saveSessionKey, "SavedSession")).toString("base64");
             window.sessionStorage.setItem("SavedSession", savingSession);
-            const sessionCrypto = new SessionCrypto(clientReference, sharedKeyBits, clientSigningKey, serverVerifyingKey);
-            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhUser, sessionCrypto);
+            const sessionCrypto = await x3dhManager.createSession(clientReference, sharedKeyBits, serverIdentityVerifyingKey);
+            const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
+            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhManager, sessionCrypto, serverVerifyingKey);
         }
         catch (err) {
             logError(err);

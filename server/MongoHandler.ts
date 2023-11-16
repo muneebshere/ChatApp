@@ -1,14 +1,25 @@
-import _ from "lodash";
+import _, { isError } from "lodash";
 import { Binary } from "mongodb";
 import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
-import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, PublishKeyBundlesRequest, StoredMessage, NewUserData, UserEncryptedData, Receipt, Backup, ChatSessionDetails, Username, NewAuthData } from "../shared/commonTypes";
+import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, StoredMessage, NewUserData, UserEncryptedData, Receipt, Backup, ChatSessionDetails, Username, NewAuthData, KeyBundleId, ExposedSignedPublicKey, PasswordDeriveInfo, PasswordEntangleInfo, PublicIdentity, UserData, SignedEncryptedData, RequestIssueNewKeysResponse, ServerMemo } from "../shared/commonTypes";
 import * as crypto from "../shared/cryptoOperator";
-import { parseIpReadable } from "./backendserver";
+import { defaultServerConfig, parseIpReadable } from "./backendserver";
 import { Notify } from "./SocketHandler";
 import { allSettledResults, logError, randomFunctions } from "../shared/commonFunctions";
 
 const exposedSignedKey = {
+    exportedPublicKey: {
+        type: Schema.Types.Buffer,
+        required: true
+    },
+    signature: {
+        type: Schema.Types.Buffer,
+        required: true
+    }
+};
+
+const immutableExposedSignedKey = {
     exportedPublicKey: {
         type: Schema.Types.Buffer,
         required: true,
@@ -88,7 +99,52 @@ const ip = {
     }
 }
 
+const { getRandomVector, getRandomString } = randomFunctions();
+
+export type ServerConfig = Readonly<{
+    minOneTimeKeys: number,
+    maxOneTimeKeys: number,
+    replaceKeyAtMillis: number }>;
+
+type ServerData = Readonly<{
+    signingKey: CryptoKey,
+    verifyingKey: Buffer,
+    cookieSign: string,
+    serverConfig: ServerConfig
+}>;
+
+type User = {
+    username: string,
+    verifierPoint: Buffer,
+    verifierDerive: PasswordDeriveInfo,
+    databaseAuthKeyDerive: PasswordEntangleInfo,
+    publicIdentity: PublicIdentity,
+    userData: {
+        encryptionBaseDerive: PasswordEntangleInfo,
+        serverIdentityVerifying: UserEncryptedData,
+        x3dhIdentity: UserEncryptedData,
+        x3dhInfo: UserEncryptedData,
+        profileData: UserEncryptedData
+    },
+    keyData: {
+        preKey: {
+            version: number,
+            lastReplacedAt: number,
+            publicPreKey: ExposedSignedPublicKey
+        },
+        oneTimeKeys: {
+            oneTimeKeyIdentifier: string,
+            publicOneTimeKey: ExposedSignedPublicKey
+        }[],
+    },
+    serverMemos: ServerMemo[]
+};
+
 export default class MongoHandlerCentral {
+
+    private static serverConfig: ServerConfig;
+
+    private static signingKey: CryptoKey;
 
     private static sessionHooks = new Map<string, (notify: Notify) => void>();
 
@@ -97,36 +153,53 @@ export default class MongoHandlerCentral {
         else MongoHandlerCentral.sessionHooks.delete(id);
     }
 
-    private static readonly keyBundleSchema = new Schema({
-        owner: {
+    //#region Schema
+
+    private static readonly oneTimeKeySchema = new Schema({
+        oneTimeKeyIdentifier: {
             type: Schema.Types.String,
-            required: true
+            required: true,
+            immutable: true,
+            unique: true
         },
-        identifier: {
-            type: Schema.Types.String,
-            required: true
-        },
-        preKeyVersion: {
+        publicOneTimeKey: immutableExposedSignedKey
+    });
+
+    private static readonly preKeySchema = new Schema({
+        version: {
             type: Schema.Types.Number,
             required: true
         },
-        verifyingIdentityKey: {
-            type: Schema.Types.Buffer,
+        lastReplacedAt: {
+            type: Schema.Types.Number,
             required: true
         },
-        publicDHIdentityKey: exposedSignedKey,
-        publicSignedPreKey: exposedSignedKey,
-        publicOneTimeKey: {
-            exportedPublicKey: {
-                type: Schema.Types.Buffer,
-                required: false
-            },
-            signature: {
-                type: Schema.Types.Buffer,
-                required: false
-            }
+        publicPreKey: {
+            type: exposedSignedKey,
+            required: true
         }
     });
+
+    private static readonly serverMemoSchema = new Schema({
+        memoId: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true
+        },
+        encryptionPublicKey: {
+            type: Schema.Types.Buffer,
+            required: true,
+            immutable: true
+        },
+        memoData: { 
+            signature: {
+                type: Schema.Types.Buffer,
+                required: true,
+                immutable: true
+            },
+            ...immutableUserEncryptedData,
+        }
+    }).index({ memoId: 1 }, { unique: true, partialFilterExpression: { "memoId": { $exists: true, $gt: "" } } });
 
     private static readonly ServerData = mongoose.model("ServerData", new Schema({
         serverIdentitySigningKey: {
@@ -146,6 +219,20 @@ export default class MongoHandlerCentral {
             required: true,
             immutable: true,
             unique: true
+        },
+        serverConfig: {
+            minOneTimeKeys: {
+                type: Schema.Types.Number,
+                required: true
+            },
+            maxOneTimeKeys: {
+                type: Schema.Types.Number,
+                required: true
+            },
+            replaceKeyAtMillis: {
+                type: Schema.Types.Number,
+                required: true
+            }
         }
     }), "server_data");
 
@@ -180,7 +267,7 @@ export default class MongoHandlerCentral {
             type: Schema.Types.String,
             required: true,
             immutable: true,
-            enum: ["root", "chat", "session"]
+            enum: ["root", "chat", "session", "keyBundle"]
         },
         accessKey: {
             type: Schema.Types.Buffer,
@@ -263,7 +350,7 @@ export default class MongoHandlerCentral {
         if (this.toAlias === this.fromAlias) next(new Error("Both aliases cannot be the same."));
         else if (this.isNew && this.acceptorAccessKey) next(new Error("Cannot add acceptorAccessKey to new record."));
         else if (!this.isNew) {
-            const prevAcceptor = (await MongoHandlerCentral.RegistrationPendingSession.findOne({ sessionId: this.sessionId }).lean()).acceptorAccessKey;
+            const prevAcceptor = (await MongoHandlerCentral.RegistrationPendingSession.findOne({ sessionId: this.sessionId }).lean())?.acceptorAccessKey;
             if (prevAcceptor) next(new Error("Cannot modify once acceptorAccessKey is set."));
             else if (!prevAcceptor && !this.acceptorAccessKey) next(new Error("Must add acceptorAccessKey on modify."));
             else next();
@@ -304,35 +391,46 @@ export default class MongoHandlerCentral {
             maxLength: 15,
             match: /^[a-z0-9_]{3,15}$/
         },
-        clientIdentityVerifyingKey: {
-            type: Schema.Types.Buffer,
-            required: true,
-            immutable: true 
-        },
         verifierPoint: {
             type: Schema.Types.Buffer,
             required: true
         },
         verifierDerive: passwordDeriveInfo,
         databaseAuthKeyDerive: passwordEntangleInfo,
+        publicIdentity: { 
+            publicIdentityVerifyingKey: { 
+                type: Schema.Types.Buffer,
+                required: true,
+                immutable: true
+            },
+            publicDHIdentityKey: immutableExposedSignedKey
+         },
         userData: {
             encryptionBaseDerive: passwordEntangleInfo,
             serverIdentityVerifying: immutableUserEncryptedData,
-            clientIdentitySigning: immutableUserEncryptedData,
             profileData: userEncryptedData,
+            x3dhIdentity: immutableUserEncryptedData,
             x3dhInfo: userEncryptedData
         },
-        keyBundles: {
-            defaultKeyBundle: {
-                type: this.keyBundleSchema,
-                required: true
-            },
-            oneTimeKeyBundles: {
-                type: [this.keyBundleSchema],
+        keyData: {
+            preKey: {
+                type: this.preKeySchema,
                 required: false,
+                default: null
+            },
+            oneTimeKeys: {
+                type: [this.oneTimeKeySchema],
+                required: true,
                 default: []
             },
+        },
+        serverMemos: [this.serverMemoSchema]
+    }).post("save", (doc, next) => {
+        if (doc.serverMemos.length > 0) {
+            const serverMemos: ServerMemo[] = getPOJO(doc.serverMemos);
+            MongoHandlerCentral.sessionHooks.get(`$user${doc.username}`)?.({ type: "ServerMemo", serverMemos });
         }
+        next();
     }), "users");
 
     private static readonly UserRetries = mongoose.model("UserRetries", new Schema({
@@ -380,17 +478,12 @@ export default class MongoHandlerCentral {
             required: true,
             immutable: true
         },
-        myPublicDHIdentityKey: exposedSignedKey,
-        myPublicEphemeralKey: exposedSignedKey,
-        yourOneTimeKeyIdentifier: {
+        myPublicDHIdentityKey: immutableExposedSignedKey,
+        myPublicEphemeralKey: immutableExposedSignedKey,
+        yourBundleId: {
             type: Schema.Types.String,
             required: false,
             unique: true,
-            immutable: true
-        },
-        yourSignedPreKeyVersion: {
-            type: Schema.Types.Number,
-            required: true,
             immutable: true
         },
         initialMessage: signedEncryptedData
@@ -440,7 +533,7 @@ export default class MongoHandlerCentral {
             required: true,
             immutable: true
         },
-        nextDHRatchetKey: exposedSignedKey,
+        nextDHRatchetKey: immutableExposedSignedKey,
         messageBody: signedEncryptedData
     }).index({ sessionId: 1, toAlias: 1 }).index({ sessionId: 1, headerId: 1 }, { unique: true }).index({ sendingRatchetNumber: 1, sendingChainNumber: 1 }, { unique: true }).post("save", (doc, next) => {
         MongoHandlerCentral.sessionHooks.get(`${doc.sessionId}@${doc.toAlias}`)?.({ type: "Message", ..._.pick(doc, "sessionId") });
@@ -520,6 +613,8 @@ export default class MongoHandlerCentral {
         content: userEncryptedData
     }).index({ byAlias: 1, sessionId: 1, headerId: 1 }, { unique: true }), "backups");
 
+    //#endregion
+
     static onError: () => void;
 
     static async connect(url: string, options?: mongoose.ConnectOptions) {
@@ -532,21 +627,26 @@ export default class MongoHandlerCentral {
         mong.connection.on("error", this.onError);
     }
 
-    static async setupIdentity() {
+    static async setupServer(): Promise<ServerData> {
         const serverData = cleanLean(await this.ServerData.find().lean());
         if (serverData.length === 0) {
             const keyPair = await crypto.generateKeyPair("ECDSA");
             const serverIdentitySigningKey = await crypto.exportKey(keyPair.privateKey);
             const serverIdentityVerifyingKey = await crypto.exportKey(keyPair.publicKey);
             const cookieSign = randomFunctions().getRandomString(20, "base64");
-            this.ServerData.create({ serverIdentitySigningKey, serverIdentityVerifyingKey, cookieSign });
-            return { signingKey: keyPair.privateKey, verifyingKey: serverIdentityVerifyingKey, cookieSign };
+            const serverConfig = defaultServerConfig;
+            this.ServerData.create({ serverIdentitySigningKey, serverIdentityVerifyingKey, cookieSign, serverConfig });
+            this.serverConfig = serverConfig;
+            this.signingKey = keyPair.privateKey;
+            return { signingKey: keyPair.privateKey, verifyingKey: serverIdentityVerifyingKey, cookieSign, serverConfig };
         }
         else {
-            const { serverIdentitySigningKey, serverIdentityVerifyingKey, cookieSign } = serverData[0];
+            const { serverIdentitySigningKey, serverIdentityVerifyingKey, cookieSign, serverConfig } = serverData[0];
             const signingKey = await crypto.importKey(serverIdentitySigningKey, "ECDSA", "private", false);
             const verifyingKey: Buffer = serverIdentityVerifyingKey;
-            return { signingKey, verifyingKey, cookieSign };
+            this.serverConfig = serverConfig;
+            this.signingKey = signingKey;
+            return { signingKey, verifyingKey, cookieSign, serverConfig };
         }
     }
 
@@ -577,15 +677,23 @@ export default class MongoHandlerCentral {
         return (await this.RunningClientSession.deleteOne({ sessionReference })).deletedCount === 1;
     }
 
-    static async createNewUser(user: Username & NewAuthData & NewUserData, databaseAuthKey: CryptoKey) {
+    static async createNewUser(user: Username & NewAuthData & NewUserData, databaseAuthKey: CryptoKey, onFail: Promise<{ failed: boolean }>) {
         try {
             const { username } = user;
             if ((await this.DatabaseAccessKey.find({ username, type: "root" })).length > 0) return false;
+            const { publicIdentityVerifyingKey, publicDHIdentityKey } = user.publicIdentity;
+            if (!(await crypto.verifyKey(publicDHIdentityKey, publicIdentityVerifyingKey))) return false;
             const accessKey = (await crypto.deriveEncrypt({ username }, databaseAuthKey, "DatabaseRootAccessKey", Buffer.alloc(32))).ciphertext;
             const accessRoot = new this.DatabaseAccessKey({ username, type: "root", accessKey });
             if (accessRoot !== await accessRoot.save()) return false;
+            onFail.then(({ failed }) => {
+                if (failed === true) {
+                    this.DatabaseAccessKey.deleteMany({ username }).exec();
+                    this.User.deleteOne({ username }).exec();
+                }
+            });
             const newUser = new this.User(user);
-            return newUser === await newUser.save();
+            return (newUser === await newUser.save());
         }
         catch (err) {
             logError(err);
@@ -597,33 +705,9 @@ export default class MongoHandlerCentral {
         return !!(await this.User.exists({ username }))?._id;
     }
 
-    static async getLeanUser(username: string): Promise<Username & NewAuthData & NewUserData> {
+    static async getUserAuth(username: string): Promise<Pick<User, "publicIdentity" | "verifierDerive" | "verifierPoint" | "databaseAuthKeyDerive">> {
         const user = cleanLean(await this.User.findOne({ username }).lean());
-        return user;
-    }
-
-    static async getKeyBundle(username: string): Promise<KeyBundle> {
-        const otherUser = await MongoHandlerCentral.User.findOne({ username });
-        if (!otherUser) return null;
-        let keyBundle: KeyBundle;
-        let saveRequired = false;
-        const { oneTimeKeyBundles, defaultKeyBundle } = otherUser?.keyBundles;
-        if ((oneTimeKeyBundles ?? []).length > 0) {
-            keyBundle = getPOJO(oneTimeKeyBundles.pop());
-            saveRequired = true;
-        }
-        else if (defaultKeyBundle) {
-            keyBundle = getPOJO(defaultKeyBundle);
-        }
-        if (!keyBundle) return null;
-        try {
-            if (saveRequired && otherUser !== await otherUser.save()) return null;
-            return keyBundle;
-        }
-        catch (err) {
-            logError(err);
-            return null;
-        }
+        return _.pick(user, "publicIdentity", "verifierDerive", "verifierPoint", "databaseAuthKeyDerive");
     }
 
     static async setSavedAuth(saveToken: string, ipRep: string, savedAuthDetails: UserEncryptedData) {
@@ -672,6 +756,64 @@ export default class MongoHandlerCentral {
         }
     }
 
+    private static async getKeyBundle(username: string): Promise<KeyBundle> {
+        const otherUser = await this.User.findOne({ username });
+        if (!otherUser) return null;
+        const { 
+            publicIdentity: { 
+                publicDHIdentityKey, 
+                publicIdentityVerifyingKey: verifyingIdentityKey 
+            }, 
+            keyData: { 
+                preKey: { 
+                    version: preKeyVersion, 
+                    publicPreKey: publicSignedPreKey 
+                } 
+            } 
+        } = cleanLean(await this.User.findOne({ username }).lean());
+        let oneTimeKey: Pick<KeyBundle, "publicOneTimeKey"> & { readonly oneTimeKeyIdentifier: string };
+        if ((otherUser.keyData?.oneTimeKeys || []).length > 0) {
+            oneTimeKey = getPOJO(otherUser.keyData.oneTimeKeys.pop());
+        }
+        const bundleId = getRandomString(15, "base64");
+        let keyBundleId: KeyBundleId, keyBundle: KeyBundle;
+        if (oneTimeKey) {
+            const { oneTimeKeyIdentifier, publicOneTimeKey } = oneTimeKey;
+            keyBundleId = { bundleId, preKeyVersion, oneTimeKeyIdentifier };
+            keyBundle = { bundleId, owner: username, verifyingIdentityKey, publicDHIdentityKey, publicOneTimeKey, publicSignedPreKey };
+        }
+        else {
+            keyBundleId = { bundleId, preKeyVersion };
+            keyBundle = { bundleId, owner: username, verifyingIdentityKey, publicDHIdentityKey, publicSignedPreKey };
+        }
+        try {
+            const memo = await MongoHandlerCentral.generateMemo(username, { memoType: "KeyBundleIssued", keyBundleId });
+            if (!memo) return null;
+            otherUser.serverMemos.push(memo);
+            if (otherUser !== await otherUser.save()) return null;
+            return keyBundle;
+        }
+        catch (err) {
+            logError(err);
+            return null;
+        }
+    }
+
+    private static async generateMemo(username: string, memo: any): Promise<ServerMemo> {
+        const user = await this.User.findOne({ username });
+        if (!user) return null;
+        const { exportedPublicKey } = user.publicIdentity.publicDHIdentityKey;
+        const memoId = randomFunctions().getRandomString(20, "base64");
+        const keyPair = await crypto.generateKeyPair("ECDH");
+        const encryptionPublicKey = await crypto.exportKey(keyPair.publicKey);
+        const clientPublicKey = await crypto.importKey(exportedPublicKey, "ECDH", "public", false);
+        const sharedBits = await crypto.deriveSymmetricBits(keyPair.privateKey, clientPublicKey, 512);
+        const hSalt = getRandomVector(48);
+        const data = await crypto.deriveSignEncrypt(sharedBits, memo, hSalt, `ServerMemo for ${username}: ${memoId}`, this.signingKey);
+        const memoData = { ...data, hSalt };
+        return { memoId, encryptionPublicKey, memoData };
+    }
+
     private static toUserEncrypted = (ciphertext: Buffer) => ({ ciphertext, hSalt: Buffer.alloc(32) });
 
     static async instantiateUserHandler(username: string, databaseAuthKey: CryptoKey) {
@@ -684,7 +826,10 @@ export default class MongoHandlerCentral {
             const chats: string[] = await allSettledResults(chatsList.map((c: any) => crypto.deriveDecrypt(this.toUserEncrypted(c.accessKey), databaseAuthKey, "DatabaseChatAccessKey").then((c) => c.chatId)));
             const sessionsList = cleanLean(await this.DatabaseAccessKey.find({ username, type: "session" }).lean());
             const sessions: ChatSessionDetails[] = await allSettledResults(sessionsList.map((c: any) => crypto.deriveDecrypt(this.toUserEncrypted(c.accessKey), databaseAuthKey, "DatabaseSessionAccessKey")));
-            return new this.MongoUserHandler(username, databaseAuthKey, chats, sessions, this.subscribeChange);
+            const keyBundlesList = cleanLean(await this.DatabaseAccessKey.find({ username, type: "keyBundles" }).lean());
+            const keyBundles: KeyBundle[] = (await allSettledResults<any>(keyBundlesList.map((c: any) => crypto.deriveDecrypt(this.toUserEncrypted(c.accessKey), databaseAuthKey, "DatabaseKeyBundleAccessKey")))).map((ak) => ak.keyBundle);
+            const userDocument = await MongoHandlerCentral.User.findOne({ username });
+            return new this.MongoUserHandler(username, userDocument, databaseAuthKey, chats, sessions, keyBundles, this.subscribeChange);
         }
         catch(err) {
             logError(err);
@@ -694,19 +839,25 @@ export default class MongoHandlerCentral {
 
     static readonly UserHandlerType: typeof this.MongoUserHandler.prototype = null;
 
+    static readonly UserDocumentType: Awaited<ReturnType<(typeof this.UserHandlerType)["getUserDocument"]>> = null;
+
     private static readonly MongoUserHandler = class {
+        #userDocument: typeof MongoHandlerCentral.UserDocumentType;
         readonly #username: string;
         readonly #databaseAuthKey: CryptoKey;
         readonly #chats: string[];
         readonly #sessions: Map<string, ChatSessionDetails>;
+        readonly #keyBundles: Map<string, KeyBundle>;
         private notify: (notify: Notify) => void;
         private readonly subscribeChange: (id: string, callback: (notify: Notify) => void) => void;
 
-        constructor (username: string, databaseAuthKey: CryptoKey, chats: string[], sessions: ChatSessionDetails[], subscribeChange: typeof MongoHandlerCentral.UserHandlerType.subscribeChange) {
+        constructor (username: string, userDocument: typeof MongoHandlerCentral.UserDocumentType, databaseAuthKey: CryptoKey, chats: string[], sessions: ChatSessionDetails[], keyBundles: KeyBundle[], subscribeChange: typeof MongoHandlerCentral.UserHandlerType.subscribeChange) {
             this.#username = username;
+            this.#userDocument = userDocument;
             this.#databaseAuthKey = databaseAuthKey;
             this.#chats = chats;
             this.#sessions = new Map(sessions.map((s) => [s.sessionId, s]));
+            this.#keyBundles = new Map(keyBundles.map((b) => [b.owner, b]));
             this.subscribeChange = subscribeChange;
         }
 
@@ -734,9 +885,21 @@ export default class MongoHandlerCentral {
             return false;
         }
 
-        private validateKeyBundleOwner(keyBundles: PublishKeyBundlesRequest): boolean {
-            let { defaultKeyBundle, oneTimeKeyBundles } = keyBundles;
-            return [defaultKeyBundle.owner, ...oneTimeKeyBundles.map((kb) => kb.owner)].every((owner) => owner === this.#username);
+        private async getUserDocument() {
+            const username = this.#username;
+            const userDocument = await MongoHandlerCentral.User.findOne({ username });
+            this.#userDocument = userDocument;
+            return userDocument;
+        }
+
+        private async validateKeys(keys: ExposedSignedPublicKey[]): Promise<boolean> {
+            if (!this.#userDocument) return false;
+            const { publicIdentity } = this.#userDocument;
+            const verifyingKey = await crypto.importKey(publicIdentity.publicIdentityVerifyingKey, "ECDSA", "public", false);
+            for (const { exportedPublicKey, signature } of keys) {
+                if (!(await crypto.verify(exportedPublicKey, signature, verifyingKey))) return false;
+            }
+            return true;
         }
 
         private async addSessionKey(sessionId: string, myAlias: string, otherAlias: string) {
@@ -815,45 +978,80 @@ export default class MongoHandlerCentral {
             }
         }
 
-        async publishKeyBundles(keyBundles: PublishKeyBundlesRequest): Promise<boolean> {
-            if (!this.validateKeyBundleOwner(keyBundles)) return false;
-            const user = await MongoHandlerCentral.User.findOne({ username: this.#username });
+        getUserData(): User["userData"] {
+            return cleanLean(this.#userDocument.toObject().userData);
+        }
+
+        getKeyStats() {
+            const { preKey, oneTimeKeys } = this.#userDocument.keyData;
+            const preKeyLastReplacedAt = preKey?.lastReplacedAt || 0; 
+            return { preKeyLastReplacedAt, currentOneTimeKeysNumber: oneTimeKeys.length };
+        }
+
+        async updateX3dhInfo(userData: { x3dhInfo: UserEncryptedData }) {
+            const user = this.#userDocument;
             if (!user) return false;
-            let { defaultKeyBundle, oneTimeKeyBundles } = keyBundles;
-            user.keyBundles.defaultKeyBundle = defaultKeyBundle;
-            oneTimeKeyBundles = Array.from(oneTimeKeyBundles.map((kb: any) => kb));
-            const leanUser = await MongoHandlerCentral.getLeanUser(this.#username);
-            const oldOneTimes = Array.from(leanUser.keyBundles.oneTimeKeyBundles ?? []).map((okb: any) => okb.identifier);
-            for (const oneTime of oneTimeKeyBundles) {
-                if (!oldOneTimes.includes(oneTime.identifier)) {
-                    user.keyBundles.oneTimeKeyBundles.push(oneTime);
-                }
-            }
+            if (!userData?.x3dhInfo) return false;
             try {
-                return (user === await user.save());
+                user.userData.x3dhInfo = userData.x3dhInfo;
+                const saveSuccess = (await user.save()) === user;
+                if (!saveSuccess) await this.getUserDocument();
+                return saveSuccess;
             }
             catch (err) {
+                logError(err); 
+                await this.getUserDocument();
+                return false;
+            }
+        }
+
+        async rotateKeys(keys: RequestIssueNewKeysResponse) {
+            const { x3dhInfo } = keys;
+            const user = this.#userDocument;
+            try {
+                if ("preKey" in keys) {
+                    const { preKey } = keys;
+                    if (!(await this.validateKeys([preKey[1]]))) return false;
+                    const [version, publicPreKey] = preKey;
+                    const lastVersion = this.#userDocument.keyData?.preKey?.version || 0; 
+                    if ((version - lastVersion) !== 1) return false;
+                    const lastReplacedAt = Date.now();
+                    user.keyData.preKey = { version, lastReplacedAt: Date.now(), publicPreKey };
+                    user.userData.x3dhInfo = x3dhInfo;
+                    const saveSuccess = (await user.save()) === user;
+                    if (!saveSuccess) await this.getUserDocument();
+                    return saveSuccess;
+                }
+                else {
+                    const { oneTimeKeys } = keys;
+                    if (!(await this.validateKeys(oneTimeKeys.map(([, k]) => k)))) return false;
+                    for (const [oneTimeKeyIdentifier, publicOneTimeKey] of oneTimeKeys) {
+                        user.keyData.oneTimeKeys.push({ oneTimeKeyIdentifier, publicOneTimeKey });
+                    }
+                    user.userData.x3dhInfo = x3dhInfo;
+                    const saveSuccess = (await user.save()) === user;
+                    if (!saveSuccess) await this.getUserDocument();
+                    return saveSuccess;
+                }
+            }
+            catch(err) {
+                await this.getUserDocument();
                 logError(err);
                 return false;
             }
         }
 
-        async updateUserData(userData: Username & { x3dhInfo?: UserEncryptedData }) {
-            const { username, x3dhInfo } = userData;
-            if (!this.matchUsername(username)) return false;
-            const user = await MongoHandlerCentral.User.findOne( { username });
-            if (!user) return false;
-            if (x3dhInfo) {
-                user.userData.x3dhInfo = x3dhInfo;
+        async getKeyBundle(username: string): Promise<KeyBundle> {
+            let keyBundle = this.#keyBundles.get(username);
+            if (keyBundle) return keyBundle;
+            keyBundle = await MongoHandlerCentral.getKeyBundle(username);
+            if (!keyBundle) return null;
+            const accessKey = (await crypto.deriveEncrypt({ keyBundle }, this.#databaseAuthKey, "DatabaseKeyBundleKey", Buffer.alloc(32))).ciphertext;
+            if (await (new MongoHandlerCentral.DatabaseAccessKey({ username: this.#username, type: "keyBundle", accessKey })).save()) {
+                this.#keyBundles.set(username, keyBundle);
+                return keyBundle;
             }
-            try {
-                const savedUser = await user.save();
-                return savedUser === user;
-            }
-            catch (err) {
-                logError(err);
-                return false;
-            }
+            else return null;
         }
 
         async depositMessage(message: MessageHeader) {
@@ -1019,6 +1217,25 @@ export default class MongoHandlerCentral {
                 return !!(await MongoHandlerCentral.Chat.findOneAndUpdate({ chatId }, chat).exec());
             }
             catch (err) {
+                logError(err);
+                return false;
+            }
+        }
+
+        async discardMemos(processed: string[], x3dhInfo: UserEncryptedData) {
+            const user = this.#userDocument;
+            try {
+                processed.forEach(memoId => {
+                    const id = user.serverMemos.find(memo => memo.memoId === memoId)?.id;
+                    if (id) user.serverMemos.pull(id);
+                });
+                user.userData.x3dhInfo = x3dhInfo;
+                const saveSuccess = (await user.save()) === user;
+                if (!saveSuccess) await this.getUserDocument();
+                return saveSuccess;
+            }
+            catch (err) {
+                await this.getUserDocument();
                 logError(err);
                 return false;
             }
