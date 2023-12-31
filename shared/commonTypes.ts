@@ -10,7 +10,7 @@ export type SignedKeyPair = ExposedSignedPublicKey & {
 };
 
 export type ExportedSigningKeyPair = Readonly<{
-    wrappedPrivateKey: UserEncryptedData;
+    wrappedPrivateKey: EncryptedData;
     exportedPublicKey: Buffer;
 }>;
 
@@ -61,15 +61,14 @@ export type EncryptInfo = Readonly<{
     iv: Buffer
 }>;
 
-export type EncryptedData = {
-    readonly ciphertext: Buffer;
-};
+export type EncryptedData = Readonly<{
+    ciphertext: Buffer;
+    hSalt: Buffer;
+}>;
 
 export type SignedEncryptedData = EncryptedData & {
     readonly signature: Buffer; 
 };
-
-export type UserEncryptedData = EncryptedData & { hSalt: Buffer };
 
 export type LogInPermitted = { 
     readonly login: false | { tries: number, allowsAt: number } 
@@ -132,20 +131,20 @@ export type StoredMessage = Readonly<{
     chatId: string;
     hashedId: string;
     timemark: number;
-    content: UserEncryptedData;
+    content: EncryptedData;
 }>;
 
 export type Backup = Readonly<{
     byAlias: string;
     sessionId: string;
     headerId: string;
-    content: UserEncryptedData;
+    content: EncryptedData;
 }>;
 
 export type ChatData = Readonly<{
     chatId: string,
-    chatDetails: UserEncryptedData,
-    exportedChattingSession: UserEncryptedData
+    chatDetails: EncryptedData,
+    exportedChattingSession: EncryptedData
 }>;
 
 export type Receipt = Readonly<{
@@ -251,12 +250,24 @@ export type LogInSavedResponse = Omit<LogInResponse, "encryptionBaseDerive"> & {
     readonly coreKeyBits: Buffer;
 };
 
+export type X3DHKeysData = {
+    readonly x3dhKeys: EncryptedData
+};
+
+export type X3DHRequestsData = {
+    readonly x3dhRequests: EncryptedData
+};
+
+export type X3DHData = X3DHKeysData & X3DHRequestsData;
+
+export type X3DHDataPartial = X3DHKeysData | X3DHRequestsData | X3DHData;
+
 export type UserData = Readonly<{
     encryptionBaseDerive: PasswordEntangleInfo,
-    serverIdentityVerifying: UserEncryptedData,
-    x3dhIdentity: UserEncryptedData,
-    x3dhInfo: UserEncryptedData,
-    profileData: UserEncryptedData
+    serverIdentityVerifying: EncryptedData,
+    x3dhIdentity: EncryptedData,
+    x3dhData: X3DHData,
+    profileData: SignedEncryptedData
 }>;
 
 export type NewUserData = Readonly<{ 
@@ -270,12 +281,12 @@ export type RequestKeyBundleResponse = {
 };
 
 export type IssueOneTimeKeysResponse = Readonly<{
-    x3dhInfo: UserEncryptedData;
+    x3dhKeysData: X3DHKeysData;
     oneTimeKeys: [string, ExposedSignedPublicKey][];
 }>;
 
 export type ReplacePreKeyResponse = Readonly<{
-    x3dhInfo: UserEncryptedData;
+    x3dhKeysData: X3DHKeysData;
     preKey: [number, ExposedSignedPublicKey];
 }>
 
@@ -285,8 +296,8 @@ export type RequestIssueNewKeysResponse = IssueOneTimeKeysResponse | ReplacePreK
 enum SocketClientSideEventsEnum {
     ClientLoaded,
     UsernameExists,
-    UpdateX3DHInfo,
-    FetchX3DHInfo,
+    UpdateX3DHData,
+    FetchX3DHData,
     RequestKeyBundle,
 
     GetAllChats,
@@ -338,8 +349,8 @@ export const SocketClientSideEvents = constructSocketClientSideEvents();
 type SocketClientRequestParametersMap = {
     ClientLoaded: [],
     UsernameExists: Username,
-    UpdateX3DHInfo: { x3dhInfo: UserEncryptedData },
-    FetchX3DHInfo: [],
+    UpdateX3DHData: { x3dhData: X3DHDataPartial },
+    FetchX3DHData: [],
     RequestKeyBundle: Username,
     GetAllChats: [],
     GetAllRequests: [],
@@ -359,7 +370,7 @@ type SocketClientRequestParametersMap = {
     StoreBackup: Backup,
     GetBackupById: HeaderIdentifier & { byAlias: string },
     BackupProcessed: HeaderIdentifier & { byAlias: string },
-    ServerMemosProcessed: { processed: string[], x3dhInfo: UserEncryptedData },
+    ServerMemosProcessed: { processed: string[], x3dhData: X3DHKeysData },
     SendReceipt: Receipt,
     GetAllReceipts: SessionIdentifier,
     ClearAllReceipts: SessionIdentifier,
@@ -373,8 +384,8 @@ export type SocketClientRequestParameters = {
 type SocketClientRequestReturnMap = {
     ClientLoaded: never,
     UsernameExists: { exists: boolean },
-    UpdateX3DHInfo: never,
-    FetchX3DHInfo: { x3dhIdentity: UserEncryptedData, x3dhInfo: UserEncryptedData },
+    UpdateX3DHData: never,
+    FetchX3DHData: { x3dhIdentity: EncryptedData, x3dhData: X3DHData },
     RequestKeyBundle: RequestKeyBundleResponse,
     GetAllChats: ChatData[],
     GetAllRequests: ChatRequestHeader[],

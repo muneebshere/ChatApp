@@ -105,8 +105,8 @@ async function setupConfirmation(sharedSecret: Buffer, pointToSign: RistrettoPoi
     const toSign = toBuffer(pointToSign);
     const toConfirm = toBuffer(pointToConfirm);
     const { generatePurpose, confirmPurpose } = getPurposes(side);
-    const confirmationCode = await crypto.deriveSign(toSign, sharedKeyBits, commonHash, generatePurpose);
-    const confirmCode = async (confirmationCode: Buffer) => await crypto.deriveVerify(toConfirm, confirmationCode, sharedKeyBits, commonHash, confirmPurpose);
+    const confirmationCode = await crypto.deriveSignMac(toSign, sharedKeyBits, commonHash, generatePurpose);
+    const confirmCode = async (confirmationCode: Buffer) => await crypto.deriveVerifyMac(toConfirm, confirmationCode, sharedKeyBits, commonHash, confirmPurpose);
     return { confirmationCode, confirmCode };
 }
 
@@ -115,7 +115,7 @@ async function setupConfirmationData(sharedSecret: Buffer, toSign: RistrettoPoin
     const commonHash = sha224(toBuffer(toSign.add(pointToConfirm)));
     const { generatePurpose, confirmPurpose } = getPurposes(side);
     const toConfirm = toBuffer(pointToConfirm);
-    const confirmationCode = await crypto.deriveSign(Buffer.from(toSign.toRawBytes()), sharedKeyBits, commonHash, generatePurpose);
+    const confirmationCode = await crypto.deriveSignMac(Buffer.from(toSign.toRawBytes()), sharedKeyBits, commonHash, generatePurpose);
     return { confirmationCode, commonHash, toConfirm, confirmPurpose };
 }
 
@@ -126,7 +126,7 @@ export function getSharedKeyBitsBuffer(sharedSecret: Buffer) {
 export async function processConfirmationData(sharedSecret: Buffer, confirmationCode: Buffer, confirmationData: ConfirmationData) {
     const { commonHash, confirmPurpose, toConfirm } = confirmationData;
     const sharedKeyBits = await importRaw(sharedSecret);
-    return await crypto.deriveVerify(toConfirm, confirmationCode, sharedKeyBits, commonHash, confirmPurpose);
+    return await crypto.deriveVerifyMac(toConfirm, confirmationCode, sharedKeyBits, commonHash, confirmPurpose);
 }
 
 export async function entanglePassword(passwordString: string, outputPoint?: RistrettoPoint) {

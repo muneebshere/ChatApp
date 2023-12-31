@@ -187,7 +187,7 @@ export class Chat extends AbstractChat {
     static async instantiate(encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chatData: ChatData, firstMessage?: { messageId: string, text: string, timestamp: number, sentByMe: boolean, respondedAt: number }) {
         const { chatDetails, exportedChattingSession } = chatData;
         const { chatId, contactDetails, timeRatio }: { chatId: string, contactDetails: Contact, timeRatio: number } = await crypto.deriveDecrypt(chatDetails, encryptionBaseVector, "ChatDetails");
-        const chattingSession = await clientInterface.importSession(exportedChattingSession);
+        const chattingSession = await clientInterface.importChattingSession(exportedChattingSession);
         const chat = new Chat(chatId, timeRatio, contactDetails, encryptionBaseVector, clientInterface, chattingSession);
         if (firstMessage) {
             const { messageId, text, timestamp, sentByMe, respondedAt } = firstMessage;
@@ -684,7 +684,7 @@ export class ChatMessageList {
 
     static readonly InternalListType: typeof this.InternalList.prototype = null;
 
-    private static InternalList = class {
+    private static readonly InternalList = class {
         readonly date: string;
         private indexedMessages = new Map<string, readonly [ChatMessage, (isFirst: boolean) => void]>();
         private chatMessages: ChatMessage[] = [];

@@ -1,9 +1,7 @@
 import { SignedEncryptedData } from "./commonTypes";
 import * as crypto from "./cryptoOperator";
 import { serialize, deserialize } from "./cryptoOperator";
-import { fromBase64, randomFunctions } from "./commonFunctions";
-
-const { getRandomVector } = randomFunctions();
+import { fromBase64} from "./commonFunctions";
 
 type SignedEncryptedMessage = SignedEncryptedData & {
     readonly reference: string;
@@ -24,20 +22,19 @@ export class SessionCrypto {
     }
 
     async signEncryptToBase64(data: any, purpose: string): Promise<string> {
-        const hSalt = getRandomVector(48);
         const sessionSigningKey = this.#sessionSigningKey;
-        const { ciphertext, signature } = await crypto.deriveSignEncrypt(this.#sessionKeyBits, data, hSalt, `${purpose}-${this.#reference}`, sessionSigningKey);
-        const message: SignedEncryptedMessage = { reference: this.#reference, hSalt, ciphertext, signature };
+        const encrypted = await crypto.deriveSignEncrypt(data, this.#sessionKeyBits, `${purpose}-${this.#reference}`, sessionSigningKey);
+        const message: SignedEncryptedMessage = { reference: this.#reference, ...encrypted };
         return serialize(message).toString("base64");
     }
 
     async decryptVerifyFromBase64(serializedData: string, purpose: string): Promise<any> {
         try {
             const data: SignedEncryptedMessage = deserialize(fromBase64(serializedData)) || {};
-            const { reference, hSalt } = data;
+            const { reference, ...encrypted } = data;
             if (reference !== this.#reference)
                 return null;
-            return await crypto.deriveDecryptVerify(this.#sessionKeyBits, data, hSalt, `${purpose}-${this.#reference}`, this.#sessionVerifyingKey);
+            return await crypto.deriveDecryptVerify(encrypted, this.#sessionKeyBits, `${purpose}-${this.#reference}`, this.#sessionVerifyingKey);
         }
         catch (err) {
             console.log(`${err}`);

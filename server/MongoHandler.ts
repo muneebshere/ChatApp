@@ -2,7 +2,7 @@ import _, { isError } from "lodash";
 import { Binary } from "mongodb";
 import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
-import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, StoredMessage, NewUserData, UserEncryptedData, Receipt, Backup, ChatSessionDetails, Username, NewAuthData, KeyBundleId, ExposedSignedPublicKey, PasswordDeriveInfo, PasswordEntangleInfo, PublicIdentity, UserData, SignedEncryptedData, RequestIssueNewKeysResponse, ServerMemo } from "../shared/commonTypes";
+import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, StoredMessage, NewUserData, EncryptedData, Receipt, Backup, ChatSessionDetails, Username, NewAuthData, KeyBundleId, ExposedSignedPublicKey, PasswordDeriveInfo, PasswordEntangleInfo, PublicIdentity, UserData, SignedEncryptedData, RequestIssueNewKeysResponse, ServerMemo, X3DHKeysData, X3DHRequestsData, X3DHData, X3DHDataPartial } from "../shared/commonTypes";
 import * as crypto from "../shared/cryptoOperator";
 import { defaultServerConfig, parseIpReadable } from "./backendserver";
 import { Notify } from "./SocketHandler";
@@ -32,37 +32,32 @@ const immutableExposedSignedKey = {
     }
 };
 
-const signedEncryptedData = {
+const encryptedData = {
     ciphertext: {
         type: Schema.Types.Buffer,
-        required: true,
-        immutable: true
+        required: true
     },
+    hSalt: {
+        type: Schema.Types.Buffer,
+        required: true
+    }
+};
+
+const signedEncryptedData = {
+    ...encryptedData,
     signature: {
         type: Schema.Types.Buffer,
-        required: true,
-        immutable: true
-    }
-};
-
-const userEncryptedData = {
-    ciphertext: {
-        type: Schema.Types.Buffer,
-        required: true
-    },
-    hSalt: {
-        type: Schema.Types.Buffer,
         required: true
     }
 };
 
-const immutableUserEncryptedData = {
+const immutableEncryptedData = {
     ciphertext: {
-        ...userEncryptedData.ciphertext,
+        ...encryptedData.ciphertext,
         immutable: true
     },
     hSalt: {
-        ...userEncryptedData.hSalt,
+        ...encryptedData.hSalt,
         immutable: true
     }
 };
@@ -121,10 +116,10 @@ type User = {
     publicIdentity: PublicIdentity,
     userData: {
         encryptionBaseDerive: PasswordEntangleInfo,
-        serverIdentityVerifying: UserEncryptedData,
-        x3dhIdentity: UserEncryptedData,
-        x3dhInfo: UserEncryptedData,
-        profileData: UserEncryptedData
+        serverIdentityVerifying: EncryptedData,
+        x3dhIdentity: EncryptedData,
+        x3dhData: X3DHData,
+        profileData: SignedEncryptedData
     },
     keyData: {
         preKey: {
@@ -197,7 +192,7 @@ export default class MongoHandlerCentral {
                 required: true,
                 immutable: true
             },
-            ...immutableUserEncryptedData,
+            ...immutableEncryptedData,
         }
     }).index({ memoId: 1 }, { unique: true, partialFilterExpression: { "memoId": { $exists: true, $gt: "" } } });
 
@@ -243,7 +238,7 @@ export default class MongoHandlerCentral {
             immutable: true,
             unique: true
         },
-        record: immutableUserEncryptedData,
+        record: immutableEncryptedData,
         lastFreshAt: {
             type: Schema.Types.Date,
             required: true,
@@ -366,7 +361,7 @@ export default class MongoHandlerCentral {
             unique: true
         },
         ...ip,
-        savedAuthDetails: userEncryptedData,
+        savedAuthDetails: encryptedData,
         createdAt: {
             type: Schema.Types.Date,
             immutable: true,
@@ -407,10 +402,13 @@ export default class MongoHandlerCentral {
          },
         userData: {
             encryptionBaseDerive: passwordEntangleInfo,
-            serverIdentityVerifying: immutableUserEncryptedData,
-            profileData: userEncryptedData,
-            x3dhIdentity: immutableUserEncryptedData,
-            x3dhInfo: userEncryptedData
+            serverIdentityVerifying: immutableEncryptedData,
+            profileData: signedEncryptedData,
+            x3dhIdentity: immutableEncryptedData,
+            x3dhData: {
+                x3dhKeys: encryptedData,
+                x3dhRequests: encryptedData
+            }
         },
         keyData: {
             preKey: {
@@ -577,8 +575,8 @@ export default class MongoHandlerCentral {
             required: true,
             unique: true
         },
-        chatDetails: userEncryptedData,
-        exportedChattingSession: userEncryptedData
+        chatDetails: encryptedData,
+        exportedChattingSession: encryptedData
     }), "chats");
 
     private static readonly Message = mongoose.model("Message", new Schema({
@@ -594,7 +592,7 @@ export default class MongoHandlerCentral {
             type: Schema.Types.Number,
             required: true
         },
-        content: userEncryptedData
+        content: encryptedData
     }).index({ chatId: 1, timemark: -1 }).index({ chatId: 1, hashedId: 1 }, { unique: true }), "messages");
 
     private static readonly Backup =  mongoose.model("Backup", new Schema({
@@ -610,7 +608,7 @@ export default class MongoHandlerCentral {
             type: Schema.Types.String,
             required: true
         },
-        content: userEncryptedData
+        content: encryptedData
     }).index({ byAlias: 1, sessionId: 1, headerId: 1 }, { unique: true }), "backups");
 
     //#endregion
@@ -650,7 +648,7 @@ export default class MongoHandlerCentral {
         }
     }
 
-    static async createRunningClientSession(sessionReference: string, record: UserEncryptedData) {
+    static async createRunningClientSession(sessionReference: string, record: EncryptedData) {
         try {
             return !!(await this.RunningClientSession.create({ sessionReference, record }));
         }
@@ -669,7 +667,7 @@ export default class MongoHandlerCentral {
         return !!(await this.RunningClientSession.exists({ sessionReference }))?._id;
     }
 
-    static async getRunningClientSession(sessionReference: string): Promise<UserEncryptedData> {
+    static async getRunningClientSession(sessionReference: string): Promise<EncryptedData> {
         return cleanLean(await this.RunningClientSession.findOne({ sessionReference }).lean()).record;
     }
 
@@ -710,7 +708,7 @@ export default class MongoHandlerCentral {
         return _.pick(user, "publicIdentity", "verifierDerive", "verifierPoint", "databaseAuthKeyDerive");
     }
 
-    static async setSavedAuth(saveToken: string, ipRep: string, savedAuthDetails: UserEncryptedData) {
+    static async setSavedAuth(saveToken: string, ipRep: string, savedAuthDetails: EncryptedData) {
         try {
             if ((await this.SavedAuth.findOne({ ipRep }))) {
                 await this.SavedAuth.deleteOne({ ipRep });
@@ -808,9 +806,7 @@ export default class MongoHandlerCentral {
         const encryptionPublicKey = await crypto.exportKey(keyPair.publicKey);
         const clientPublicKey = await crypto.importKey(exportedPublicKey, "ECDH", "public", false);
         const sharedBits = await crypto.deriveSymmetricBits(keyPair.privateKey, clientPublicKey, 512);
-        const hSalt = getRandomVector(48);
-        const data = await crypto.deriveSignEncrypt(sharedBits, memo, hSalt, `ServerMemo for ${username}: ${memoId}`, this.signingKey);
-        const memoData = { ...data, hSalt };
+        const memoData = await crypto.deriveSignEncrypt(memo, sharedBits, `ServerMemo for ${username}: ${memoId}`, this.signingKey);
         return { memoId, encryptionPublicKey, memoData };
     }
 
@@ -988,12 +984,12 @@ export default class MongoHandlerCentral {
             return { preKeyLastReplacedAt, currentOneTimeKeysNumber: oneTimeKeys.length };
         }
 
-        async updateX3dhInfo(userData: { x3dhInfo: UserEncryptedData }) {
+        async updateX3dhData(x3dhData: X3DHDataPartial) {
             const user = this.#userDocument;
             if (!user) return false;
-            if (!userData?.x3dhInfo) return false;
+            if (!x3dhData) return false;
             try {
-                user.userData.x3dhInfo = userData.x3dhInfo;
+                Object.assign(user.userData.x3dhData, x3dhData);
                 const saveSuccess = (await user.save()) === user;
                 if (!saveSuccess) await this.getUserDocument();
                 return saveSuccess;
@@ -1006,7 +1002,7 @@ export default class MongoHandlerCentral {
         }
 
         async rotateKeys(keys: RequestIssueNewKeysResponse) {
-            const { x3dhInfo } = keys;
+            const { x3dhKeysData: { x3dhKeys } } = keys;
             const user = this.#userDocument;
             try {
                 if ("preKey" in keys) {
@@ -1015,9 +1011,8 @@ export default class MongoHandlerCentral {
                     const [version, publicPreKey] = preKey;
                     const lastVersion = this.#userDocument.keyData?.preKey?.version || 0; 
                     if ((version - lastVersion) !== 1) return false;
-                    const lastReplacedAt = Date.now();
                     user.keyData.preKey = { version, lastReplacedAt: Date.now(), publicPreKey };
-                    user.userData.x3dhInfo = x3dhInfo;
+                    user.userData.x3dhData.x3dhKeys = x3dhKeys;
                     const saveSuccess = (await user.save()) === user;
                     if (!saveSuccess) await this.getUserDocument();
                     return saveSuccess;
@@ -1028,7 +1023,7 @@ export default class MongoHandlerCentral {
                     for (const [oneTimeKeyIdentifier, publicOneTimeKey] of oneTimeKeys) {
                         user.keyData.oneTimeKeys.push({ oneTimeKeyIdentifier, publicOneTimeKey });
                     }
-                    user.userData.x3dhInfo = x3dhInfo;
+                    user.userData.x3dhData.x3dhKeys = x3dhKeys;
                     const saveSuccess = (await user.save()) === user;
                     if (!saveSuccess) await this.getUserDocument();
                     return saveSuccess;
@@ -1222,14 +1217,15 @@ export default class MongoHandlerCentral {
             }
         }
 
-        async discardMemos(processed: string[], x3dhInfo: UserEncryptedData) {
+        async discardMemos(processed: string[], x3dhKeysData: X3DHKeysData) {
             const user = this.#userDocument;
             try {
                 processed.forEach(memoId => {
                     const id = user.serverMemos.find(memo => memo.memoId === memoId)?.id;
                     if (id) user.serverMemos.pull(id);
                 });
-                user.userData.x3dhInfo = x3dhInfo;
+                const { x3dhKeys } = x3dhKeysData;
+                user.userData.x3dhData.x3dhKeys = x3dhKeys;
                 const saveSuccess = (await user.save()) === user;
                 if (!saveSuccess) await this.getUserDocument();
                 return saveSuccess;

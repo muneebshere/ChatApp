@@ -143,7 +143,7 @@ export default class AuthHandler {
             if (!(await confirmClient(clientConfirmationCode))) return failure(ErrorStrings.IncorrectData);
             const clientIdentityVerifyingKey = publicIdentity.publicIdentityVerifyingKey;
             const clientVerifyingKey = await crypto.importKey(clientIdentityVerifyingKey, "ECDSA", "public", false);
-            const newUserData: NewUserData = await crypto.deriveDecryptVerify(sharedKeyBits, newUserDataSigned, Buffer.alloc(32), "New User Data", clientVerifyingKey);
+            const newUserData: NewUserData = await crypto.deriveDecryptVerify(newUserDataSigned, sharedKeyBits, `${username} New User Data`, clientVerifyingKey);
             if (!newUserData) return failure(ErrorStrings.IncorrectData);
             const databaseAuthKey = await crypto.importRaw(databaseAuthKeyBuffer);
             const onFail = new Promise<{ failed: boolean }>((resolveCallback) => resolveFailed = resolveCallback);

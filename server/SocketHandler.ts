@@ -1,7 +1,7 @@
 import _ from "lodash";
 import { Socket } from "socket.io";
 import { SessionCrypto } from "../shared/sessionCrypto";
-import { Failure, ErrorStrings, Username, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, UserEncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Receipt, MessageIdentifier, ChatIdentifier, SessionIdentifier, HeaderIdentifier, Backup, SocketServerSideEventsKey, SocketServerRequestParameters, SocketServerRequestReturn, ServerMemo } from "../shared/commonTypes";
+import { Failure, ErrorStrings, Username, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, EncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Receipt, MessageIdentifier, ChatIdentifier, SessionIdentifier, HeaderIdentifier, Backup, SocketServerSideEventsKey, SocketServerRequestParameters, SocketServerRequestReturn, ServerMemo, X3DHKeysData, X3DHRequestsData, X3DHData, X3DHDataPartial } from "../shared/commonTypes";
 import { allSettledResults, awaitCallback, failure, logError, typedEntries } from "../shared/commonFunctions";
 import MongoHandlerCentral, { ServerConfig } from "./MongoHandler";
 
@@ -97,8 +97,8 @@ export default class SocketHandler {
     private readonly responseMap: ResponseMap = {
         [SocketClientSideEvents.ClientLoaded]: this.OnClientLoad,
         [SocketClientSideEvents.UsernameExists]: this.UsernameExists,
-        [SocketClientSideEvents.UpdateX3DHInfo]: this.UpdateX3DHInfo,
-        [SocketClientSideEvents.FetchX3DHInfo]: this.FetchX3DHInfo,
+        [SocketClientSideEvents.UpdateX3DHData]: this.UpdateX3DHData,
+        [SocketClientSideEvents.FetchX3DHData]: this.FetchX3DHData,
         [SocketClientSideEvents.RequestKeyBundle]: this.RequestKeyBundle,
         [SocketClientSideEvents.GetAllChats]: this.GetAllChats,
         [SocketClientSideEvents.GetAllRequests]: this.GetAllRequests,
@@ -178,7 +178,7 @@ export default class SocketHandler {
     private async deregisterSocket(reason: string) {
         clearInterval(this.interval);
         if (this.#socket) {
-            console.log(`Disonnected: socket#${this.#socket.id}`);
+            console.log(`Disonnected: socket#${this.#socket.id} due to ${reason}.`);
             this.#disposeRooms.forEach((disposeRoom) => disposeRoom());
             this.#socket.removeAllListeners();
             await this.request(SocketServerSideEvents.ServerDisconnecting, { reason }, 500);
@@ -201,7 +201,7 @@ export default class SocketHandler {
         this.interval = setInterval(async () => {
             const response = await this.request(SocketServerSideEvents.PollConnection, [], 9500);
             if (response?.reason !== false || response.details.alive !== "aliveHere") this.dispose("No response when polled.");
-        })
+        }, 5000)
         return true;
     }
 
@@ -293,15 +293,16 @@ export default class SocketHandler {
 
     }
 
-    private async UpdateX3DHInfo(userData: { x3dhInfo: UserEncryptedData }): Promise<Failure> {
+    private async UpdateX3DHData({ x3dhData }: { x3dhData: X3DHDataPartial }): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
-        if (!(await this.#mongoHandler.updateX3dhInfo(userData))) return failure(ErrorStrings.ProcessFailed);
+        if (!(await this.#mongoHandler.updateX3dhData(x3dhData))) return failure(ErrorStrings.ProcessFailed);
         return { reason: false };
     }
  
-    private async FetchX3DHInfo(): Promise<{ x3dhIdentity: UserEncryptedData, x3dhInfo: UserEncryptedData } | Failure> {
+    private async FetchX3DHData(): Promise<({ x3dhIdentity: EncryptedData, x3dhData: X3DHData }) | Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
-        return _.pick(this.#mongoHandler.getUserData(), "x3dhIdentity", "x3dhInfo");
+        const { x3dhIdentity, x3dhData } = this.#mongoHandler.getUserData();
+        return { x3dhIdentity, x3dhData };
     }
 
     private async RequestKeyBundle({ username }: Username): Promise<RequestKeyBundleResponse | Failure> {
@@ -424,9 +425,9 @@ export default class SocketHandler {
         return { reason: false };
     }
 
-    private async ServerMemosProcessed({ processed, x3dhInfo }: { processed: string[], x3dhInfo: UserEncryptedData }): Promise<Failure> {
+    private async ServerMemosProcessed({ processed, x3dhData }: { processed: string[], x3dhData: X3DHKeysData }): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
-        if (!(await this.#mongoHandler.discardMemos(processed, x3dhInfo))) return failure(ErrorStrings.ProcessFailed);
+        if (!(await this.#mongoHandler.discardMemos(processed, x3dhData))) return failure(ErrorStrings.ProcessFailed);
         return { reason: false };
     }
 
