@@ -1,6 +1,6 @@
 import _ from "lodash";
 import { match } from "ts-pattern";
-import React, { createContext, Dispatch, useCallback, useContext, useEffect, useState } from "react";
+import React, { createContext, Dispatch, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { FormControl, FormLabel, Stack, Button, CircularProgress, Alert, FormHelperText } from "@mui/joy";
 import { SubmitResponse } from "../App";
 import { DisableSelectTypography, StyledJoySwitch } from "./CommonElementStyles";
@@ -75,14 +75,14 @@ export default function SignUpForm() {
   const setSavePassword = (savePassword: boolean) => signUpDispatch(signUpAction("savePassword", savePassword));
   const setFailed = (failed: boolean) => signUpDispatch(signUpAction("failed", failed));
   const setSubmitted = (submitted: boolean) => signUpDispatch(signUpAction("submitted", submitted));
-  const canSubmit = !submitted && !usernameError && validatePassword(password) && (showPassword || password === repeatPassword);
+  const canSubmit = !submitted && !usernameError && isPasswordValid(password) && (showPassword || password === repeatPassword);
 
   useEffect(() => {
-    validateUsername(username).then((error) => setUsernameError(error));
+    getUsernameError(username).then((error) => setUsernameError(error));
   }, [username]);
 
 
-  async function validateUsername(username: string): Promise<string> {
+  async function getUsernameError(username: string): Promise<string> {
     if (username.match(/^[a-z][a-z0-9_]{2,14}$/) === null) {
       return "Username may contain only lowercase letters, digits and underscores, must start with a letter, and must be between 3 and 15 characters.";
     }
@@ -91,7 +91,7 @@ export default function SignUpForm() {
     }
   }
 
-  function validatePassword(password: string): boolean {
+  function isPasswordValid(password: string): boolean {
     return password.match(/^(?=.*?[A-Z])(?=.*?[a-z])(?=.*?[0-9])(?=.*?[#?!@$%^&*-]).{8,}$/) !== null;
   }
 
@@ -107,9 +107,19 @@ export default function SignUpForm() {
     setSubmitted(false);
   }
 
+  const usernameInput = useRef<HTMLInputElement>(null);
+  const newPasswordInput = useRef<HTMLInputElement>(null);
+  const passwordAgainInput = useRef<HTMLInputElement>(null);
+
   return(
     <React.Fragment>
-      <Stack spacing={2}>
+      <Stack spacing={2}
+      onKeyUp={(e) => {
+        if (e.key === "Enter") {
+          e.stopPropagation();
+          submitLocal();
+        }
+      }}>
         <ControlledTextField 
           variant="outlined"
           placeholder="Display Name (Optional)" 
@@ -120,8 +130,9 @@ export default function SignUpForm() {
           disabled={submitted}
           autoFocus={true}
           helperText="If you don't specify a display name, your username will be used as your display name."
-          onEnter={submitLocal}/>
-        <ControlledTextField 
+          onEnter={() => usernameInput.current?.focus()}/>
+        <ControlledTextField
+          ref={usernameInput}
           variant="outlined"
           placeholder="Please choose a unique username" 
           type="text"
@@ -131,8 +142,18 @@ export default function SignUpForm() {
           valid={!usernameError}
           disabled={submitted}
           errorMessage={usernameError}
-          onEnter={submitLocal}/>
-        <ControlledTextField 
+          onEnter={async (e) => {
+            const { value } = (e.target as HTMLInputElement);
+            if (!(await getUsernameError(value))) { 
+              newPasswordInput.current?.focus();
+            }
+            else {
+              usernameInput.current?.blur();
+              usernameInput.current?.focus();
+            }
+          }}/>
+        <ControlledTextField
+          ref={newPasswordInput}
           autoComplete="new-password"
           variant="outlined"
           placeholder="Please choose a new password" 
@@ -140,13 +161,24 @@ export default function SignUpForm() {
           value={password}
           preventSpaces
           setValue={setPassword}
-          valid={validatePassword(password)}
+          valid={isPasswordValid(password)}
           disabled={submitted}
           errorMessage={`Please choose a password at least 8 characters long, with at least one uppercase letter, one lowercase letter, one digit and one special character (#?!@$%^&*-]).${showPassword ? "\nKeep this password safe. If lost, you will irretrievably lose access to all chats.": ""}`}
           helperText={showPassword ? "Keep this password safe. If lost, you will irretrievably lose access to all chats." : undefined}
-          onEnter={submitLocal}/>
+          onEnter={(e) => {
+            const { value } = (e.target as HTMLInputElement);
+            if (isPasswordValid(value)) {
+              if (passwordAgainInput.current) passwordAgainInput.current.focus();
+              else submitLocal();
+            }
+            else {
+              newPasswordInput.current?.blur();
+              newPasswordInput.current?.focus();
+            }
+          }}/>
         {!showPassword &&
           <ControlledTextField 
+            ref={passwordAgainInput}
             autoComplete="new-password"
             variant="outlined"
             placeholder="Please re-enter password" 
@@ -158,13 +190,18 @@ export default function SignUpForm() {
             disabled={!password || submitted}
             errorMessage="Passwords don't match."
             helperText="Keep this password safe. If lost, you will irretrievably lose access to all chats."
-            onEnter={submitLocal}/>
+            onEnter={(e) => {
+              const { value } = (e.target as HTMLInputElement);
+              if (value === newPasswordInput.current.value && isPasswordValid(value)) {
+                submitLocal();
+              }
+            }}/>
         }
         <FormControl orientation="horizontal">
           <FormLabel>Show password</FormLabel>
           <StyledJoySwitch checked={showPassword} 
             disabled={submitted}
-            onChange={ (e) => setShowPassword(e?.target?.checked) } 
+            onChange={ (e) => setShowPassword(e?.target?.checked) }
             color={showPassword ? "primary" : "neutral"}/>
         </FormControl>
         <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>

@@ -151,7 +151,13 @@ export default function LogInForm() {
   }
 
   return(
-    <Stack spacing={2}>
+    <Stack spacing={2}
+      onKeyUp={(e) => {
+        if (e.key === "Enter") {
+          e.stopPropagation();
+          submitLocal();
+        }
+      }}>
       {!usernameEntered &&
         <React.Fragment>
           <ControlledTextField 
@@ -189,9 +195,7 @@ export default function LogInForm() {
             disabled={submitted || tryAgainIn > 0}
             forceInvalid={!validatePassword(password) || tryAgainIn > 0}
             errorMessage={ tryAgainIn <= 0 ? (!password ? "Please provide password" : "Incorrect password.") : `Incorrect password entered ${tryCount} times. Try again in ${ (tryAgainIn / 1000).toFixed(0) }s.`}
-            autoFocus={usernameEntered}
-            forceFocus={usernameEntered}
-            onEnter={submitLocal}/>
+            autoFocus={usernameEntered}/>
           <FormControl orientation="horizontal">
             <FormLabel>Show password</FormLabel>
             <StyledJoySwitch checked={showPassword}

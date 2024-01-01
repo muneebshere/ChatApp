@@ -114,7 +114,7 @@ function App() {
   const [signUpData, signUpDispatch] = useReducer(defaultSignUpDataReducer, { ...defaultSignUpData, usernameExists, submit: signUp });
   const [status, setStatus] = useState<ConnectionStatus>("NotLoaded");
   const [connectionStatus, setConnectionStatus] = useState<AuthConnectionStatus>("Online");
-  const [currentTab, setCurrentTab] = useState(0);
+  const [currentTab, setCurrentTab] = useState<0 | 1>(0);
   const [visualHeight, setVisualHeight] = useState(window.visualViewport.height);
   const [currentChatWith, setCurrentChatWith] = useState("");
   const updateStatus = () => Client.connectionStatus().then((status) => setStatus(status));

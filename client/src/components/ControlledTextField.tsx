@@ -1,5 +1,5 @@
 import _ from "lodash";
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, forwardRef } from "react";
 import { FormControl, FormLabel, FormHelperText, Input  } from "@mui/joy";
 
 export type ControlledTextFieldProps = {  
@@ -12,7 +12,7 @@ export type ControlledTextFieldProps = {
   valid: boolean;
   variant?: "plain" | "outlined" | "soft" | "solid";
   helperText?: string;
-  onEnter?: () => void;
+  onEnter?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   forceInvalid?: boolean;
   disabled?: boolean;
   errorMessage?: string;
@@ -23,15 +23,15 @@ export type ControlledTextFieldProps = {
   forceFocus?: boolean;
 } & React.HTMLProps<HTMLInputElement>
 
-export default function ControlledTextField(args: ControlledTextFieldProps) {
+export default forwardRef(function(args: ControlledTextFieldProps, ref: React.ForwardedRef<HTMLInputElement>) {
   const { placeholder, setValue, type, valid, defaultValue, value, disabled, errorMessage, forceInvalid, helperText, label, onEnter, preventSpaces, variant, autoComplete, role, autoFocus, forceFocus } = args;
   const [cursor, setCursor] = useState(0);
   const [touched, setTouched] = useState<boolean>(null);
-  const [enterDown, setEnterDown] = useState(false);
+  const enterRef = useRef(false);
   const timeoutRef = useRef<number>(null);
-  const ref = useRef<HTMLInputElement>(null);
   const errorText = () => (touched || forceInvalid) && !valid && !!errorMessage;
-  useEffect(() => ref?.current?.setSelectionRange?.(cursor, cursor), [cursor, args, value]);
+  const localRef = useRef<HTMLInputElement>(null);
+  useEffect(() => localRef.current?.setSelectionRange?.(cursor, cursor), [cursor, args, value]);
 
   function onChange(e: React.ChangeEvent<HTMLInputElement>) {
     e.preventDefault();
@@ -60,23 +60,22 @@ export default function ControlledTextField(args: ControlledTextFieldProps) {
     if (touched === null) setTouched(false);
   }
 
-  function onKey(e: React.KeyboardEvent<HTMLDivElement>, type: "up" | "down") {
+  function onKey(e: React.KeyboardEvent<HTMLInputElement>, type: "up" | "down") {
     if (timeoutRef.current !== null) {
       window.clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
-    if (!e.altKey && !e.ctrlKey && !e.shiftKey && e.key === "Enter") {
-      if (type === "down") {
-        setEnterDown(true);
-        timeoutRef.current = window.setTimeout(() => setEnterDown(false), 200);
-      }
-      else if (enterDown) {
-        onEnter?.();
-      }
+    if (type === "down" && e.key === "Enter" && !e.altKey && !e.ctrlKey && !e.shiftKey) {
+      e.stopPropagation();
+      enterRef.current = true;
+      timeoutRef.current = window.setTimeout(() => enterRef.current = false, 400);
     }
-    else {
-      setEnterDown(false);
+    else if (type === "up" && enterRef.current && e.key === "Enter" && !e.altKey && !e.ctrlKey && !e.shiftKey) {
+      e.stopPropagation();
+      onEnter?.(e);
+      enterRef.current = false;
     }
+    else enterRef.current = false;
   }
 
   return (
@@ -87,8 +86,12 @@ export default function ControlledTextField(args: ControlledTextFieldProps) {
       </FormLabel>}
       <Input
         ref={(elem) => {
-          ref.current = elem?.querySelector("input");
-        }} 
+          const inputElement = elem?.querySelector("input");
+          localRef.current = inputElement;
+          if (!ref) return;
+          if (typeof ref === "function") ref(inputElement);
+          else ref.current = inputElement;
+        }}
         autoComplete={autoComplete}
         autoFocus={autoFocus}
         role={role}
@@ -102,12 +105,12 @@ export default function ControlledTextField(args: ControlledTextFieldProps) {
         onChange={onChange}
         onBlur={onBlur}
         onFocus={onFocus}
-        onKeyDown={ (e) => onKey(e, "down") }
-        onKeyUp={ (e) => onKey(e, "up") }
+        onKeyDown={ onEnter ? ((e) => onKey(e, "down")) : undefined }
+        onKeyUp={ onEnter ? ((e) => onKey(e, "up")) : undefined }
         sx={{ width: "100%" }}/>
       {(errorText() || helperText) &&
       <FormHelperText sx={{ justifyItems: "flex-start", textAlign: "start", color: !valid && (forceInvalid || touched) ? "var(--joy-palette-danger-outlinedColor)" : "neutral" }}>
         { errorText() ? errorMessage : helperText }
       </FormHelperText>}
     </FormControl>)
-}
+})
