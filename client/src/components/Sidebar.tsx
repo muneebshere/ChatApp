@@ -1,7 +1,7 @@
 import _ from "lodash";
 import React, { useState, useRef, useMemo, useLayoutEffect, useEffect } from "react";
-import { Avatar, Badge, IconButton, Input, List, ListItem, ListItemButton, Stack } from "@mui/joy";
-import { PersonAddAltOutlined, Search, ClearSharp, HourglassTop, DoneAllSharp, DoneSharp } from "@mui/icons-material";
+import { Avatar, Badge, Button, Grid, IconButton, Input, List, ListItem, ListItemButton, Sheet, Stack } from "@mui/joy";
+import { PersonAddAltOutlined, Search, ClearSharp, HourglassTop, DoneAllSharp, DoneSharp, LogoutOutlined } from "@mui/icons-material";
 import { NewChatPopup, NewMessageDialog } from "./NewChat";
 import { DisableSelectTypography, ReactMarkdownVariableEmoji, StyledScrollbar } from "./CommonElementStyles";
 import Client from "../Client";
@@ -16,6 +16,8 @@ import twemoji from "../custom_modules/remark-twemoji";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import { SxProps } from "@mui/material";
+import { Profile } from "../../../shared/commonTypes";
+import Dialog from "./Dialog";
 
 type SidebarProps = {
   currentChatWith: string,
@@ -24,13 +26,16 @@ type SidebarProps = {
   chats: (Chat | ReceivedChatRequest | SentChatRequest)[],
   belowXL: boolean,
   allowLeaveFocus: React.MutableRefObject<boolean>,
-  giveBackFocus: React.MutableRefObject<() => void>
+  giveBackFocus: React.MutableRefObject<() => void>,
+  profile: Profile,
+  changeProfile: (profile: Omit<Profile, "username">) => Promise<void>,
 }
 
-export default function Sidebar({ currentChatWith, openChat, chats, client, belowXL, allowLeaveFocus, giveBackFocus }: SidebarProps) {
+export default function Sidebar({ profile, currentChatWith, openChat, chats, client, belowXL, allowLeaveFocus, giveBackFocus }: SidebarProps) {
   const [search, setSearch] = useState("");
   const [newChatWith, setNewChatWith] = useState("");
   const [isPopupOpen, setIsPopupOpen] = useState(false);
+  const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
   const [warn, setWarn] = useState(false);
   const newMessageRef = useRef("");
 
@@ -66,37 +71,72 @@ export default function Sidebar({ currentChatWith, openChat, chats, client, belo
         });
       }}
       />
-    <div style={{ display: "flex" }}>
-      <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-start", alignContent: "center", paddingLeft: 20 }}>
-        <DisableSelectTypography level="h4" fontWeight="md">
-          Chats
+    <Dialog
+      outsidePress={false}
+      open={isLogoutDialogOpen}
+      overlayBackdrop="opacity(100%) blur(6px)">
+      <Sheet
+        variant="outlined"
+        sx={{
+          width: belowXL ? "75vw" : "30vw",
+          borderRadius: "md",
+          p: 3,
+          boxShadow: "lg"}}>
+        <DisableSelectTypography
+          textAlign="center"
+          component="h2"
+          id="modal-title"
+          level="h4"
+          textColor="inherit"
+          fontWeight="lg"
+          mb={1}>
+          Are you sure you want to log out?
         </DisableSelectTypography>
+        <DisableSelectTypography id="modal-desc" textColor="text.tertiary" textAlign="center">
+          You will have to re-enter the password to log in again.
+        </DisableSelectTypography>
+        <Grid container direction="row" sx={{ paddingTop: "15px" }}>
+          <Grid xs={6} sx={{ display: "flex", justifyContent: "center", paddingInline: "20px" }}>
+            <Button 
+              variant="solid" 
+              color="primary" 
+              sx={{ flexGrow: 1 }} 
+              onClick={ () => setIsLogoutDialogOpen(false) }>
+              Cancel
+            </Button>
+          </Grid>
+          <Grid xs={6} sx={{ display: "flex", justifyContent: "center", paddingInline: "20px" }}>
+            <Button 
+              variant="solid" 
+              color="danger" 
+              sx={{ flexGrow: 1 }} 
+              onClick={ () => {
+                setIsLogoutDialogOpen(false);
+                client.userLogOut();
+              }}>
+              Logout
+            </Button>
+          </Grid>
+        </Grid>
+      </Sheet>      
+    </Dialog>
+    <div style={{ display: "flex", marginBottom: 10 }}>
+      <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-start", alignContent: "center", paddingLeft: 20 }}>
+        <Avatar src={profile?.profilePicture} size="md"/>
       </div>
-      <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-end", alignContent: "center", paddingRight: 40 }}>
-      <NewChatPopup
-        isPopupOpen={isPopupOpen}
-        setIsPopupOpen={setIsPopupOpen}
-        belowXL={belowXL} 
-        placement={ belowXL ? "bottom-end" : "bottom-start" }
-        validate={validateNewChat} 
-        returnUser={(chatWith) => {
-          if (chatWith) allowLeaveFocus.current = true;
-          flushSync(() => setIsPopupOpen(false));
-          allowLeaveFocus.current = false;
-          setNewChatWith(chatWith);
-        }}>
-          <IconButton 
-            variant="plain" 
-            color="success" 
-            sx={ isPopupOpen ? { backgroundColor: "var(--joy-palette-success-plainHoverBg)" } : {} }
-            onMouseDown={mouseDown}
-            onMouseUp={mouseUp}>
-            <PersonAddAltOutlined color="success" sx={{ fontSize: "1.5rem" }}/>
-          </IconButton>
-      </NewChatPopup>
+      <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-end", alignContent: "center", paddingRight: 15 }}>
+        <IconButton 
+          variant="solid" 
+          color="danger"
+          size="sm"
+          style={{ height: "32px", width: "32px", padding: 0, margin: "8px" }}
+          sx={ isLogoutDialogOpen ? { backgroundColor: "var(--joy-palette-danger-solidHoverBg)" } : {} }
+          onClick={() => setIsLogoutDialogOpen(true)}>
+          <LogoutOutlined color="inherit" sx={{ fontSize: "1.5rem" }}/>
+        </IconButton>
       </div>
     </div>
-    <div style={{ display: "flex", alignContent: "center", justifyContent: "stretch", paddingBlock: 10, paddingInline: 15 }}>
+    <div style={{ display: "flex", alignContent: "center", justifyContent: "stretch", paddingBlock: 0, paddingInline: 15 }}>
       <Input 
         placeholder="Search for chat"
         value={search}
@@ -112,6 +152,28 @@ export default function Sidebar({ currentChatWith, openChat, chats, client, belo
               </IconButton>)
             : (<Search sx={{ fontSize: "1.2rem" }}/>) 
         }/>
+      <NewChatPopup
+        isPopupOpen={isPopupOpen}
+        setIsPopupOpen={setIsPopupOpen}
+        belowXL={belowXL} 
+        placement={ belowXL ? "bottom-end" : "bottom-start" }
+        validate={validateNewChat} 
+        returnUser={(chatWith) => {
+          if (chatWith) allowLeaveFocus.current = true;
+          flushSync(() => setIsPopupOpen(false));
+          allowLeaveFocus.current = false;
+          setNewChatWith(chatWith);
+        }}>
+          <IconButton
+            variant="plain" 
+            color="success"
+            style={{ marginInline: "5px" }}
+            sx={ isPopupOpen ? { backgroundColor: "var(--joy-palette-success-plainHoverBg)" } : {} }
+            onMouseDown={mouseDown}
+            onMouseUp={mouseUp}>
+            <PersonAddAltOutlined color="success" sx={{ fontSize: "1.5rem" }}/>
+          </IconButton>
+      </NewChatPopup>
     </div>
     <StyledScrollbar>
       <List variant="plain" color="neutral">

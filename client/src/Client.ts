@@ -80,6 +80,7 @@ export default class Client {
     private countdownTimeout = null;
     private connecting = false;
     private reconnecting = false;
+    private isLoggingOut = false;
     private initiated = false;
     private disconnectReason = "";
 
@@ -126,6 +127,7 @@ export default class Client {
 
     static async connectionStatus(): Promise<ConnectionStatus> {
         if (!this.client) return "NotLoggedIn";
+        if (this.client.isLoggingOut) return "LoggingOut";
         if (this.client.isConnected) return "Online";
         if (!(await isClientOnline())) return "ClientOffline";
         if (!(await AuthClient.isServerReachable())) return "ServerUnreachable";
@@ -375,6 +377,13 @@ export default class Client {
         if (!this.countdownTimeout) {
             this.countdownTimeout = window.setInterval(() => this.tryingAgainIn -= 20, 20);
         }
+    }
+
+    async userLogOut() {
+        this.isLoggingOut = true;
+        this.notifyStatus("LoggingOut");
+        await AuthClient.userLogOut();
+        this.isLoggingOut = false;
     }
 
     async checkUsernameExists(username: string) {

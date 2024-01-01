@@ -26,13 +26,17 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
   const typedMessages = useRef(new Map<string, string>());
   const lastScrollPositions = useRef(new Map<string, ScrollState>());
   const [chats, setChats] = useState(client.chatsList);
+  const [profile, setProfile] = useState(client.profile);
   const allowLeaveFocus = useRef(false);
   const giveBackFocus = useRef<() => void>(null);
   
   useEffect(() => {
     const popStateListener = (event: PopStateEvent) => setCurrentChatWith(event.state?.currentChatWith);
     window.addEventListener("popstate", popStateListener);
-    client.subscribeChange(() => setChats(Array.from(client.chatsList)));
+    client.subscribeChange(() => {
+      setChats(client.chatsList);
+      setProfile(client.profile);
+    });
     return () => window.removeEventListener("popstate", popStateListener);
   }, []);
 
@@ -90,6 +94,8 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
       {(!belowXL || !currentChatWith) &&
       <Grid xs={12} xl={3} sx={{ minHeight: 0, maxHeight: "100%", display: "flex", flexDirection: "column" }}>
         <Sidebar 
+          profile={profile}
+          changeProfile={async () => {}}
           currentChatWith={currentChatWith} 
           chats={chats} 
           openChat={openChat} 
