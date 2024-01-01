@@ -517,7 +517,8 @@ export default class Client {
             logError(r1);
             return false;
         }
-        const { reason: r2 } = await this.#socketHandler.CreateChat(chatData);
+        const { username: otherUser } = profile;
+        const { reason: r2 } = await this.#socketHandler.CreateChat({ ...chatData, otherUser });
         if (r2) {
             logError(r2);
             return false;
@@ -593,7 +594,8 @@ export default class Client {
         const details = { chatId, contactDetails: profile, timeRatio: _.random(1, 999) };
         const chatDetails = await crypto.deriveEncrypt(details, this.#encryptionBaseVector, "ChatDetails");
         const chatData: ChatData = { chatId, chatDetails, exportedChattingSession };
-        await this.#socketHandler.CreateChat(chatData);
+        const { username: otherUser } = profile;
+        await this.#socketHandler.CreateChat({ ...chatData, otherUser });
         await this.instantiateChat(chatData, sessionId, { text, messageId, sentByMe: false, timestamp, respondedAt: respondingAt });
         return true;
     }

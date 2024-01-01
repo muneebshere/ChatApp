@@ -309,6 +309,7 @@ export default class SocketHandler {
         if (!this.#username || username === this.#username) return failure(ErrorStrings.InvalidRequest);
         const keyBundle = await this.#mongoHandler.getKeyBundle(username);
         if (!keyBundle) return failure(ErrorStrings.ProcessFailed);
+        if (typeof keyBundle === "string") return failure(ErrorStrings.ProcessFailed, keyBundle);
         return { keyBundle };
     }
 
@@ -390,9 +391,9 @@ export default class SocketHandler {
         return { reason: false };
     }
 
-    private async CreateChat(chat: ChatData): Promise<Failure> {
+    private async CreateChat(chatData: ChatData & { otherUser: string }): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
-        if (!(await this.#mongoHandler.createChat(chat))) return failure(ErrorStrings.ProcessFailed);
+        if (!(await this.#mongoHandler.createChat(chatData))) return failure(ErrorStrings.ProcessFailed);
         return { reason: false };
     }
 

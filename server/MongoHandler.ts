@@ -135,6 +135,20 @@ type User = {
     serverMemos: ServerMemo[]
 };
 
+type AccessKey = {
+    readonly accessId: string;
+};
+
+type ChatSessionAccessKey = AccessKey & ChatSessionDetails
+
+type KeyBundleAccessKey = AccessKey & KeyBundle;
+
+type ChatAccessKey = AccessKey & Readonly<{
+    chatId: string,
+    otherUser: string
+}>;
+
+
 export default class MongoHandlerCentral {
 
     private static serverConfig: ServerConfig;
@@ -263,6 +277,12 @@ export default class MongoHandlerCentral {
             required: true,
             immutable: true,
             enum: ["root", "chat", "session", "keyBundle"]
+        },
+        accessId: {
+            type: Schema.Types.String,
+            required: true,
+            immutable: true,
+            unique: true
         },
         accessKey: {
             type: Schema.Types.Buffer,
@@ -681,8 +701,11 @@ export default class MongoHandlerCentral {
             if ((await this.DatabaseAccessKey.find({ username, type: "root" })).length > 0) return false;
             const { publicIdentityVerifyingKey, publicDHIdentityKey } = user.publicIdentity;
             if (!(await crypto.verifyKey(publicDHIdentityKey, publicIdentityVerifyingKey))) return false;
-            const accessKey = (await crypto.deriveEncrypt({ username }, databaseAuthKey, "DatabaseRootAccessKey", Buffer.alloc(32))).ciphertext;
-            const accessRoot = new this.DatabaseAccessKey({ username, type: "root", accessKey });
+            const databaseAccessBaseVector = getRandomVector(64);
+            const accessKeyContent = { username, databaseAccessBaseVector };
+            const accessKey = (await crypto.deriveEncrypt(accessKeyContent, databaseAuthKey, "DatabaseRootAccessKey", Buffer.alloc(32))).ciphertext;
+            const accessId = getRandomString(16, "hex");
+            const accessRoot = new this.DatabaseAccessKey({ username, type: "root", accessKey, accessId });
             if (accessRoot !== await accessRoot.save()) return false;
             onFail.then(({ failed }) => {
                 if (failed === true) {
@@ -797,6 +820,10 @@ export default class MongoHandlerCentral {
         }
     }
 
+    private static async deleteIssuedKeyBundle(username: string, accessId: string) {
+        return (await this.DatabaseAccessKey.deleteOne({ username, accessId, type: "keyBundle" })).deletedCount === 1;
+    }
+
     private static async generateMemo(username: string, memo: any): Promise<ServerMemo> {
         const user = await this.User.findOne({ username });
         if (!user) return null;
@@ -812,20 +839,41 @@ export default class MongoHandlerCentral {
 
     private static toUserEncrypted = (ciphertext: Buffer) => ({ ciphertext, hSalt: Buffer.alloc(32) });
 
+    private static async extractAccessKey(databaseAccessBaseVector: Buffer, access: AccessKey & { accessKey: Buffer }, purpose: "DatabaseChatAccessKey"): Promise<ChatAccessKey>;
+    private static async extractAccessKey(databaseAccessBaseVector: Buffer, access: AccessKey & { accessKey: Buffer }, purpose: "DatabaseSessionAccessKey"): Promise<ChatSessionAccessKey>;
+    private static async extractAccessKey(databaseAccessBaseVector: Buffer, access: AccessKey & { accessKey: Buffer }, purpose: "DatabaseKeyBundleAccessKey"): Promise<KeyBundleAccessKey>;
+    private static async extractAccessKey(databaseAccessBaseVector: Buffer, access: AccessKey & { accessKey: Buffer }, purpose: "DatabaseChatAccessKey" | "DatabaseSessionAccessKey" | "DatabaseKeyBundleAccessKey"): Promise<ChatAccessKey | ChatSessionAccessKey | KeyBundleAccessKey> {
+        const { accessKey, accessId } = access;
+        const encrypted = this.toUserEncrypted(accessKey);
+        const decrypted = await crypto.deriveDecrypt(encrypted, databaseAccessBaseVector, purpose);
+        if (purpose === "DatabaseChatAccessKey") {
+            const { chat } = decrypted;
+            return { accessId, ...chat };
+        }
+        else if (purpose === "DatabaseKeyBundleAccessKey") {
+            const { keyBundle } = decrypted;
+            return { accessId, ...keyBundle };
+        }
+        else {
+            const { session } = decrypted;
+            return { accessId, ...session };
+        }
+    }
+
     static async instantiateUserHandler(username: string, databaseAuthKey: CryptoKey) {
         try {
             const accessRoot = cleanLean(await this.DatabaseAccessKey.findOne({ username, type: "root" }).lean());
             if (!accessRoot) return null;
-            const { username: user } = await crypto.deriveDecrypt(this.toUserEncrypted(accessRoot.accessKey), databaseAuthKey, "DatabaseRootAccessKey");
+            const { username: user, databaseAccessBaseVector } = await crypto.deriveDecrypt(this.toUserEncrypted(accessRoot.accessKey), databaseAuthKey, "DatabaseRootAccessKey");
             if (username !== user) return null;
             const chatsList = cleanLean(await this.DatabaseAccessKey.find({ username, type: "chat" }).lean());
-            const chats: string[] = await allSettledResults(chatsList.map((c: any) => crypto.deriveDecrypt(this.toUserEncrypted(c.accessKey), databaseAuthKey, "DatabaseChatAccessKey").then((c) => c.chatId)));
+            const chats: ChatAccessKey[] = await allSettledResults(chatsList.map((c: any) => this.extractAccessKey(databaseAccessBaseVector, c, "DatabaseChatAccessKey")));
             const sessionsList = cleanLean(await this.DatabaseAccessKey.find({ username, type: "session" }).lean());
-            const sessions: ChatSessionDetails[] = await allSettledResults(sessionsList.map((c: any) => crypto.deriveDecrypt(this.toUserEncrypted(c.accessKey), databaseAuthKey, "DatabaseSessionAccessKey")));
+            const sessions: ChatSessionAccessKey[] = await allSettledResults(sessionsList.map((s: any) => this.extractAccessKey(databaseAccessBaseVector, s, "DatabaseSessionAccessKey")));
             const keyBundlesList = cleanLean(await this.DatabaseAccessKey.find({ username, type: "keyBundles" }).lean());
-            const keyBundles: KeyBundle[] = (await allSettledResults<any>(keyBundlesList.map((c: any) => crypto.deriveDecrypt(this.toUserEncrypted(c.accessKey), databaseAuthKey, "DatabaseKeyBundleAccessKey")))).map((ak) => ak.keyBundle);
+            const keyBundles: KeyBundleAccessKey[] = (await allSettledResults<any>(keyBundlesList.map((k: any) => this.extractAccessKey(databaseAccessBaseVector, k, "DatabaseKeyBundleAccessKey"))));
             const userDocument = await MongoHandlerCentral.User.findOne({ username });
-            return new this.MongoUserHandler(username, userDocument, databaseAuthKey, chats, sessions, keyBundles, this.subscribeChange);
+            return new this.MongoUserHandler(username, userDocument, databaseAccessBaseVector, chats, sessions, keyBundles, this.subscribeChange);
         }
         catch(err) {
             logError(err);
@@ -840,18 +888,18 @@ export default class MongoHandlerCentral {
     private static readonly MongoUserHandler = class {
         #userDocument: typeof MongoHandlerCentral.UserDocumentType;
         readonly #username: string;
-        readonly #databaseAuthKey: CryptoKey;
-        readonly #chats: string[];
-        readonly #sessions: Map<string, ChatSessionDetails>;
-        readonly #keyBundles: Map<string, KeyBundle>;
+        readonly #databaseAccessBaseVector: CryptoKey;
+        readonly #chats: Map<string, ChatAccessKey>;
+        readonly #sessions: Map<string, ChatSessionAccessKey>;
+        readonly #keyBundles: Map<string, KeyBundleAccessKey>;
         private notify: (notify: Notify) => void;
         private readonly subscribeChange: (id: string, callback: (notify: Notify) => void) => void;
 
-        constructor (username: string, userDocument: typeof MongoHandlerCentral.UserDocumentType, databaseAuthKey: CryptoKey, chats: string[], sessions: ChatSessionDetails[], keyBundles: KeyBundle[], subscribeChange: typeof MongoHandlerCentral.UserHandlerType.subscribeChange) {
+        constructor (username: string, userDocument: typeof MongoHandlerCentral.UserDocumentType, databaseAccessBaseVector: CryptoKey, chats: ChatAccessKey[], sessions: ChatSessionAccessKey[], keyBundles: KeyBundleAccessKey[], subscribeChange: typeof MongoHandlerCentral.UserHandlerType.subscribeChange) {
             this.#username = username;
             this.#userDocument = userDocument;
-            this.#databaseAuthKey = databaseAuthKey;
-            this.#chats = chats;
+            this.#databaseAccessBaseVector = databaseAccessBaseVector;
+            this.#chats = new Map(chats.map((c) => [c.chatId, c]));
             this.#sessions = new Map(sessions.map((s) => [s.sessionId, s]));
             this.#keyBundles = new Map(keyBundles.map((b) => [b.owner, b]));
             this.subscribeChange = subscribeChange;
@@ -864,7 +912,7 @@ export default class MongoHandlerCentral {
         }
 
         private matchChat(chatId: string) {
-            if (this.#chats.includes(chatId)) return true;
+            if (this.#chats.has(chatId)) return true;
             logError(`Unauthorized attempt by ${this.#username} to access chat resource #${chatId}`);
             return false;
         }
@@ -900,10 +948,11 @@ export default class MongoHandlerCentral {
 
         private async addSessionKey(sessionId: string, myAlias: string, otherAlias: string) {
             if (this.#sessions.has(sessionId)) return false;
+            const accessId = getRandomString(16, "hex");
             const session = { sessionId, myAlias, otherAlias };
-            const accessKey = (await crypto.deriveEncrypt(session, this.#databaseAuthKey, "DatabaseSessionAccessKey", Buffer.alloc(32))).ciphertext;
-            if (await (new MongoHandlerCentral.DatabaseAccessKey({ username: this.#username, type: "session", accessKey })).save()) {
-                this.#sessions.set(sessionId, session);
+            const accessKey = (await crypto.deriveEncrypt({ session }, this.#databaseAccessBaseVector, "DatabaseSessionAccessKey", Buffer.alloc(32))).ciphertext;
+            if (await (new MongoHandlerCentral.DatabaseAccessKey({ username: this.#username, type: "session", accessKey, accessId })).save()) {
+                this.#sessions.set(sessionId, { accessId, ...session });
                 if (this.notify) this.subscribeChange(`${sessionId}@${myAlias}`, this.notify);
                 return true;
             }
@@ -917,7 +966,7 @@ export default class MongoHandlerCentral {
                 const existing = await MongoHandlerCentral.RegisteredSession.findOne({ sessionId });
                 if (existing?.locked) return false;
                 if (existing) {
-                    const { username } = await crypto.deriveDecrypt(MongoHandlerCentral.toUserEncrypted(pending.initiatorAccessKey), this.#databaseAuthKey, "PendingSessionKey");
+                    const { username } = await crypto.deriveDecrypt(MongoHandlerCentral.toUserEncrypted(pending.initiatorAccessKey), this.#databaseAccessBaseVector, "PendingSessionKey");
                     if (!this.matchUsername(username) || myAlias !== existing.alias2 || otherAlias !== existing.alias1) return false;
                     existing.locked = true;
                     if (existing === await existing.save()) {
@@ -928,7 +977,7 @@ export default class MongoHandlerCentral {
                 }
                 else {
                     if (pending.acceptorAccessKey) {
-                        const { username } = await crypto.deriveDecrypt(MongoHandlerCentral.toUserEncrypted(pending.acceptorAccessKey), this.#databaseAuthKey, "PendingSessionKey");
+                        const { username } = await crypto.deriveDecrypt(MongoHandlerCentral.toUserEncrypted(pending.acceptorAccessKey), this.#databaseAccessBaseVector, "PendingSessionKey");
                         if (!this.matchUsername(username)) return false;
                         const newRegister = new MongoHandlerCentral.RegisteredSession({ sessionId, alias1: myAlias, alias2: otherAlias });
                         if (newRegister === await newRegister.save()) {
@@ -937,7 +986,7 @@ export default class MongoHandlerCentral {
                         else return false;
                     }
                     else if (this.notify) {
-                        const { username } = await crypto.deriveDecrypt(MongoHandlerCentral.toUserEncrypted(pending.initiatorAccessKey), this.#databaseAuthKey, "PendingSessionKey");
+                        const { username } = await crypto.deriveDecrypt(MongoHandlerCentral.toUserEncrypted(pending.initiatorAccessKey), this.#databaseAccessBaseVector, "PendingSessionKey");
                         if (this.matchUsername(username)) this.subscribeChange(`${sessionId}@${myAlias}`, this.notify);
                         return false;
                     }
@@ -953,7 +1002,7 @@ export default class MongoHandlerCentral {
             try {
                 if (!!(await MongoHandlerCentral.RegisteredSession.findOne({ sessionId }))) return false;
                 const prevPending = await MongoHandlerCentral.RegistrationPendingSession.findOne({ sessionId });
-                const accessKey = (await crypto.deriveEncrypt({ username: this.#username }, this.#databaseAuthKey, "PendingSessionKey", Buffer.alloc(32))).ciphertext;
+                const accessKey = (await crypto.deriveEncrypt({ username: this.#username }, this.#databaseAccessBaseVector, "PendingSessionKey", Buffer.alloc(32))).ciphertext;
                 if (!prevPending) {
                     const newPending = new MongoHandlerCentral.RegistrationPendingSession({ sessionId, toAlias: myAlias, fromAlias: otherAlias, initiatorAccessKey: accessKey });
                     if (newPending === await newPending.save()) {
@@ -1036,17 +1085,20 @@ export default class MongoHandlerCentral {
             }
         }
 
-        async getKeyBundle(username: string): Promise<KeyBundle> {
-            let keyBundle = this.#keyBundles.get(username);
-            if (keyBundle) return keyBundle;
+        async getKeyBundle(username: string): Promise<KeyBundle | string> {
+            if (!(await MongoHandlerCentral.userExists(username))) return "No such user";
+            if ([...this.#chats.values()].some((c) => c.otherUser === username)) return "Chat with user already exists";
+            let keyBundle: KeyBundle = this.#keyBundles.get(username);;
+            if (keyBundle) return _.omit(keyBundle, "accessId");
             keyBundle = await MongoHandlerCentral.getKeyBundle(username);
-            if (!keyBundle) return null;
-            const accessKey = (await crypto.deriveEncrypt({ keyBundle }, this.#databaseAuthKey, "DatabaseKeyBundleKey", Buffer.alloc(32))).ciphertext;
-            if (await (new MongoHandlerCentral.DatabaseAccessKey({ username: this.#username, type: "keyBundle", accessKey })).save()) {
-                this.#keyBundles.set(username, keyBundle);
+            if (!keyBundle) return "Key bundle not found";
+            const accessId = getRandomString(16, "hex");
+            const accessKey = (await crypto.deriveEncrypt({ keyBundle }, this.#databaseAccessBaseVector, "DatabaseKeyBundleKey", Buffer.alloc(32))).ciphertext;
+            if (await (new MongoHandlerCentral.DatabaseAccessKey({ username: this.#username, type: "keyBundle", accessKey, accessId })).save()) {
+                this.#keyBundles.set(username, { accessId, ...keyBundle });
                 return keyBundle;
             }
-            else return null;
+            else return "Key bundle could not be issued";
         }
 
         async depositMessage(message: MessageHeader) {
@@ -1078,7 +1130,7 @@ export default class MongoHandlerCentral {
         }
     
         async getAllChats(): Promise<ChatData[]> {
-            return cleanLean(await MongoHandlerCentral.Chat.find({ chatId: { $in: this.#chats } }).lean().exec());
+            return cleanLean(await MongoHandlerCentral.Chat.find({ chatId: { $in: Array.from(this.#chats.keys()) } }).lean().exec());
         }
     
         async getAllRequests(addressedTo: string): Promise<ChatRequestHeader[]> {
@@ -1188,14 +1240,19 @@ export default class MongoHandlerCentral {
             return (await MongoHandlerCentral.MessageHeader.deleteOne({ toAlias, sessionId, headerId })).deletedCount === 1;
         }
     
-        async createChat(chat: ChatData) {
+        async createChat(chatData: ChatData & { otherUser: string }) {
             try {
-                const newChat = new MongoHandlerCentral.Chat(chat);
+                const newChat = new MongoHandlerCentral.Chat(_.omit(chatData, "otherUser"));
                 if (newChat === await newChat.save()) {
-                    const { chatId } = chat;
-                    const accessKey = (await crypto.deriveEncrypt({ chatId }, this.#databaseAuthKey, "DatabaseChatAccessKey", Buffer.alloc(32))).ciphertext;
-                    await (new MongoHandlerCentral.DatabaseAccessKey({ username: this.#username, type: "chat", accessKey })).save();
-                    this.#chats.push(chatId);
+                    const { chatId, otherUser } = chatData;
+                    const chat = { chatId, otherUser };
+                    const accessKey = (await crypto.deriveEncrypt({ chat }, this.#databaseAccessBaseVector, "DatabaseChatAccessKey", Buffer.alloc(32))).ciphertext;
+                    const accessId = getRandomString(16, "hex");
+                    await (new MongoHandlerCentral.DatabaseAccessKey({ username: this.#username, type: "chat", accessKey, accessId })).save();
+                    this.#chats.set(chatId, { accessId, ...chat });
+                    const { accessId: keyBundleAccessId } = this.#keyBundles.get(otherUser);
+                    this.#keyBundles.delete(otherUser);
+                    await MongoHandlerCentral.deleteIssuedKeyBundle(this.#username, keyBundleAccessId);
                     return true;
                 }
                 return false;
@@ -1207,7 +1264,7 @@ export default class MongoHandlerCentral {
         }
     
         async updateChat({ chatId, ...chat }: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>) {
-            if (!this.#chats.includes(chatId)) return false;
+            if (!this.#chats.has(chatId)) return false;
             try {
                 return !!(await MongoHandlerCentral.Chat.findOneAndUpdate({ chatId }, chat).exec());
             }

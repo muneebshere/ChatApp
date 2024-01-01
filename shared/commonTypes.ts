@@ -360,7 +360,7 @@ type SocketClientRequestParametersMap = {
     GetMessagesUptoId: MessageIdentifier & { olderThanTimemark: number },
     GetMessageById: MessageIdentifier,
     StoreMessage: StoredMessage,
-    CreateChat: ChatData,
+    CreateChat: ChatData & { otherUser: string },
     UpdateChat: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>,
     RegisterPendingSession: Readonly<{ sessionId: string, myAlias: string, otherAlias: string }>,
     SendChatRequest: ChatRequestHeader,
