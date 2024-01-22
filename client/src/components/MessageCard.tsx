@@ -2,7 +2,7 @@ import _ from "lodash";
 import { v4 as uuidv4 } from "uuid";
 import React, { createContext, forwardRef, memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useEffectOnce, useUpdateEffect } from "usehooks-ts";
-import { Grid, Stack } from "@mui/joy";
+import { Box, Grid, Stack } from "@mui/joy";
 import { DoneSharp, DoneAllSharp, HourglassTop } from "@mui/icons-material";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip";
 import Popover, { PopoverTrigger, PopoverContent } from "./Popover";
@@ -26,6 +26,7 @@ import { useSize } from "./Hooks/useSize";
 import styled from "@emotion/styled";
 import { logError } from "../../../shared/commonFunctions";
 import { CodeComponent } from "react-markdown/lib/ast-to-react";
+import { FlexBox } from "./FlexBox";
 
 mermaid.initialize({ startOnLoad: false });
 
@@ -92,9 +93,7 @@ function StatusButton({ delivery }: { delivery: DeliveryInfo }) {
             {statusIcon}
         </PopoverTrigger>
         <PopoverContent>
-          <div style={{ position: "relative",
-                        zIndex: 5, 
-                        borderRadius: 8, 
+          <div style={{ borderRadius: 8, 
                         padding: 10, 
                         border: "0.1px solid #d8d8df", 
                         backgroundColor: "rgba(244, 246, 244, 0.8)", 
@@ -102,20 +101,28 @@ function StatusButton({ delivery }: { delivery: DeliveryInfo }) {
                         backdropFilter: "blur(4px)" }}
                 tabIndex={-1}
                 >
-            <Stack direction="row">
-              <Stack direction="column" spacing={1.5} sx={{ maxWidth: "fit-content", paddingTop: 0.3 }}>
+            <FlexBox sx={{ justifyContent: "flex-start", columnGap: "25px", alignItems: "stretch", height: "fit-content" }}>
+              <FlexBox direction="column" sx={{ justifyContent: "space-between", paddingBlock: "3.5px" }}>
                 <DoneAllSharp sx={{ color: "gray", fontSize: "1rem" }}/>
                 <DoneAllSharp sx={{ color: "blue", fontSize: "1rem" }}/>
-              </Stack>
-              <Stack direction="column" spacing={1} sx={{ maxWidth: "fit-content", paddingLeft: 1.5, paddingRight: 3, alignItems: "start" }}>
-                <DisableSelectTypography level="body2">Delivered</DisableSelectTypography>
-                <DisableSelectTypography level="body2">Seen</DisableSelectTypography>
-              </Stack>
-              <Stack direction="column" spacing={1} sx={{ maxWidth: "fit-content" }}>
-                <DisableSelectTypography level="body2">{deliveredText}</DisableSelectTypography>
-                <DisableSelectTypography level="body2">{seenText}</DisableSelectTypography>
-              </Stack>
-            </Stack>
+              </FlexBox>
+              <FlexBox direction="column" sx={{ maxWidth: "fit-content", rowGap: "5px", alignItems: "start" }}>
+                <DisableSelectTypography level="body-sm">
+                  {"Delivered"}
+                </DisableSelectTypography>
+                <DisableSelectTypography level="body-sm">
+                  {"Seen"}
+                </DisableSelectTypography>
+              </FlexBox>
+              <FlexBox direction="column" sx={{ maxWidth: "fit-content", rowGap: "5px", alignItems: "start" }}>
+                <DisableSelectTypography level="body-sm">
+                  {deliveredText}
+                </DisableSelectTypography>
+                <DisableSelectTypography level="body-sm">
+                  {seenText}
+                </DisableSelectTypography>
+              </FlexBox>
+            </FlexBox>
           </div>
         </PopoverContent>
       </Popover>)
@@ -233,7 +240,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
                           right: "12px" }}>
                 <Tooltip placement="bottom-start" offsetFunc={offsetFunc}>
                   <TooltipTrigger>
-                    <DisableSelectTypography level="body3">
+                    <DisableSelectTypography level="body-md">
                       {DateTime.fromMillis(timestamp).toFormat("h:mm a")}
                     </DisableSelectTypography>
                   </TooltipTrigger>
@@ -244,7 +251,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
                                   boxShadow: "0px 0.5px 4px #e4e4e4",
                                   position: "absolute",
                                   zIndex: 2 }}>
-                      <DisableSelectTypography level="body3" noWrap sx={{ color: "black" }}>
+                      <DisableSelectTypography level="body-sm" noWrap sx={{ color: "black" }}>
                         {formatTooltipDate(timestamp)}
                       </DisableSelectTypography>
                     </div>
@@ -344,6 +351,9 @@ const MessageBody = forwardRef<HTMLSpanElement>(function ({ chatWith, messageId,
         "--markdown-after-height": `${statusHeight}px`,
         "--markdown-after-margin-top": "4px",
         "--markdown-after-margin-left": "16px",
+        "img": {
+          maxWidth: "90%"
+        },
         "::-webkit-scrollbar-button:end:increment": {
           display: "block",
           color: "transparent",

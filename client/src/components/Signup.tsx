@@ -122,6 +122,7 @@ export default function SignUpForm() {
       }}>
         <ControlledTextField 
           variant="outlined"
+          highlightColor="#1f7a1f"
           placeholder="Display Name (Optional)" 
           type="text"
           value={displayName}
@@ -134,6 +135,7 @@ export default function SignUpForm() {
         <ControlledTextField
           ref={usernameInput}
           variant="outlined"
+          highlightColor="#1f7a1f"
           placeholder="Please choose a unique username" 
           type="text"
           value={username}
@@ -156,6 +158,7 @@ export default function SignUpForm() {
           ref={newPasswordInput}
           autoComplete="new-password"
           variant="outlined"
+          highlightColor="#1f7a1f"
           placeholder="Please choose a new password" 
           type={ showPassword ? "text" : "password" }
           value={password}
@@ -181,6 +184,7 @@ export default function SignUpForm() {
             ref={passwordAgainInput}
             autoComplete="new-password"
             variant="outlined"
+            highlightColor="#1f7a1f"
             placeholder="Please re-enter password" 
             type={ "password" }
             value={repeatPassword}
@@ -202,7 +206,7 @@ export default function SignUpForm() {
           <StyledJoySwitch checked={showPassword} 
             disabled={submitted}
             onChange={ (e) => setShowPassword(e?.target?.checked) }
-            color={showPassword ? "primary" : "neutral"}/>
+            color={showPassword ? "success" : "neutral"}/>
         </FormControl>
         <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
           <FormControl orientation="horizontal" sx={{ width: "100%" }}>
@@ -210,7 +214,7 @@ export default function SignUpForm() {
             <StyledJoySwitch checked={savePassword} 
               disabled={submitted}
               onChange={ (e) => setSavePassword(e?.target?.checked) }
-              color={savePassword ? "primary" : "neutral"}/>
+              color={savePassword ? "success" : "neutral"}/>
           </FormControl>
           {savePassword &&
             <FormHelperText sx={{ width: "100%", paddingTop: "4px", justifyItems: "flex-start", textAlign: "start", color: "var(--joy-palette-danger-outlinedColor)" }}>
@@ -218,6 +222,7 @@ export default function SignUpForm() {
             </FormHelperText>}
         </div>
         <Button variant="solid"
+          color="success"
           onClick={submitLocal} 
           disabled={!canSubmit}>
           <Stack direction="row" spacing={2}>
@@ -225,7 +230,7 @@ export default function SignUpForm() {
               { submitted ? "Creating account..." :"Sign Up" }
             </DisableSelectTypography>
             {submitted &&
-              <CircularProgress size="sm" variant="soft"/>
+              <CircularProgress size="sm" variant="soft" color="success"/>
             }
           </Stack>
         </Button>

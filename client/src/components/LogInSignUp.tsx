@@ -58,17 +58,39 @@ export default function LogInSignUp({ connectionStatus, currentTab, setCurrentTa
         <StyledSheet sx={{ marginTop: "48px" }}
             onKeyUpCapture={(e) => onKey(e, "up")}
             onKeyDownCapture={(e) => onKey(e, "down")}>
-          <Tabs value={currentTab}
+          <Tabs
+            value={currentTab}
             onChange={(_, value: 0 | 1) => setCurrentTabLocal(value)}>
-            <TabList variant="outlined">
+            <TabList 
+              color="success"
+              disableUnderline 
+              variant="soft" 
+              tabFlex={1} 
+              sx={{ borderRadius: "sm", padding: "3px", gap: 0.5 }}>
               <Tab 
+                disableIndicator
                 variant={ currentTab === 0 ? "solid" : "plain" }
-                color={ currentTab === 0 ? "primary" : "neutral" }
-                disabled={ logInSubmitted || signUpSubmitted }>Login</Tab>
+                sx={{ 
+                  borderRadius: "sm",
+                  ...(currentTab === 0 
+                    ? { backgroundColor: "#1f7a1f !important" } 
+                    : { "&:hover": { backgroundColor: "#f1fdf1 !important" } })
+                }}
+                disabled={ logInSubmitted || signUpSubmitted }>
+                  Login
+              </Tab>
               <Tab
+                disableIndicator
                 variant={ currentTab === 1 ? "solid" : "plain" }
-                color={ currentTab === 1 ? "primary" : "neutral" }
-                disabled={ logInSubmitted || signUpSubmitted }>Sign Up</Tab>
+                sx={{ 
+                  borderRadius: "sm",
+                  ...(currentTab === 1 
+                        ? { backgroundColor: "#1f7a1f !important" } 
+                        : { "&:hover": { backgroundColor: "#f1fdf1 !important" } })
+                }}
+                disabled={ logInSubmitted || signUpSubmitted }>
+                  Sign Up
+              </Tab>
             </TabList>
             <TabPanel value={0}>
               <LogInForm/>

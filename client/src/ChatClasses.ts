@@ -3,11 +3,11 @@ import { Socket } from "socket.io-client";
 import { SessionCrypto } from "../../shared/sessionCrypto";
 import { ChattingSession, SendingMessage, ViewReceivedRequest } from "./e2e-encryption";
 import * as crypto from "../../shared/cryptoOperator";
-import { MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, SocketServerSideEvents, DeliveryInfo, Receipt, Backup  } from "../../shared/commonTypes";
+import { MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, SocketServerSideEvents, DeliveryInfo, Receipt, Backup, Profile  } from "../../shared/commonTypes";
 import { DateTime } from "luxon";
 import { allSettledResults, awaitCallback, logError, randomFunctions } from "../../shared/commonFunctions";
 import { ClientChatInterface, ClientReceivedChatRequestInterface } from "./Client";
-import { noProfilePictureImage } from "./noProfilePictureImage";
+import { noProfilePictureImage } from "./imageUtilities";
 
 const { getRandomString } = randomFunctions();
 
@@ -22,6 +22,14 @@ export type ChatDetails = Readonly<{
     unreadMessages: number,
     draft: string
 }>;
+
+export type FirstMessage = Readonly<{ 
+    messageId: string, 
+    text: string, 
+    timestamp: number, 
+    sentByMe: boolean, 
+    respondedAt: number }>;
+
 export abstract class AbstractChat {
     abstract get sessionId(): string;
     abstract get details(): ChatDetails;
@@ -154,7 +162,7 @@ export class Chat extends AbstractChat {
     private readonly unreadMessagesSet = new Set<string>();
     private readonly receivingEvent: string;
     private readonly sendingEvent: string;
-    private readonly contactDetails: Omit<Contact, "username">;
+    private contactDetails: Contact;
     private readonly messagesList = new Map<string, ChatMessage>();
     private readonly chatMessageLists = new Map<string, typeof ChatMessageList.InternalListType>();
     private readonly clientInterface: ClientChatInterface;
@@ -169,7 +177,6 @@ export class Chat extends AbstractChat {
         this.#chattingSession = chattingSession;
         this.timeRatio = timeRatio;
         this.loadedUpto = Date.now();
-        const { username, ...contactDetails } = recipientDetails;
         const { me, otherUser, myAlias, otherAlias, sessionId, createdAt } = chattingSession;
         this.sessionId = sessionId;
         this.me = me;
@@ -179,14 +186,15 @@ export class Chat extends AbstractChat {
         this.createdAt = createdAt;
         this.receivingEvent = `${otherUser} -> ${me}`;
         this.sendingEvent = `${me} -> ${otherUser}`;
-        this.contactDetails = contactDetails;
+        this.contactDetails = recipientDetails;
         this.clientInterface = clientInterface;
         this.#encryptionBaseVector = encryptionBaseVector;
     }
 
-    static async instantiate(encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chatData: ChatData, firstMessage?: { messageId: string, text: string, timestamp: number, sentByMe: boolean, respondedAt: number }) {
-        const { chatDetails, exportedChattingSession } = chatData;
-        const { chatId, contactDetails, timeRatio }: { chatId: string, contactDetails: Contact, timeRatio: number } = await crypto.deriveDecrypt(chatDetails, encryptionBaseVector, "ChatDetails");
+    static async instantiate(chatData: ChatData, encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, firstMessage?: FirstMessage) {
+        const { chatId, timeRatioRecord, contactDetailsRecord, exportedChattingSession } = chatData;
+        const { timeRatio }: { timeRatio: number } = await crypto.deriveDecrypt(timeRatioRecord, encryptionBaseVector, `${chatId} Time Ratio`);
+        const { contactDetails }: { contactDetails: Contact } = await crypto.deriveDecrypt(contactDetailsRecord, encryptionBaseVector, `${chatId} Contact Details`);
         const chattingSession = await clientInterface.importChattingSession(exportedChattingSession);
         const chat = new Chat(chatId, timeRatio, contactDetails, encryptionBaseVector, clientInterface, chattingSession);
         if (firstMessage) {
@@ -292,6 +300,16 @@ export class Chat extends AbstractChat {
         })
         this.notifyActivity?.();
         this.notify?.("details-change");
+    }
+
+    async sendProfile(profile: Profile) {
+        if (this.disposed) {
+            return false;
+        }
+        const timestamp = Date.now();
+        const messageId = `f${getRandomString(14, "hex")}`;
+        const sendingMessage: SendingMessage = { messageId, timestamp, profile };
+        return !!(await this.dispatchSendingMessage(sendingMessage, true));
     }
 
     async sendMessage(messageContent: MessageContent) {
@@ -549,7 +567,7 @@ export class Chat extends AbstractChat {
         const sendReceipt = async ({ bounced }: { bounced: boolean }) => {
             live || await this.clientInterface.MessageHeaderProcessed({ sessionId, headerId, toAlias: this.myAlias });
             live || await this.clientInterface.SendReceipt({ toAlias, sessionId, headerId, signature, bounced });
-            return { signature, bounced }
+            return { signature, bounced };
         }
         if (typeof messageBody === "string") {
             logError(messageBody);
@@ -584,6 +602,20 @@ export class Chat extends AbstractChat {
                     displayMessage = { ...storedMessage, delivery };
                 }
             }
+        }
+        else if ("profile" in messageBody) {
+            const { profile } = messageBody;
+            (async () => {
+                let { chatId, contactDetails } = this;
+                contactDetails = { ...contactDetails, ..._.omit(profile, "username") };
+                const contactDetailsRecord = await crypto.deriveEncrypt({ contactDetails }, this.#encryptionBaseVector, `${chatId} Contact Details`);
+                const { reason } = await this.clientInterface.UpdateChat({ chatId, contactDetailsRecord });
+                if (reason === false) {
+                    this.contactDetails = contactDetails;
+                    this.notifyActivity?.();
+                    this.notify?.("details-change");
+                } 
+            })();
         }
         else {
             const { text, replyingTo } = messageBody;

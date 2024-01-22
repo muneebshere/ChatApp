@@ -141,10 +141,14 @@ export type Backup = Readonly<{
     content: EncryptedData;
 }>;
 
-export type ChatData = Readonly<{
-    chatId: string,
-    chatDetails: EncryptedData,
+export type MutableChatData = Readonly<{
+    contactDetailsRecord: EncryptedData,
     exportedChattingSession: EncryptedData
+}>;
+
+export type ChatData = MutableChatData & Readonly<{
+    chatId: string,
+    timeRatioRecord: EncryptedData
 }>;
 
 export type Receipt = Readonly<{
@@ -296,8 +300,9 @@ export type RequestIssueNewKeysResponse = IssueOneTimeKeysResponse | ReplacePreK
 enum SocketClientSideEventsEnum {
     ClientLoaded,
     UsernameExists,
+    UpdateProfile,
     UpdateX3DHData,
-    FetchX3DHData,
+    FetchUserData,
     RequestKeyBundle,
 
     GetAllChats,
@@ -349,8 +354,9 @@ export const SocketClientSideEvents = constructSocketClientSideEvents();
 type SocketClientRequestParametersMap = {
     ClientLoaded: [],
     UsernameExists: Username,
+    UpdateProfile: { profileData: SignedEncryptedData },
     UpdateX3DHData: { x3dhData: X3DHDataPartial },
-    FetchX3DHData: [],
+    FetchUserData: [],
     RequestKeyBundle: Username,
     GetAllChats: [],
     GetAllRequests: [],
@@ -361,7 +367,7 @@ type SocketClientRequestParametersMap = {
     GetMessageById: MessageIdentifier,
     StoreMessage: StoredMessage,
     CreateChat: ChatData & { otherUser: string },
-    UpdateChat: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>,
+    UpdateChat: ChatIdentifier & Partial<MutableChatData>,
     RegisterPendingSession: Readonly<{ sessionId: string, myAlias: string, otherAlias: string }>,
     SendChatRequest: ChatRequestHeader,
     SendMessage: MessageHeader,
@@ -384,8 +390,9 @@ export type SocketClientRequestParameters = {
 type SocketClientRequestReturnMap = {
     ClientLoaded: never,
     UsernameExists: { exists: boolean },
+    UpdateProfile: never,
     UpdateX3DHData: never,
-    FetchX3DHData: { x3dhIdentity: EncryptedData, x3dhData: X3DHData },
+    FetchUserData: { x3dhIdentity: EncryptedData, x3dhData: X3DHData, profileData: SignedEncryptedData },
     RequestKeyBundle: RequestKeyBundleResponse,
     GetAllChats: ChatData[],
     GetAllRequests: ChatRequestHeader[],

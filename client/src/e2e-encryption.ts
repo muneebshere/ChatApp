@@ -16,7 +16,7 @@ type MessageBody = Readonly<{
     messageId: string;
 }>
 
-type MessageContent = Readonly<{
+type MessageText = Readonly<{
     replyingTo?: string;
     text: string;
 }>;
@@ -28,9 +28,11 @@ type MessageEvent = Readonly<{
     event: "typing" | "stopped-typing";
 }>;
 
-export type SendingMessage = Omit<MessageBody, "sender"> & (MessageContent | MessageEvent);
+type MessageContent = MessageText | MessageEvent | { profile: Profile };
 
-type ReceivingMessage = MessageBody & (MessageContent | MessageEvent);
+type ReceivingMessage = MessageBody & MessageContent;
+
+export type SendingMessage = Omit<MessageBody, "sender"> & MessageContent;
 
 type ChatRequestBody = Readonly<{ 
     messageId: string;
@@ -656,8 +658,7 @@ class X3DHRequests {
             logError(messageBody);
             return messageBody;
         }
-        const { timestamp: respondedAt, text } = messageBody as (MessageBody & MessageContent);
-        const profile: Profile = deserialize(Buffer.from(text, "base64"));
+        const { timestamp: respondedAt, profile } = messageBody as (MessageBody & { profile: Profile })
         if (!profile || typeof profile.displayName !== "string" || typeof profile.username !== "string" || typeof profile.profilePicture !== "string" ) {
             logError("Response Not According To Protocol");
             return "Response Not According To Protocol";
@@ -750,19 +751,20 @@ class X3DHRequests {
         : Promise<[X3DHRequestsData, MessageHeader] | "No Such Request" | "Could Not Save"> {
             const receivedRequest = this.#receivedChatRequests.get(sessionId);
             if (!receivedRequest) return "No Such Request";
-            const { profile, myAlias, otherAlias, importedDHInitializer, importedVerifyingIdentityKey, sharedRoot } =  receivedRequest;
+            const { username } = this;
+            const { profile: { username: otherUser }, myAlias, otherAlias, importedDHInitializer, importedVerifyingIdentityKey, sharedRoot } =  receivedRequest;
             const chattingSession = await ChattingSession.new(this.#identity,
-                this.username, 
-                profile.username,
+                username, 
+                otherUser,
                 myAlias,
                 otherAlias,
                 importedVerifyingIdentityKey,
                 sharedRoot,
                 this.maxSkip,
                 importedDHInitializer);
-            const text = serialize({ ...profileDetails, username: this.username }).toString("base64");
             const messageId = `f${getRandomString(14, "hex")}`;
-            const result = await chattingSession.sendMessage({ messageId, text, timestamp }, saveSession);
+            const profile = { ...profileDetails, username };
+            const result = await chattingSession.sendMessage({ messageId, timestamp, profile }, saveSession);
             if (typeof result === "string") return result;
             this.#receivedChatRequests.delete(sessionId);
             const x3dhRequestsData = await this.exportData();

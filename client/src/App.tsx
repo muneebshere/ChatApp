@@ -8,8 +8,8 @@ import Main from "./components/Main";
 import { LogInContext, defaultLogInDataReducer, defaultLogInData } from "./components/Login";
 import { SignUpContext, defaultSignUpDataReducer, defaultSignUpData } from "./components/Signup";
 import Client, { ConnectionStatus } from "./Client";
+import { generateAvatar, extractInitials } from "./imageUtilities";
 import * as crypto from "../../shared/cryptoOperator";
-import tinycolor from "tinycolor2";
 import AuthClient, { AuthConnectionStatus } from "./AuthClient";
 import { Failure } from "../../shared/commonTypes";
 
@@ -23,7 +23,6 @@ export type SubmitResponse = {
 const loaded = (status: ConnectionStatus): status is Exclude<ConnectionStatus, "NotLoaded"> => status !== "NotLoaded"
 const loggedIn = (status: ConnectionStatus): status is Exclude<ConnectionStatus, "NotLoggedIn"> => status !== "NotLoggedIn";
 const loggingOut = (status: ConnectionStatus): status is "LoggingOut" => status === "LoggingOut";
-const generateAvatar = createAvatarGenerator(200, 200);
 
 if ("virtualKeyboard" in navigator) {
   (navigator.virtualKeyboard as any).overlaysContent = true;
@@ -55,48 +54,6 @@ async function setupJsHashChecker() {
     }
   }
 
-}
-
-function createAvatarGenerator(width: number, height: number) {
-  const canvasRef = getCanvas();
-
-  function getCanvas(): [HTMLCanvasElement, CanvasRenderingContext2D] {
-    const canvas = document.createElement("canvas");
-    canvas.height = height;
-    canvas.width = width;
-    const ctx = canvas.getContext("2d");
-    fillRect(ctx);
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fontKerning = "none";
-    ctx.font = `100px "Fira Sans", sans-serif`;
-    ctx.moveTo(width, height);
-    return [canvas, ctx];
-  }
-
-  function fillRect(ctx: CanvasRenderingContext2D) {
-    const theta = 2 * Math.PI * Math.random();
-    const x1 = width * (0.5 - Math.cos(theta));
-    const x2 = width * (0.5 + Math.cos(theta));
-    const y1 = height * (0.5 - Math.sin(theta));
-    const y2 = height * (0.5 + Math.sin(theta));
-    const gradient = ctx.createLinearGradient(x1, y1, x2, y2);
-    gradient.addColorStop(0, tinycolor.random().toHexString());
-    gradient.addColorStop(1, tinycolor.random().toHexString());
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, width, height);
-  }
-
-  return (displayName: string, username: string) => {
-    const [canvas, ctx] = canvasRef;
-    const initials = 
-      (displayName
-        ? displayName.split(" ").filter((s, i) => i < 2).map((s) => s[0]).join("")
-        : username.substring(0, 2)).toUpperCase();
-    ctx.fillStyle = "#ffffff"
-    ctx.fillText(initials, width/2, height/2);
-    return canvas.toDataURL();
-  }
 }
 
 function Root() {
@@ -173,8 +130,9 @@ function App() {
   }
 
   async function signUp({ displayName, username, password, savePassword }: SubmitResponse): Promise<Failure> {
-    const profilePicture = generateAvatar(displayName, username);
-    displayName ||= username;
+    const initials = extractInitials(displayName, username);
+    const profilePicture = generateAvatar({ initials });
+    displayName ||= `@${username}`;
     return clientResult(await AuthClient.signUp({ username, displayName, profilePicture, description: "Hey there! I am using ChatApp." }, password, savePassword));
   }
 
@@ -194,7 +152,7 @@ function App() {
     <Container maxWidth={false} disableGutters={true} sx={{ position: "relative", top: 0, height: `${visualHeight}px`, width: belowXL ? "90vw" : "100vw", overflow: "clip", display: "flex", flexDirection: "column"}}>
       {(!loaded(status) || loggingOut(status)) &&
           <div style={{ display: "flex", justifyContent: "center", marginTop: "48px" }}>
-            <CircularProgress size="lg" variant="soft"/>
+            <CircularProgress size="lg" variant="soft" color="success"/>
           </div>}
       {!loggedIn(status) && !loggingOut(status) &&
         <LogInContext.Provider value={{ logInData, logInDispatch }}>

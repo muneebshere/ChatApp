@@ -95,7 +95,6 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
       <Grid xs={12} xl={3} sx={{ minHeight: 0, maxHeight: "100%", display: "flex", flexDirection: "column" }}>
         <Sidebar 
           profile={profile}
-          changeProfile={async () => {}}
           currentChatWith={currentChatWith} 
           chats={chats} 
           openChat={openChat} 

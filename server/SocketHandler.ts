@@ -1,7 +1,7 @@
 import _ from "lodash";
 import { Socket } from "socket.io";
 import { SessionCrypto } from "../shared/sessionCrypto";
-import { Failure, ErrorStrings, Username, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, EncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Receipt, MessageIdentifier, ChatIdentifier, SessionIdentifier, HeaderIdentifier, Backup, SocketServerSideEventsKey, SocketServerRequestParameters, SocketServerRequestReturn, ServerMemo, X3DHKeysData, X3DHRequestsData, X3DHData, X3DHDataPartial } from "../shared/commonTypes";
+import { Failure, ErrorStrings, Username, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, EncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Receipt, MessageIdentifier, ChatIdentifier, SessionIdentifier, HeaderIdentifier, Backup, SocketServerSideEventsKey, SocketServerRequestParameters, SocketServerRequestReturn, ServerMemo, X3DHKeysData, X3DHRequestsData, X3DHData, X3DHDataPartial, SignedEncryptedData, MutableChatData } from "../shared/commonTypes";
 import { allSettledResults, awaitCallback, failure, logError, typedEntries } from "../shared/commonFunctions";
 import MongoHandlerCentral, { ServerConfig } from "./MongoHandler";
 
@@ -97,8 +97,9 @@ export default class SocketHandler {
     private readonly responseMap: ResponseMap = {
         [SocketClientSideEvents.ClientLoaded]: this.OnClientLoad,
         [SocketClientSideEvents.UsernameExists]: this.UsernameExists,
+        [SocketClientSideEvents.UpdateProfile]: this.UpdateProfile,
         [SocketClientSideEvents.UpdateX3DHData]: this.UpdateX3DHData,
-        [SocketClientSideEvents.FetchX3DHData]: this.FetchX3DHData,
+        [SocketClientSideEvents.FetchUserData]: this.FetchUserData,
         [SocketClientSideEvents.RequestKeyBundle]: this.RequestKeyBundle,
         [SocketClientSideEvents.GetAllChats]: this.GetAllChats,
         [SocketClientSideEvents.GetAllRequests]: this.GetAllRequests,
@@ -293,16 +294,22 @@ export default class SocketHandler {
 
     }
 
+    private async UpdateProfile({ profileData }: { profileData: SignedEncryptedData }): Promise<Failure> {
+        if (!this.#username) return failure(ErrorStrings.InvalidRequest);
+        if (!(await this.#mongoHandler.updateProfile(profileData))) return failure(ErrorStrings.ProcessFailed);
+        return { reason: false };
+    }
+
     private async UpdateX3DHData({ x3dhData }: { x3dhData: X3DHDataPartial }): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.updateX3dhData(x3dhData))) return failure(ErrorStrings.ProcessFailed);
         return { reason: false };
     }
  
-    private async FetchX3DHData(): Promise<({ x3dhIdentity: EncryptedData, x3dhData: X3DHData }) | Failure> {
+    private async FetchUserData(): Promise<({ x3dhIdentity: EncryptedData, x3dhData: X3DHData, profileData: SignedEncryptedData }) | Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
-        const { x3dhIdentity, x3dhData } = this.#mongoHandler.getUserData();
-        return { x3dhIdentity, x3dhData };
+        const { x3dhIdentity, x3dhData, profileData } = this.#mongoHandler.getUserData();
+        return { x3dhIdentity, x3dhData, profileData };
     }
 
     private async RequestKeyBundle({ username }: Username): Promise<RequestKeyBundleResponse | Failure> {
@@ -397,7 +404,7 @@ export default class SocketHandler {
         return { reason: false };
     }
 
-    private async UpdateChat(chat: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>): Promise<Failure> {
+    private async UpdateChat(chat: ChatIdentifier & Partial<MutableChatData>): Promise<Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.updateChat(chat))) return failure(ErrorStrings.ProcessFailed);
         return { reason: false };

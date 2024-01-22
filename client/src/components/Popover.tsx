@@ -13,8 +13,11 @@ import {
   Placement,
   FloatingPortal,
   FloatingFocusManager,
-  OffsetOptions
+  OffsetOptions,
+  useFloatingNodeId,
+  UseDismissProps
 } from "@floating-ui/react";
+import FloatingTreeWrapper from "./FloatingTreeWrapper";
 
 interface PopoverOptions {
   placement?: Placement;
@@ -22,13 +25,18 @@ interface PopoverOptions {
   controlledOpen?: boolean;
   setControlledOpen?: (open: boolean) => void;
   allowFlip?: boolean;
-  customOffset?: OffsetOptions
+  customOffset?: OffsetOptions;
+  ancestorScrollDismiss?: boolean;
+  dismissBubbles?: UseDismissProps["bubbles"];
+  forceZIndex?: number;
 };
 
 type ContextType = ReturnType<typeof useFloating> & ReturnType<typeof useInteractions> & { 
+  nodeId: string,
   modal: boolean;
   open: boolean;
   setOpen: (open: boolean) => void;
+  forceZIndex?: number;
 }
 
 const PopoverContext = createContext<ContextType>(null);
@@ -51,6 +59,9 @@ export default function Popover({
   customOffset = 5,
   controlledOpen,
   setControlledOpen,
+  ancestorScrollDismiss = true,
+  dismissBubbles,
+  forceZIndex
 }: {
   children: ReactNode;
 } & PopoverOptions) {
@@ -58,8 +69,10 @@ export default function Popover({
   const controlled = controlledOpen !== undefined && setControlledOpen !== undefined;
   const open = controlled ? controlledOpen : uncontrolledOpen;
   const setOpen = controlled ? setControlledOpen : setUncontrolledOpen;
+  const nodeId = useFloatingNodeId();
 
   const data = useFloating({
+    nodeId,
     placement,
     open,
     onOpenChange: setOpen,
@@ -75,12 +88,14 @@ export default function Popover({
 
   const context = data.context;
   const click = useClick(context);
-  const dismiss = useDismiss(context, { ancestorScroll: true });
+  const dismiss = useDismiss(context, { 
+    ancestorScroll: ancestorScrollDismiss, 
+    bubbles: dismissBubbles });
   const role = useRole(context);
   const interactions = useInteractions([click, dismiss, role]);
 
-  const popoverContext = useMemo(() => ({ open, setOpen, modal, ...interactions, ...data }),
-    [open, setOpen, interactions, data, modal]);
+  const popoverContext = useMemo(() => ({ open, setOpen, modal, nodeId, forceZIndex, ...interactions, ...data }),
+    [open, setOpen, nodeId, interactions, data, modal]);
 
   return (
     <PopoverContext.Provider value={popoverContext}>
@@ -131,18 +146,19 @@ export const PopoverContent = forwardRef<
   HTMLDivElement,
   HTMLProps<HTMLDivElement>
 >(function PopoverContent(props, propRef) {
-  const { context: floatingContext, ...context } = usePopoverContext();
+  const { context: floatingContext, nodeId, forceZIndex, ...context } = usePopoverContext();
   const ref = useMergeRefs([context.refs.setFloating, propRef]);
 
   return (
-    <FloatingPortal>
-      {context.open && (
+    <FloatingTreeWrapper open={context.open}>
+      {(zIndex) => (
+      <FloatingPortal>
         <FloatingFocusManager 
           context={floatingContext} 
           modal={context.modal}
           initialFocus={-1}
           returnFocus={true}
-          guards={false}>
+          guards={true}>
           <div
             ref={ref}
             style={{
@@ -150,15 +166,14 @@ export const PopoverContent = forwardRef<
               top: context.y ?? 0,
               left: context.x ?? 0,
               width: "max-content",
-              zIndex: 6,
+              zIndex: forceZIndex || zIndex,
               ...props.style
             }}
-            {...context.getFloatingProps(props)}
-          >
+            {...context.getFloatingProps(props)}>
             {props.children}
           </div>
         </FloatingFocusManager>
-      )}
-    </FloatingPortal>
+      </FloatingPortal>)}
+    </FloatingTreeWrapper>
   );
 });

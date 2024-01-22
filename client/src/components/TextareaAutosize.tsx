@@ -406,7 +406,7 @@ const TextareaBorder = styled.div`
   }
 
   &:focus-within {
-    outline: 2px solid #096bde;
+    outline: 2px solid #1f7a1f;
   }`;
 
 const StyledInnerTextarea = styled(TextareaAutosize)`

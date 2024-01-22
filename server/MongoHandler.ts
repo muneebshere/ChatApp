@@ -2,7 +2,7 @@ import _, { isError } from "lodash";
 import { Binary } from "mongodb";
 import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
-import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, StoredMessage, NewUserData, EncryptedData, Receipt, Backup, ChatSessionDetails, Username, NewAuthData, KeyBundleId, ExposedSignedPublicKey, PasswordDeriveInfo, PasswordEntangleInfo, PublicIdentity, UserData, SignedEncryptedData, RequestIssueNewKeysResponse, ServerMemo, X3DHKeysData, X3DHRequestsData, X3DHData, X3DHDataPartial } from "../shared/commonTypes";
+import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, StoredMessage, NewUserData, EncryptedData, Receipt, Backup, ChatSessionDetails, Username, NewAuthData, KeyBundleId, ExposedSignedPublicKey, PasswordDeriveInfo, PasswordEntangleInfo, PublicIdentity, UserData, SignedEncryptedData, RequestIssueNewKeysResponse, ServerMemo, X3DHKeysData, X3DHRequestsData, X3DHData, X3DHDataPartial, ChatIdentifier, MutableChatData } from "../shared/commonTypes";
 import * as crypto from "../shared/cryptoOperator";
 import { defaultServerConfig, parseIpReadable } from "./backendserver";
 import { Notify } from "./SocketHandler";
@@ -593,9 +593,11 @@ export default class MongoHandlerCentral {
         chatId: {
             type: Schema.Types.String,
             required: true,
-            unique: true
+            unique: true,
+            immutable: true
         },
-        chatDetails: encryptedData,
+        timeRatioRecord: immutableEncryptedData,
+        contactDetailsRecord: encryptedData,
         exportedChattingSession: encryptedData
     }), "chats");
 
@@ -917,16 +919,18 @@ export default class MongoHandlerCentral {
             return false;
         }
 
-        private matchSessionMyAlias(sessionId: string, alias: string) {
-            if (alias && this.#sessions.get(sessionId)?.myAlias === alias) return true;
-            logError(`Unauthorized attempt by ${this.#username} to access session resource #${sessionId}%%myAlias:${alias}`);
-            return false;
-        }
-
-        private matchSessionOtherAlias(sessionId: string, alias: string) {
-            if (alias && this.#sessions.get(sessionId)?.otherAlias === alias) return true;
-            logError(`Unauthorized attempt by ${this.#username} to access session resource #${sessionId}%%otherAlias:${alias}`);
-            return false;
+        private getSessionMatchError(session: { sessionId: string, myAlias?: string, otherAlias?: string }, holdOffLog = false) {
+            const { sessionId, myAlias, otherAlias } = session || {};
+            let error = "";
+            if (!sessionId || !(myAlias || otherAlias)) error = "Invalid check";
+            else {
+                const sessionData = this.#sessions.get(sessionId);
+                if (!sessionData) error = `Unauthorized attempt by ${this.#username} to access session resource #${sessionId}`;
+                else if (myAlias && sessionData.myAlias !== myAlias) error = `Unauthorized attempt by ${this.#username} to access session resource #${sessionId}%%myAlias:${myAlias}`;
+                else if (otherAlias && sessionData.otherAlias !== otherAlias) error = `Unauthorized attempt by ${this.#username} to access session resource #${sessionId}%%otherAlias:${otherAlias}`;
+            }
+            if (!holdOffLog && error) logError(error);
+            return error;
         }
 
         private async getUserDocument() {
@@ -1033,6 +1037,24 @@ export default class MongoHandlerCentral {
             return { preKeyLastReplacedAt, currentOneTimeKeysNumber: oneTimeKeys.length };
         }
 
+        async updateProfile(profileData: SignedEncryptedData) {
+            const user = this.#userDocument;
+            if (!user) return false;
+            if (!profileData) return false;
+            try {
+                Object.assign(user.userData.profileData, profileData);
+                const saveSuccess = (await user.save()) === user;
+                if (!saveSuccess) await this.getUserDocument();
+                return saveSuccess;
+            }
+            catch (err) {
+                logError(err); 
+                await this.getUserDocument();
+                return false;
+            }
+
+        }
+
         async updateX3dhData(x3dhData: X3DHDataPartial) {
             const user = this.#userDocument;
             if (!user) return false;
@@ -1103,8 +1125,12 @@ export default class MongoHandlerCentral {
 
         async depositMessage(message: MessageHeader) {
             const { toAlias, fromAlias, sessionId } = message;
-            if (!this.matchSessionOtherAlias(sessionId, toAlias)) {
-                if (!(await this.registerSession(sessionId, fromAlias, toAlias))) return false;
+            const sessionMatchError = this.getSessionMatchError({ sessionId, myAlias: fromAlias, otherAlias: toAlias }, true);
+            if (sessionMatchError) {
+                if (!(await this.registerSession(sessionId, fromAlias, toAlias))) {
+                    logError(sessionMatchError);
+                    return false;
+                }
             }
             try {
                 const newMessage = new MongoHandlerCentral.MessageHeader(message);
@@ -1118,7 +1144,7 @@ export default class MongoHandlerCentral {
     
         async depositReceipt(receipt: Receipt) {
             const { toAlias, sessionId } = receipt;
-            if (!this.matchSessionOtherAlias(sessionId, toAlias)) return false;
+            if (this.getSessionMatchError({ sessionId, otherAlias: toAlias })) return false;
             try {
                 const newReceipt = new MongoHandlerCentral.Receipt(receipt);
                 return (newReceipt === await newReceipt.save());
@@ -1139,8 +1165,12 @@ export default class MongoHandlerCentral {
         }
     
         async getMessageHeaders(sessionId: string, toAlias: string, fromAlias: string): Promise<MessageHeader[]> {
-            if (!this.matchSessionMyAlias(sessionId, toAlias)) {
-                if (!(await this.registerSession(sessionId, toAlias, fromAlias))) return undefined;               
+            const sessionMatchError = this.getSessionMatchError({ sessionId, myAlias: toAlias, otherAlias: fromAlias }, true);
+            if (sessionMatchError) {
+                if (!(await this.registerSession(sessionId, toAlias, fromAlias))) {
+                    logError(sessionMatchError);
+                    return undefined;
+                }
             }
             return cleanLean(await MongoHandlerCentral.MessageHeader.find({ sessionId, toAlias }).lean().exec());
         }
@@ -1195,7 +1225,7 @@ export default class MongoHandlerCentral {
     
         async storeBackup(backup: Backup) {
             const { byAlias, sessionId } = backup;
-            if (!this.matchSessionMyAlias(sessionId, byAlias)) return false;
+            if (this.getSessionMatchError({ sessionId, myAlias: byAlias })) return false;
             try {
                 const newBackup = new MongoHandlerCentral.Backup(backup);
                 if (newBackup === await newBackup.save()) {
@@ -1210,22 +1240,22 @@ export default class MongoHandlerCentral {
         }
     
         async getBackupById(byAlias: string, sessionId: string, headerId: string): Promise<Backup> {
-            if (!this.matchSessionMyAlias(sessionId, byAlias)) return undefined;
+            if (this.getSessionMatchError({ sessionId, myAlias: byAlias })) return undefined;
             return cleanLean(await MongoHandlerCentral.Backup.findOne({ byAlias, sessionId, headerId }).lean().exec());
         }
     
         async getAllReceipts(toAlias: string, sessionId: string): Promise<Receipt[]> {
-            if (!this.matchSessionMyAlias(sessionId, toAlias)) return undefined;
+            if (this.getSessionMatchError({ sessionId, myAlias: toAlias })) return undefined;
             return await MongoHandlerCentral.Receipt.find({ sessionId, toAlias }).lean().exec();
         }
     
         async clearAllReceipts(toAlias: string, sessionId: string) {
-            if (!this.matchSessionMyAlias(sessionId, toAlias)) return false;
+            if (this.getSessionMatchError({ sessionId, myAlias: toAlias })) return false;
             return (await MongoHandlerCentral.Receipt.deleteMany({ toAlias, sessionId })).deletedCount > 1;
         }
     
         async backupProcessed(byAlias: string, sessionId: string, headerId: string) {
-            if (!this.matchSessionMyAlias(sessionId, byAlias)) return false;
+            if (this.getSessionMatchError({ sessionId, myAlias: byAlias })) return false;
             try {
                 return (await MongoHandlerCentral.Backup.deleteOne({ byAlias, sessionId, headerId })).deletedCount === 1
             }
@@ -1236,7 +1266,7 @@ export default class MongoHandlerCentral {
         }
     
         async messageHeaderProcessed(toAlias: string, sessionId: string, headerId: string) {
-            if (!this.matchSessionMyAlias(sessionId, toAlias)) return false;
+            if (this.getSessionMatchError({ sessionId, myAlias: toAlias })) return false;
             return (await MongoHandlerCentral.MessageHeader.deleteOne({ toAlias, sessionId, headerId })).deletedCount === 1;
         }
     
@@ -1250,9 +1280,11 @@ export default class MongoHandlerCentral {
                     const accessId = getRandomString(16, "hex");
                     await (new MongoHandlerCentral.DatabaseAccessKey({ username: this.#username, type: "chat", accessKey, accessId })).save();
                     this.#chats.set(chatId, { accessId, ...chat });
-                    const { accessId: keyBundleAccessId } = this.#keyBundles.get(otherUser);
-                    this.#keyBundles.delete(otherUser);
-                    await MongoHandlerCentral.deleteIssuedKeyBundle(this.#username, keyBundleAccessId);
+                    const { accessId: keyBundleAccessId } = this.#keyBundles.get(otherUser) || {};
+                    if (accessId) {
+                        this.#keyBundles.delete(otherUser);
+                        await MongoHandlerCentral.deleteIssuedKeyBundle(this.#username, keyBundleAccessId);
+                    }
                     return true;
                 }
                 return false;
@@ -1263,7 +1295,7 @@ export default class MongoHandlerCentral {
             }
         }
     
-        async updateChat({ chatId, ...chat }: Omit<ChatData, "chatDetails" | "exportedChattingSession"> & Partial<ChatData>) {
+        async updateChat({ chatId, ...chat }: ChatIdentifier & Partial<MutableChatData>) {
             if (!this.#chats.has(chatId)) return false;
             try {
                 return !!(await MongoHandlerCentral.Chat.findOneAndUpdate({ chatId }, chat).exec());

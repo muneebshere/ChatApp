@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { Grid, IconButton, Button, Sheet, Stack } from "@mui/joy";
+import { Grid, IconButton, Button, Sheet, Stack, ButtonProps } from "@mui/joy";
 import { CloseSharp, SendRounded } from "@mui/icons-material";
 import Popover, { PopoverTrigger, PopoverContent } from "./Popover";
 import Dialog from "./Dialog";
@@ -8,6 +8,7 @@ import ControlledTextField from "./ControlledTextField";
 import { StyledScrollingTextarea } from "./TextareaAutosize";
 import { Placement } from "@floating-ui/react";
 import { flushSync } from "react-dom";
+import { match } from "ts-pattern";
 
 type NewChatPopupProps = {
   initialChatWith?: string,
@@ -59,7 +60,7 @@ export function NewChatPopup({ validate, escOnEnter, initialChatWith, returnUser
       <PopoverContent>
         <div style={{ borderRadius: 8, padding: 10, border: "1.5px solid #d8d8df", backgroundColor: "rgba(246, 246, 246, 0.8)", boxShadow: "0px 1px 3px 1.5px #eeeeee", backdropFilter: "blur(4px)", width: belowXL ? "80vw" : "20vw" }}>
           <Stack direction="column" spacing={1}>
-            <DisableSelectTypography level="h6" fontWeight="lg">
+            <DisableSelectTypography level="h4" fontWeight="lg">
               New chat
             </DisableSelectTypography>
             <div style={{ display: "flex", alignContent: "center", justifyContent: "stretch" }}>
@@ -68,6 +69,7 @@ export function NewChatPopup({ validate, escOnEnter, initialChatWith, returnUser
                 autoComplete="new-random"
                 role="presentation"
                 variant="outlined"
+                highlightColor="#1f7a1f"
                 placeholder="Begin chat with" 
                 type="text"
                 defaultValue={newChatWith || undefined}
@@ -167,7 +169,7 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
           <Stack direction="row" spacing={0.7} sx={{ flexWrap: "wrap", alignContent: "center" }}>
             <DisableSelectTypography
               component="h2"
-              level="h6"
+              level="h4"
               textColor="inherit"
               fontWeight="lg"
               mb={1} 
@@ -202,7 +204,7 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
                 ...(isPopupOpen ? { filter: "brightness(0.9)" } : {}) }}>
                 <DisableSelectTypography
                   component="h2"
-                  level="h6"
+                  level="h4"
                   textColor="inherit"
                   fontWeight="md"
                   sx={{ display: "flex", textAlign: "center", flexWrap: "wrap", alignContent: "center", marginBottom: 0, cursor: "default" }}
@@ -272,22 +274,35 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
             You'll lose the message you're typing.
           </DisableSelectTypography>
           <Grid container direction="row" sx={{ paddingTop: "15px" }}>
-            <Grid xs={6} sx={{ display: "flex", justifyContent: "center", paddingInline: "20px" }}>
-              <Button variant="solid" color="success" sx={{ flexGrow: 1 }} onClick={ () => setWarn(false) }>
-                Go back
-              </Button>
-            </Grid>
-            <Grid xs={6} sx={{ display: "flex", justifyContent: "center", paddingInline: "20px" }}>
-              <Button variant="solid" color="danger" sx={{ flexGrow: 1 }} onClick={ () => {
-                setWarn(false);
-                setNewChatWith("");
-                setNewMessage("");
-              } }>
-                Close
-              </Button>
-            </Grid>
+            <DialogButton action="Go back" onClick={ () => setWarn(false) }/>
+            <DialogButton action="Close" onClick={ () => {
+              setWarn(false);
+              setNewChatWith("");
+              setNewMessage("");
+            }}/>
           </Grid>
         </Sheet>      
       </Dialog>
     </>);
-}
+  }
+  
+  type QuitAction = "Go back" | "Close";
+  
+  function DialogButton({ action, onClick }: Pick<ButtonProps, "onClick"> & { action: QuitAction }) {
+    const color = 
+      match(action)
+        .with("Go back", () => "success")
+        .with("Close", () => "danger")
+        .exhaustive() as any;
+  
+    return (
+      <Grid xs={6} sx={{ display: "flex", justifyContent: "center", paddingInline: "20px" }}>
+        <Button
+          variant="solid"
+          color={color}
+          onClick={onClick}
+          sx={{ flexGrow: 1 }}>
+          {action}
+        </Button>
+      </Grid>)
+    }

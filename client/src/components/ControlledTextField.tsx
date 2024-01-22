@@ -1,6 +1,7 @@
 import _ from "lodash";
 import React, { useState, useRef, useEffect, forwardRef } from "react";
 import { FormControl, FormLabel, FormHelperText, Input  } from "@mui/joy";
+import { SxProps } from "@mui/material";
 
 export type ControlledTextFieldProps = {  
   label?: string;
@@ -11,6 +12,7 @@ export type ControlledTextFieldProps = {
   setValue: (value: string) => void;
   valid: boolean;
   variant?: "plain" | "outlined" | "soft" | "solid";
+  joyColor?: "primary" | "neutral" | "info" | "success" | "warning" | "danger";
   helperText?: string;
   onEnter?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   forceInvalid?: boolean;
@@ -21,10 +23,12 @@ export type ControlledTextFieldProps = {
   role?: React.AriaRole;
   autoFocus?: boolean;
   forceFocus?: boolean;
+  sx?: SxProps;
+  highlightColor?: string
 } & React.HTMLProps<HTMLInputElement>
 
 export default forwardRef(function(args: ControlledTextFieldProps, ref: React.ForwardedRef<HTMLInputElement>) {
-  const { placeholder, setValue, type, valid, defaultValue, value, disabled, errorMessage, forceInvalid, helperText, label, onEnter, preventSpaces, variant, autoComplete, role, autoFocus, forceFocus } = args;
+  const { placeholder, setValue, type, valid, defaultValue, value, disabled, errorMessage, forceInvalid, helperText, label, onEnter, preventSpaces, variant, autoComplete, role, autoFocus, forceFocus, joyColor, highlightColor, sx } = args;
   const [cursor, setCursor] = useState(0);
   const [touched, setTouched] = useState<boolean>(null);
   const enterRef = useRef(false);
@@ -96,6 +100,7 @@ export default forwardRef(function(args: ControlledTextFieldProps, ref: React.Fo
         autoFocus={autoFocus}
         role={role}
         variant={variant}
+        color={joyColor}
         type={type}
         placeholder={placeholder}
         defaultValue={defaultValue}
@@ -107,7 +112,7 @@ export default forwardRef(function(args: ControlledTextFieldProps, ref: React.Fo
         onFocus={onFocus}
         onKeyDown={ onEnter ? ((e) => onKey(e, "down")) : undefined }
         onKeyUp={ onEnter ? ((e) => onKey(e, "up")) : undefined }
-        sx={{ width: "100%" }}/>
+        sx={{ ...sx, width: "100%", "&::before": highlightColor ? { "--Input-focusedHighlight": highlightColor } : undefined }}/>
       {(errorText() || helperText) &&
       <FormHelperText sx={{ justifyItems: "flex-start", textAlign: "start", color: !valid && (forceInvalid || touched) ? "var(--joy-palette-danger-outlinedColor)" : "neutral" }}>
         { errorText() ? errorMessage : helperText }

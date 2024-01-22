@@ -6,8 +6,10 @@ import {
   useInteractions,
   FloatingPortal,
   FloatingFocusManager,
-  FloatingOverlay
+  FloatingOverlay,
+  useFloatingNodeId
 } from "@floating-ui/react";
+import FloatingTreeWrapper from "./FloatingTreeWrapper";
 
 interface DialogOptions {
   outsidePress?: boolean;
@@ -16,12 +18,13 @@ interface DialogOptions {
   onDismiss?: () => void;
   keepFocusIn?: readonly [React.RefObject<HTMLElement>, React.MutableRefObject<boolean>];
   children: JSX.Element;
+  forceZIndex?: number;
 }
 
-export default function Dialog({ children, open, onDismiss, outsidePress, overlayBackdrop, keepFocusIn }: DialogOptions) {
+export default function Dialog({ children, open, onDismiss, outsidePress, overlayBackdrop, keepFocusIn, forceZIndex }: DialogOptions) {
 
-  const data = useFloating({ open, onOpenChange: (open) => open || onDismiss?.() });
-
+  const nodeId = useFloatingNodeId();
+  const data = useFloating({ nodeId, open, onOpenChange: (open) => open || onDismiss?.() });
   const context = data.context;
   const dismiss = useDismiss(context, outsidePress ? { outsidePressEvent: "mousedown" } : {});
   const role = useRole(context);
@@ -58,8 +61,9 @@ export default function Dialog({ children, open, onDismiss, outsidePress, overla
   }, []);
 
   return (
-    <FloatingPortal>
-      {open && (
+    <FloatingTreeWrapper open={open}>
+      {(zIndex) => (
+        <FloatingPortal>
         <FloatingOverlay className="Dialog-overlay" 
           ref={(elem) => {
             if (!keepFocusIn) return;
@@ -69,7 +73,7 @@ export default function Dialog({ children, open, onDismiss, outsidePress, overla
             mainRef.current = elem;
           }}
           lockScroll
-          style={{ backdropFilter: overlayBackdrop, zIndex: 5 }}
+          style={{ backdropFilter: overlayBackdrop, zIndex: forceZIndex || zIndex }}
           onClick={ outsidePress ? onDismiss : undefined }>
           <FloatingFocusManager context={context} returnFocus={true} initialFocus={focusElement}>
             <div
@@ -101,7 +105,6 @@ export default function Dialog({ children, open, onDismiss, outsidePress, overla
             </div>
           </FloatingFocusManager>
         </FloatingOverlay>
-      )}
-    </FloatingPortal>
-  );
+      </FloatingPortal>)}
+    </FloatingTreeWrapper>);
 }

@@ -163,6 +163,7 @@ export default function LogInForm() {
           <ControlledTextField 
             autoComplete="username"
             variant="outlined"
+            highlightColor="#1f7a1f"
             placeholder="Please enter your username" 
             type="text"
             value={username}
@@ -174,7 +175,9 @@ export default function LogInForm() {
             autoFocus={!usernameEntered}
             forceFocus={!usernameEntered}
             onEnter={onUsernameEntered}/>
-          <Button variant="solid"
+          <Button 
+            variant="solid"
+            color="success"
             onClick={onUsernameEntered} 
             disabled={ !!usernameError }>
               Next
@@ -185,6 +188,7 @@ export default function LogInForm() {
         <React.Fragment>
           <ControlledTextField 
             variant="outlined"
+            highlightColor="#1f7a1f"
             autoComplete="current-password"
             placeholder="Please enter your password" 
             type={ showPassword ? "text" : "password" }
@@ -201,7 +205,7 @@ export default function LogInForm() {
             <StyledJoySwitch checked={showPassword}
               disabled={submitted}
               onChange={ (e) => setShowPassword(e?.target?.checked) } 
-              color={showPassword ? "primary" : "neutral"}/>
+              color={showPassword ? "success" : "neutral"}/>
             </FormControl>
           <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
             <FormControl orientation="horizontal" sx={{ width: "100%" }}>
@@ -209,7 +213,7 @@ export default function LogInForm() {
               <StyledJoySwitch checked={savePassword} 
                 disabled={submitted}
                 onChange={ (e) => setSavePassword(e?.target?.checked) }
-                color={savePassword ? "primary" : "neutral"}/>
+                color={savePassword ? "success" : "neutral"}/>
             </FormControl>
             {savePassword &&
               <FormHelperText sx={{ width: "100%", paddingTop: "4px", justifyItems: "flex-start", textAlign: "start", color: "var(--joy-palette-danger-outlinedColor)" }}>
@@ -218,6 +222,7 @@ export default function LogInForm() {
           </div>
           <Stack direction="row" spacing={2}>
             <Button variant="solid"
+              color="success"
               onClick={ () => setUsernameEntered(false) }
               disabled={ submitted || tryAgainIn > 0 }>
               <DisableSelectTypography fontWeight="sm" textColor={ submitted || tryAgainIn > 0 ? "black" : "white" }>
@@ -225,6 +230,7 @@ export default function LogInForm() {
               </DisableSelectTypography>
             </Button>
             <Button variant="solid"
+              color="success"
               onClick={submitLocal}
               disabled={!canSubmit}>
               <Stack direction="row" spacing={2}>
@@ -232,7 +238,7 @@ export default function LogInForm() {
                   { submitted ? "Logging in..." :"Login" }
                 </DisableSelectTypography>
                 {submitted &&
-                  <CircularProgress size="sm" variant="soft"/>
+                  <CircularProgress size="sm" variant="soft" color="success"/>
                 }
               </Stack>
             </Button>

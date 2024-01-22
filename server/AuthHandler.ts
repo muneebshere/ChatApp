@@ -90,7 +90,10 @@ export default class AuthHandler {
             if (createNewSessionRecord) {
                 const salt = crypto.getRandomVector(64);
                 const sessionRecordKey = await crypto.deriveHKDF(sharedKeyBits, salt, "Session Record", 512);
-                crypto.deriveEncrypt(session, sessionRecordKey, `Session Record: ${sessionReference}`).then((record) => MongoHandlerCentral.createRunningClientSession(sessionReference, record));
+                (async () => {
+                    const record = await crypto.deriveEncrypt(session, sessionRecordKey, `Session Record: ${sessionReference}`);
+                    MongoHandlerCentral.createRunningClientSession(sessionReference, record);
+                })();
                 const userData = mongoHandler.getUserData();
                 return [socketHandler, userData, salt];
             }

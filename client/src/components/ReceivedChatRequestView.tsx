@@ -31,7 +31,7 @@ export function ReceivedChatRequestView({ receivedChatRequest }: ReceivedChatReq
         <div style={{ width: "100%", display: "flex", justifyContent: "center" }}>
           <DayCard date={DateTime.fromMillis(lastActive).toISODate()} forceInline={true}/>
         </div>
-        <DisableSelectTypography level="body2" sx={{ width: "100%", textAlign: "center", color: "lightgrey" }}>
+        <DisableSelectTypography level="body-lg" sx={{ width: "100%", textAlign: "center", color: "lightgrey" }}>
           You have received a chat request from @{otherUser}. Accept chat request to reply.
         </DisableSelectTypography>
         <MessageCard chatMessage={chatMessage}/>
@@ -41,7 +41,7 @@ export function ReceivedChatRequestView({ receivedChatRequest }: ReceivedChatReq
           <Button variant="solid" color="success" onClick={() => receivedChatRequest.respondToRequest(Date.now())} style={{ width: "100px" }}>
             Accept
           </Button>
-          <DisableSelectTypography level="body2" sx={{ width: "100%", textAlign: "start", color: "lightgrey" }} style={{ marginBlock: "auto" }}>
+          <DisableSelectTypography level="body-md" sx={{ width: "100%", textAlign: "start", color: "lightgrey" }} style={{ marginBlock: "auto" }}>
             Your profile details will be sent to @{otherUser}.
           </DisableSelectTypography>
         </Stack>
@@ -49,7 +49,7 @@ export function ReceivedChatRequestView({ receivedChatRequest }: ReceivedChatReq
           <Button variant="solid" color="danger" onClick={() => receivedChatRequest.rejectRequest()} style={{ width: "100px" }}>
             Reject 
           </Button>
-          <DisableSelectTypography level="body2" sx={{ width: "100%", textAlign: "start", color: "lightgrey" }} style={{ marginBlock: "auto" }}>
+          <DisableSelectTypography level="body-md" sx={{ width: "100%", textAlign: "start", color: "lightgrey" }} style={{ marginBlock: "auto" }}>
             @{otherUser} will not be notified.
           </DisableSelectTypography>
         </Stack>
