@@ -1,10 +1,9 @@
 import _ from "lodash";
-import * as crypto from "../../shared/cryptoOperator";
-import { serialize, deserialize } from "../../shared/cryptoOperator";
-import { ExposedSignedPublicKey, SignedKeyPair, ExportedSignedKeyPair, ExportedSigningKeyPair, KeyBundle, MessageHeader, ChatRequestHeader, Profile, StoredMessage, PublicIdentity, KeyBundleId, IssueOneTimeKeysResponse, ReplacePreKeyResponse, ServerMemo, EncryptedData, SignedEncryptedData, X3DHData, X3DHKeysData, X3DHRequestsData, X3DHDataPartial } from "../../shared/commonTypes";
+import * as crypto from "../shared/cryptoOperator";
+import { ExposedSignedPublicKey, SignedKeyPair, ExportedSignedKeyPair, ExportedSigningKeyPair, KeyBundle, MessageHeader, ChatRequestHeader, Profile, StoredMessage, PublicIdentity, KeyBundleId, IssueOneTimeKeysResponse, ReplacePreKeyResponse, ServerMemo, EncryptedData, SignedEncryptedData, X3DHData, X3DHKeysData, X3DHRequestsData, X3DHDataPartial } from "../shared/commonTypes";
 import { Queue } from "async-await-queue";
-import { fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
-import { SessionCrypto } from "../../shared/sessionCrypto";
+import { fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
+import { SessionCrypto } from "../shared/sessionCrypto";
 
 const { getRandomVector, getRandomString } = randomFunctions();
 

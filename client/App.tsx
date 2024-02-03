@@ -9,9 +9,9 @@ import { LogInContext, defaultLogInDataReducer, defaultLogInData } from "./compo
 import { SignUpContext, defaultSignUpDataReducer, defaultSignUpData } from "./components/Signup";
 import Client, { ConnectionStatus } from "./Client";
 import { generateAvatar, extractInitials } from "./imageUtilities";
-import * as crypto from "../../shared/cryptoOperator";
+import * as crypto from "../shared/cryptoOperator";
 import AuthClient, { AuthConnectionStatus } from "./AuthClient";
-import { Failure } from "../../shared/commonTypes";
+import { Failure } from "../shared/commonTypes";
 
 export type SubmitResponse = {
   displayName?: string;

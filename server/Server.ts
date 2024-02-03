@@ -1,17 +1,17 @@
 import _ from "lodash";
 import { DateTime } from "luxon";
 import { config } from "./node_modules/dotenv";
-import { ServerOptions, createServer } from "node:https";
+import { ServerOptions, createServer as createHTTPSServer } from "node:https";
 import fs, { promises as fsPromises } from "node:fs";
 import cookieParser from "cookie-parser";
 import express, { Request, Response, NextFunction, CookieOptions } from "express";
 import cors, { CorsOptions } from "cors";
 import * as ipaddr from "ipaddr.js";
 import { Server as SocketServer, Socket } from "socket.io";
-import * as crypto from "../../shared/cryptoOperator";
-import { serialize, deserialize } from "../../shared/cryptoOperator";
-import { SignUpRequest, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, LogInSavedRequest, SavePasswordRequest } from "../../shared/commonTypes";
-import { fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
+import * as crypto from "../shared/cryptoOperator";
+import { serialize, deserialize } from "../shared/cryptoOperator";
+import { SignUpRequest, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, LogInSavedRequest, SavePasswordRequest } from "../shared/commonTypes";
+import { fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
 import MongoHandlerCentral, { ServerConfig } from "./MongoHandler";
 import AuthHandler from "./AuthHandler";
 import SocketHandler from "./SocketHandler";
@@ -50,13 +50,13 @@ export function parseIpReadable(ipRep: string) {
 }
 
 async function writeJsHash() {
-    const file = await fsPromises.readFile(`..\\..\\client\\public\\main.js`, { flag: "r" });
+    const file = await fsPromises.readFile(`..\\public\\main.js`, { flag: "r" });
     latestJsHash = await crypto.digestToBase64("SHA-256", file);
 }
 
 async function watchForJsHashChange() {
     await writeJsHash();
-    const watcher = fsPromises.watch(`..\\..\\client\\public\\main.js`);
+    const watcher = fsPromises.watch(`..\\public\\main.js`);
     for await (const { eventType } of watcher) {
         if (eventType === "change") {
             await writeJsHash();
@@ -72,7 +72,7 @@ export const defaultServerConfig: ServerConfig = {
 
 async function main() {
     
-    const PORT = 8080;
+    const PORT = 443;
     const mongoUrl = "mongodb://localhost:27017/chatapp";
     const httpsOptions: ServerOptions = {
         key: fs.readFileSync(`..\\certificates\\key.pem`),
@@ -95,8 +95,12 @@ async function main() {
     const authHandler = AuthHandler.initiate(signingKey, verifyingKey);
     const cookieParserMiddle = cookieParser(cookieSign);
     const cookieOptions: CookieOptions = { httpOnly: true, secure: true, sameSite: "strict", signed: true };
-    const app = express().use(cors(corsOptions)).use(cookieParserMiddle).use(express.json());
-    const httpsServer = createServer(httpsOptions, app);
+    const app = express()
+                    .use(express.static("../public"))
+                    .use(cors(corsOptions))
+                    .use(cookieParserMiddle)
+                    .use(express.json());
+    const backendServer = createHTTPSServer(httpsOptions, app);
     const interruptedAuthentications = new Map<string, NodeJS.Timeout>();
     const saveSessionKeys = new Map<string, string>();
     const disposeSession = async (sessionReference: string, reason: string) => {
@@ -104,7 +108,7 @@ async function main() {
         saveSessionKeys.delete(sessionReference);
     }
     
-    const io = new SocketServer(httpsServer, {
+    const io = new SocketServer(backendServer, {
         cors: {
             origin: /.*/,
             methods: ["GET", "POST"],
@@ -373,7 +377,7 @@ async function main() {
         }
     });
 
-    httpsServer.listen(PORT, () => console.log(`listening on *:${PORT}`));
+    backendServer.listen(PORT, () => console.log(`listening on *:${PORT}`));
 }
 
 main();

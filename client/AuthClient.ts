@@ -3,11 +3,11 @@ import axios, { AxiosError } from "axios";
 import isOnline from "is-online";
 import { Queue } from "async-await-queue";
 import { X3DHManager } from "./e2e-encryption";
-import * as crypto from "../../shared/cryptoOperator";
-import { serialize, deserialize } from "../../shared/cryptoOperator";
-import * as esrp from "../../shared/ellipticSRP";
-import { awaitCallback, failure, fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
-import { ErrorStrings, Failure, Username, SignUpRequest, NewUserData, Profile, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, SavePasswordRequest, SavePasswordResponse, SignUpChallenge, LogInResponse, LogInChallenge, LogInSavedRequest, LogInSavedResponse, LogInPermitted, SignUpResponse, EncryptedData, UserData  } from "../../shared/commonTypes";
+import * as crypto from "../shared/cryptoOperator";
+import { serialize, deserialize } from "../shared/cryptoOperator";
+import * as esrp from "../shared/ellipticSRP";
+import { awaitCallback, failure, fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
+import { ErrorStrings, Failure, Username, SignUpRequest, NewUserData, Profile, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, SavePasswordRequest, SavePasswordResponse, SignUpChallenge, LogInResponse, LogInChallenge, LogInSavedRequest, LogInSavedResponse, LogInPermitted, SignUpResponse, EncryptedData, UserData  } from "../shared/commonTypes";
 import Client, { ConnectionStatus } from "./Client";
 
 const { getRandomVector, getRandomString } = randomFunctions();
@@ -27,7 +27,7 @@ type SavedSessionData = Readonly<{
     sessionRecordKey: Buffer, 
     userData: Omit<UserData, "encryptionBaseDerive">}>;
 
-const PORT = 8080;
+const PORT = 443;
 const { hostname, protocol } = window.location;
 const baseURL = `${protocol}//${hostname}:${PORT}`;
 const axInstance = axios.create({ baseURL, maxRedirects: 0, timeout: 2000 });

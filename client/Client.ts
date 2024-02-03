@@ -2,11 +2,11 @@ import _ from "lodash";
 import { match } from "ts-pattern";
 import axios from "axios";
 import { io, Socket } from "socket.io-client";
-import { SessionCrypto } from "../../shared/sessionCrypto";
+import { SessionCrypto } from "../shared/sessionCrypto";
 import {  ChattingSession, ViewReceivedRequest, X3DHManager } from "./e2e-encryption";
-import * as crypto from "../../shared/cryptoOperator";
-import { allSettledResults, awaitCallback, failure, fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
-import { ErrorStrings, Failure, Username, SocketClientSideEvents, MessageHeader, ChatRequestHeader, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Profile, EncryptedData, SocketServerRequestParameters, SocketServerRequestReturn, ServerMemo, KeyBundleId, SignedEncryptedData, X3DHKeysData, X3DHData  } from "../../shared/commonTypes";
+import * as crypto from "../shared/cryptoOperator";
+import { allSettledResults, awaitCallback, failure, fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
+import { ErrorStrings, Failure, Username, SocketClientSideEvents, MessageHeader, ChatRequestHeader, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Profile, EncryptedData, SocketServerRequestParameters, SocketServerRequestReturn, ServerMemo, KeyBundleId, SignedEncryptedData, X3DHKeysData, X3DHData  } from "../shared/commonTypes";
 import { SentChatRequest, Chat, ReceivedChatRequest, FirstMessage } from "./ChatClasses";
 import AuthClient, { isClientOnline } from "./AuthClient";
 

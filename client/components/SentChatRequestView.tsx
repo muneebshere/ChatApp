@@ -29,7 +29,7 @@ export function SentChatRequestView({ sentChatRequest }: SentChatRequestViewProp
         <div style={{ width: "100%", display: "flex", justifyContent: "center" }}>
           <DayCard date={DateTime.fromMillis(lastActive).toISODate()} forceInline={true}/>
         </div>
-        <DisableSelectTypography level="body2" sx={{ width: "100%", textAlign: "center", color: "lightgrey" }}>
+        <DisableSelectTypography level="body-md" sx={{ width: "100%", textAlign: "center", color: "lightgrey" }}>
           You sent a chat request to @{otherUser}. Wait for them to respond.
         </DisableSelectTypography>
         <MessageCard chatMessage={chatMessage}/>

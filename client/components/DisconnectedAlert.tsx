@@ -147,7 +147,7 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
           <Stack direction="row" spacing={3} sx={{ justifyContent: "space-between", width: "100%" }}>
             {display.icon}
             <Stack direction={belowXL ? "column" : "row"} spacing={belowXL ? 1 : 2} sx={{ width: "fit-content", height: "fit-content", flexWrap: "wrap", alignContent: "center", justifyContent: "center" }} style={{ marginBlock: "auto" }}>
-              <DisableSelectTypography level="body1" color={display.color} textAlign="center" style={{ marginBlock: "auto" }}>
+              <DisableSelectTypography level="body-lg" color={display.color} textAlign="center" style={{ marginBlock: "auto" }}>
                 {display.message}
               </DisableSelectTypography>
               {!unauthenticated(status) && !paused && !retrying &&
@@ -162,7 +162,7 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
                     sx={{ borderRadius: "100%", padding: "0px", width: "fit-content", margin: "auto" }}>
                     <StopCircleSharp sx={{ fontSize: "1.8rem" }}/>
                   </IconButton>
-                  <DisableSelectTypography level="body3" color="danger" sx={{ textJustify: "center", textAlign: "center" }}>
+                  <DisableSelectTypography level="body-sm" color="danger" sx={{ textJustify: "center", textAlign: "center" }}>
                     Stop
                   </DisableSelectTypography>
                 </Stack>}
@@ -182,7 +182,7 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
                             {retryButton}
                         </CircularProgress>))}
               {unauthenticated(status) || !retrying &&
-                <DisableSelectTypography level="body3" color={display.color} sx={{ textJustify: "center", textAlign: "center" }}>
+                <DisableSelectTypography level="body-sm" color={display.color} sx={{ textJustify: "center", textAlign: "center" }}>
                   {display.buttonAction}
                 </DisableSelectTypography>}
             </Stack>

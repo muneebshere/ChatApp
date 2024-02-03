@@ -9,7 +9,7 @@ import EmojiPicker from "emoji-picker-react";
 import styled from "@emotion/styled";
 
 export const StyledSheet = joyStyled(Sheet)(({ theme }) => ({
-  ...theme.typography.body2,
+  ...theme.typography["body-sm"],
   padding: theme.spacing(1),
   textAlign: 'center',
   color: theme.vars.palette.text.tertiary,

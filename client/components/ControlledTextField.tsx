@@ -12,7 +12,7 @@ export type ControlledTextFieldProps = {
   setValue: (value: string) => void;
   valid: boolean;
   variant?: "plain" | "outlined" | "soft" | "solid";
-  joyColor?: "primary" | "neutral" | "info" | "success" | "warning" | "danger";
+  joyColor?: "primary" | "neutral" | "success" | "warning" | "danger";
   helperText?: string;
   onEnter?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   forceInvalid?: boolean;

@@ -4,7 +4,7 @@ import { ArrowBackSharp, Cached, ClearOutlined, CloseSharp, DoneOutlined, EditOu
 import Popover, { PopoverTrigger, PopoverContent } from "./Popover";
 import Dialog from "./Dialog";
 import { CloseButton, DisableSelectTypography } from "./CommonElementStyles";
-import { Profile } from "../../../shared/commonTypes";
+import { Profile } from "../../shared/commonTypes";
 import { match } from "ts-pattern";
 import { ButtonBaseProps, useMediaQuery } from "@mui/material";
 import { FlexBox } from "./FlexBox";

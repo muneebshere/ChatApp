@@ -18,13 +18,13 @@ import SvgMessageCard from "./SvgMessageCard";
 import "katex/dist/katex.min.css";
 import { ReplyingToMemo } from "./ReplyingTo";
 import { ReactMarkdownLastPara } from "./CommonElementStyles";
-import { ReplyingToInfo, DeliveryInfo } from "../../../shared/commonTypes";
+import { ReplyingToInfo, DeliveryInfo } from "../../shared/commonTypes";
 import { ElementRects } from "@floating-ui/react";
 import useSwipeDrag from "./Hooks/useSwipeDrag";
 import { ChatMessage } from "../ChatClasses";
 import { useSize } from "./Hooks/useSize";
 import styled from "@emotion/styled";
-import { logError } from "../../../shared/commonFunctions";
+import { logError } from "../../shared/commonFunctions";
 import { CodeComponent } from "react-markdown/lib/ast-to-react";
 import { FlexBox } from "./FlexBox";
 

@@ -23,7 +23,7 @@ const ChatHeader = function({ chatDetails, belowXL }: ChatHeaderProps) {
         <Stack direction="row" spacing={2} sx={{ flexGrow: 1, flexWrap: "wrap", alignContent: "center" }}>
           <Avatar src={profilePicture} size="lg"/>
           <Stack direction="column" sx={{ justifyContent: "center" }}>
-            <DisableSelectTypography level="h6" fontWeight="lg" sx={{ width: "fit-content" }}>
+            <DisableSelectTypography level="h4" fontWeight="lg" sx={{ width: "fit-content" }}>
               {contactName || displayName}
             </DisableSelectTypography>
             {isOnline &&

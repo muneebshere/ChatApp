@@ -5,7 +5,7 @@ import { FormControl, FormLabel, Stack, Button, CircularProgress, Alert, FormHel
 import { SubmitResponse } from "../App";
 import { DisableSelectTypography, StyledJoySwitch } from "./CommonElementStyles";
 import ControlledTextField from "./ControlledTextField";
-import { Failure } from "../../../shared/commonTypes";
+import { Failure } from "../../shared/commonTypes";
 
 type SignUpData = {
   readonly displayName: string;

@@ -1,11 +1,11 @@
 import _ from "lodash";
 import { Socket } from "socket.io-client";
-import { SessionCrypto } from "../../shared/sessionCrypto";
+import { SessionCrypto } from "../shared/sessionCrypto";
 import { ChattingSession, SendingMessage, ViewReceivedRequest } from "./e2e-encryption";
-import * as crypto from "../../shared/cryptoOperator";
-import { MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, SocketServerSideEvents, DeliveryInfo, Receipt, Backup, Profile  } from "../../shared/commonTypes";
+import * as crypto from "../shared/cryptoOperator";
+import { MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, SocketServerSideEvents, DeliveryInfo, Receipt, Backup, Profile  } from "../shared/commonTypes";
 import { DateTime } from "luxon";
-import { allSettledResults, awaitCallback, logError, randomFunctions } from "../../shared/commonFunctions";
+import { allSettledResults, awaitCallback, logError, randomFunctions } from "../shared/commonFunctions";
 import { ClientChatInterface, ClientReceivedChatRequestInterface } from "./Client";
 import { noProfilePictureImage } from "./imageUtilities";
 

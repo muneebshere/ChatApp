@@ -12,9 +12,9 @@ import { StyledSheet, StyledScrollbar, DisableSelectTypography } from "./CommonE
 import { StyledScrollingTextarea } from "./TextareaAutosize";
 import { ReplyingToProps, ReplyingToMemo } from "./ReplyingTo";
 import { MessageCardContext, MessageCardContextData } from "./MessageCard";
-import { ReplyingToInfo } from "../../../shared/commonTypes";
+import { ReplyingToInfo } from "../../shared/commonTypes";
 import { Chat } from "../ChatClasses";
-import { truncateMarkdown, escapeHtml } from "../../../shared/commonFunctions";
+import { truncateMarkdown, escapeHtml } from "../../shared/commonFunctions";
 import { ChatHeaderMemo } from "./ChatHeader";
 import Toast from "./Toast";
 import Popover, { PopoverContent, PopoverTrigger } from "./Popover";
