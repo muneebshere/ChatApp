@@ -1,8 +1,8 @@
 import _ from "lodash";
 import { DateTime } from "luxon";
-import { config } from "./node_modules/dotenv";
 import { ServerOptions, createServer as createHTTPSServer } from "node:https";
 import fs, { promises as fsPromises } from "node:fs";
+import { Buffer } from "node:buffer";
 import cookieParser from "cookie-parser";
 import express, { Request, Response, NextFunction, CookieOptions } from "express";
 import cors, { CorsOptions } from "cors";
@@ -79,14 +79,6 @@ async function main() {
         cert: fs.readFileSync(`..\\certificates\\cert.pem`)
     }
     const corsOptions: CorsOptions = { origin: /.*/, methods: ["GET", "POST", "DELETE"], exposedHeaders: ["set-cookie"], allowedHeaders: ["content-type"], credentials: true };
-
-    try {
-        config({ debug: true, path: "./config.env" });
-    }
-    catch (e) {
-        logError(e);
-        console.log("Could not load config.env");
-    }
 
     watchForJsHashChange();
     MongoHandlerCentral.connect(mongoUrl);

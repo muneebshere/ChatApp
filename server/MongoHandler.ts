@@ -1,10 +1,11 @@
 import _, { isError } from "lodash";
+import { Buffer } from "node:buffer";
 import { Binary } from "mongodb";
 import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
 import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, StoredMessage, NewUserData, EncryptedData, Receipt, Backup, ChatSessionDetails, Username, NewAuthData, KeyBundleId, ExposedSignedPublicKey, PasswordDeriveInfo, PasswordEntangleInfo, PublicIdentity, UserData, SignedEncryptedData, RequestIssueNewKeysResponse, ServerMemo, X3DHKeysData, X3DHRequestsData, X3DHData, X3DHDataPartial, ChatIdentifier, MutableChatData } from "../shared/commonTypes";
 import * as crypto from "../shared/cryptoOperator";
-import { defaultServerConfig, parseIpReadable } from "./backendserver";
+import { defaultServerConfig, parseIpReadable } from "./Server";
 import { Notify } from "./SocketHandler";
 import { allSettledResults, logError, randomFunctions } from "../shared/commonFunctions";
 
@@ -638,7 +639,7 @@ export default class MongoHandlerCentral {
     static onError: () => void;
 
     static async connect(url: string, options?: mongoose.ConnectOptions) {
-        const mong = await mongoose.connect(url, { ...options, keepAlive: true, keepAliveInitialDelay: 300000, serverSelectionTimeoutMS: 3000000, connectTimeoutMS: 3000000, socketTimeoutMS: 3000000, maxIdleTimeMS: 3000000 });
+        const mong = await mongoose.connect(url, { ...options, serverSelectionTimeoutMS: 3000000, connectTimeoutMS: 3000000, socketTimeoutMS: 3000000, maxIdleTimeMS: 3000000 });
         if (!this.onError) {
             this.onError = () => {
                 MongoHandlerCentral.connect(url, options);

@@ -5,7 +5,6 @@
     }
   },
   "compilerOptions": {
-    "outDir": "./ts/",
     "noImplicitAny": true,
     "module": "NodeNext",
     "target": "ES2022",

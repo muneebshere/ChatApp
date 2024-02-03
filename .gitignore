@@ -5,6 +5,7 @@
 **/public/*.ttf
 **/public/*.woff*
 **/.vscode/**
+**/*.js
 *.env
 *prv*
 *.jpeg
