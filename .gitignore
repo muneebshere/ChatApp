@@ -1,6 +1,6 @@
 **/node_modules/**
-/certificates/*
-!certificates/*.gitkeep
+**/certificates/*
+!**/certificates/*.gitkeep
 */public/*.js
 */public/*.ttf
 */public/*.woff*

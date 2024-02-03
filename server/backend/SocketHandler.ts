@@ -1,8 +1,8 @@
 import _ from "lodash";
 import { Socket } from "socket.io";
-import { SessionCrypto } from "../shared/sessionCrypto";
-import { Failure, ErrorStrings, Username, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, EncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Receipt, MessageIdentifier, ChatIdentifier, SessionIdentifier, HeaderIdentifier, Backup, SocketServerSideEventsKey, SocketServerRequestParameters, SocketServerRequestReturn, ServerMemo, X3DHKeysData, X3DHRequestsData, X3DHData, X3DHDataPartial, SignedEncryptedData, MutableChatData } from "../shared/commonTypes";
-import { allSettledResults, awaitCallback, failure, logError, typedEntries } from "../shared/commonFunctions";
+import { SessionCrypto } from "../../shared/sessionCrypto";
+import { Failure, ErrorStrings, Username, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, EncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Receipt, MessageIdentifier, ChatIdentifier, SessionIdentifier, HeaderIdentifier, Backup, SocketServerSideEventsKey, SocketServerRequestParameters, SocketServerRequestReturn, ServerMemo, X3DHKeysData, X3DHRequestsData, X3DHData, X3DHDataPartial, SignedEncryptedData, MutableChatData } from "../../shared/commonTypes";
+import { allSettledResults, awaitCallback, failure, logError, typedEntries } from "../../shared/commonFunctions";
 import MongoHandlerCentral, { ServerConfig } from "./MongoHandler";
 
 export type Notify = Readonly<{ type: "Message" | "Receipt", sessionId: string } | { type: "ServerMemo", serverMemos: ServerMemo[] } | { type: "Request" }>;

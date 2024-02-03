@@ -8,10 +8,10 @@ import express, { Request, Response, NextFunction, CookieOptions } from "express
 import cors, { CorsOptions } from "cors";
 import * as ipaddr from "ipaddr.js";
 import { Server as SocketServer, Socket } from "socket.io";
-import * as crypto from "../shared/cryptoOperator";
-import { serialize, deserialize } from "../shared/cryptoOperator";
-import { SignUpRequest, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, LogInSavedRequest, SavePasswordRequest } from "../shared/commonTypes";
-import { fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
+import * as crypto from "../../shared/cryptoOperator";
+import { serialize, deserialize } from "../../shared/cryptoOperator";
+import { SignUpRequest, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, LogInSavedRequest, SavePasswordRequest } from "../../shared/commonTypes";
+import { fromBase64, logError, randomFunctions } from "../../shared/commonFunctions";
 import MongoHandlerCentral, { ServerConfig } from "./MongoHandler";
 import AuthHandler from "./AuthHandler";
 import SocketHandler from "./SocketHandler";
@@ -50,13 +50,13 @@ export function parseIpReadable(ipRep: string) {
 }
 
 async function writeJsHash() {
-    const file = await fsPromises.readFile(`..\\client\\public\\main.js`, { flag: "r" });
+    const file = await fsPromises.readFile(`..\\..\\client\\public\\main.js`, { flag: "r" });
     latestJsHash = await crypto.digestToBase64("SHA-256", file);
 }
 
 async function watchForJsHashChange() {
     await writeJsHash();
-    const watcher = fsPromises.watch(`..\\client\\public\\main.js`);
+    const watcher = fsPromises.watch(`..\\..\\client\\public\\main.js`);
     for await (const { eventType } of watcher) {
         if (eventType === "change") {
             await writeJsHash();

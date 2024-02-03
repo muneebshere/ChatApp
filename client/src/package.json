@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "React Client for ChatApp",
   "scripts": {
-    "start": "node clientserver.js",
     "compile": "webpack-cli --config ./webpack.config.js",
     "watch": "webpack-cli --config ./webpack.config.js --watch --stats-error-details",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -23,7 +22,6 @@
     "axios": "^1.4.0",
     "beautiful-react-hooks": "^4.3.0",
     "emoji-picker-react": "^4.4.10",
-    "express": "^4.18.2",
     "is-online": "^10.0.0",
     "luxon": "^3.4.4",
     "mermaid": "^10.6.1",
