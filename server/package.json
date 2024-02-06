@@ -20,9 +20,9 @@
   "version": "1.0.0",
   "description": "End-to-end encrypted chatting full-stack MERN web application using socket.io",
   "scripts": {
-    "dev": "nodemon --exec \"ts-node\" ./Server.ts",
-    "start": "pm2 start ecosystem.config.js",
-    "compile": "npx tsc --target esnext --module nodenext Server.ts",
+    "start": "nodemon --exec \"ts-node\" ./Server.ts",
+    "compile": "npx tsc --target esnext --module nodenext --outDir ../compiled ./Server.ts && xcopy ..\\certificates\\ ..\\compiled\\certificates\\ /y /s && xcopy ..\\public\\ ..\\compiled\\public\\ /y /s && xcopy ..\\shared\\custom_modules\\ ..\\compiled\\shared\\custom_modules\\ /y /s && xcopy ..\\shared\\package.json ..\\compiled\\shared /y && xcopy ..\\server\\package.json ..\\compiled\\server /y && xcopy ..\\ecosystem.config.js ..\\compiled\\server\\ /y",
+    "pm2": "cd ../shared && npm install && cd ../server && npm install && pm2 start ecosystem.config.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Muneeb Shere",

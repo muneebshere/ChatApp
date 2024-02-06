@@ -5,8 +5,7 @@
 **/public/*.ttf
 **/public/*.woff*
 **/.vscode/**
-**/*.js
-!**/custom_modules/**/*.js
+**/compiled/**
 *.env
 *prv*
 *.jpeg
