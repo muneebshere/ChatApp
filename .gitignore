@@ -6,6 +6,7 @@
 **/public/*.woff*
 **/.vscode/**
 **/*.js
+!**/custom_modules/**/*.js
 *.env
 *prv*
 *.jpeg
