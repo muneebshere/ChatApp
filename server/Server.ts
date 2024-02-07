@@ -15,6 +15,7 @@ import { fromBase64, logError, randomFunctions } from "../shared/commonFunctions
 import MongoHandlerCentral, { ServerConfig } from "./MongoHandler";
 import AuthHandler from "./AuthHandler";
 import SocketHandler from "./SocketHandler";
+import path from "node:path";
 
 declare module "http" {
     interface IncomingMessage {
@@ -50,13 +51,13 @@ export function parseIpReadable(ipRep: string) {
 }
 
 async function writeJsHash() {
-    const file = await fsPromises.readFile(`..\\public\\main.js`, { flag: "r" });
+    const file = await fsPromises.readFile(path.resolve(`../public/main.js`), { flag: "r" });
     latestJsHash = await crypto.digestToBase64("SHA-256", file);
 }
 
 async function watchForJsHashChange() {
     await writeJsHash();
-    const watcher = fsPromises.watch(`..\\public\\main.js`);
+    const watcher = fsPromises.watch(path.resolve(`../public/main.js`));
     for await (const { eventType } of watcher) {
         if (eventType === "change") {
             await writeJsHash();
@@ -75,8 +76,8 @@ async function main() {
     const PORT = 443;
     const mongoUrl = "mongodb://localhost:27017/chatapp";
     const httpsOptions: ServerOptions = {
-        key: fs.readFileSync(`..\\certificates\\key.pem`),
-        cert: fs.readFileSync(`..\\certificates\\cert.pem`)
+        key: fs.readFileSync(path.resolve(`../certificates/key.pem`)),
+        cert: fs.readFileSync(path.resolve(`../certificates/cert.pem`))
     }
     const corsOptions: CorsOptions = { origin: /.*/, methods: ["GET", "POST", "DELETE"], exposedHeaders: ["set-cookie"], allowedHeaders: ["content-type"], credentials: true };
 
