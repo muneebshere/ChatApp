@@ -132,7 +132,7 @@ export default class AuthClient {
             const { clientEphemeralPublic, processAuthChallenge } = await esrp.clientSetupAuthProcess(passwordString);
             const [encryptionBaseDerive, encryptionBase] = await esrp.entanglePassword(passwordString);
             const encryptionBaseVector = await crypto.importRaw(encryptionBase);
-            const [x3dhManager, { x3dhIdentity, x3dhData }] = await X3DHManager.new(username, encryptionBaseVector);
+            const [x3dhManager, { firstKeys, x3dhIdentity, x3dhData }] = await X3DHManager.new(username, encryptionBaseVector);
             if (!x3dhManager) {
                 throw new Error("Failed to create user");
             }
@@ -156,7 +156,7 @@ export default class AuthClient {
             const sharedKeyBits = await crypto.importRaw(sharedKeyBitsBuffer);
             const serverIdentityVerifying = await crypto.deriveEncrypt({ serverIdentityVerifyingKey }, encryptionBaseVector, `${username} Server Identity Verifying Key`);
             const profileData = await x3dhManager.deriveSignEncrypt(profile, encryptionBaseVector, `${username} User Profile`);
-            const newUserData: NewUserData =  { userData: { encryptionBaseDerive, profileData, x3dhIdentity, x3dhData, serverIdentityVerifying }, verifierDerive, databaseAuthKeyDerive };
+            const newUserData: NewUserData =  { userData: { encryptionBaseDerive, profileData, x3dhIdentity, x3dhData, serverIdentityVerifying }, verifierDerive, databaseAuthKeyDerive, firstKeys };
             const newUserDataSigned = await x3dhManager.deriveSignEncrypt(newUserData, sharedKeyBits, `${username} New User Data`);
             const concludeSignUp: SignUpChallengeResponse = { clientConfirmationCode, newUserDataSigned, databaseAuthKeyBuffer };
             const resultConc: SignUpResponse | Failure = await this.post("concludeSignUp", concludeSignUp);

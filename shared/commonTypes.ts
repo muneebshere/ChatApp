@@ -276,8 +276,12 @@ export type UserData = Readonly<{
 
 export type NewUserData = Readonly<{ 
     userData: UserData;
-    verifierDerive: PasswordDeriveInfo,
+    verifierDerive: PasswordDeriveInfo;
     databaseAuthKeyDerive: PasswordEntangleInfo;
+    firstKeys: Readonly<{
+        preKey: [number, ExposedSignedPublicKey];
+        oneTimeKey: [string, ExposedSignedPublicKey];
+    }>
 }>;
 
 export type RequestKeyBundleResponse = {

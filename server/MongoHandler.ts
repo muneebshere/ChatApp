@@ -700,7 +700,7 @@ export default class MongoHandlerCentral {
 
     static async createNewUser(user: Username & NewAuthData & NewUserData, databaseAuthKey: CryptoKey, onFail: Promise<{ failed: boolean }>) {
         try {
-            const { username } = user;
+            const { username, firstKeys: { preKey, oneTimeKey } } = user;
             if ((await this.DatabaseAccessKey.find({ username, type: "root" })).length > 0) return false;
             const { publicIdentityVerifyingKey, publicDHIdentityKey } = user.publicIdentity;
             if (!(await crypto.verifyKey(publicDHIdentityKey, publicIdentityVerifyingKey))) return false;
@@ -717,6 +717,15 @@ export default class MongoHandlerCentral {
                 }
             });
             const newUser = new this.User(user);
+            newUser.keyData.preKey = { 
+                lastReplacedAt: Date.now(), 
+                version: preKey[0], 
+                publicPreKey: preKey[1]
+            };
+            newUser.keyData.oneTimeKeys.push({
+                oneTimeKeyIdentifier: oneTimeKey[0],
+                publicOneTimeKey: oneTimeKey[1]
+            });
             return (newUser === await newUser.save());
         }
         catch (err) {

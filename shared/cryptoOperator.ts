@@ -1,41 +1,18 @@
 import _ from "lodash";
 import { isBrowser, isNode, isWebWorker } from "./node_modules/browser-or-node";
-import BufferSerializer from "./custom_modules/buffer-serializer";
+import { Packr } from "msgpackr";
 import { EncryptedData, SignedEncryptedData, EncryptInfo, PasswordDeriveInfo, SignedKeyPair, ExposedSignedPublicKey, ExportedSigningKeyPair, ExportedSignedKeyPair } from "./commonTypes";
-import BufferWriter from "./custom_modules/buffer-serializer/types/buffer-writer";
-import BufferReader from "./custom_modules/buffer-serializer/types/buffer-reader";
 import { randomFunctions } from "./commonFunctions";
 
-export const serializer = new BufferSerializer();
-const serializeToB64 = (arg: any) => serialize(arg).toString("base64");
-const deserializeFromB64 = (str: string) => deserialize(Buffer.from(str, "base64"));
-const serializeMap = (map: Map<any, any>, bufferWriter: BufferWriter) => {
-    const entries = Array.from(map.entries())
-        .map(([k, v]) => ({ key: serializeToB64(k), value: serializeToB64(v) }))
-    serializer.toBufferInternal(serialize(entries), bufferWriter);
+const packr = new Packr();
+
+export const serialize = (obj: any) => {
+    const serialized = packr.pack(obj);
+    return Buffer.from(serialized.buffer, serialized.byteOffset, serialized.byteLength);
 }
-const deserializeMap = (bufferReader: BufferReader) => {
-    const entries: Array<[any, any]> = deserialize(serializer.fromBufferInternal(bufferReader)).map(({ key, value }: { key: any, value: any }) => ([deserializeFromB64(key), deserializeFromB64(value)]));
-    return new Map(entries);
-}
-serializer.register("Map", (value: any) => value instanceof Map, serializeMap, deserializeMap);
-serializer.register("undefined", 
-    (value: any) => typeof value === "undefined", 
-    (v: undefined, bufferWriter: BufferWriter) => serializer.toBufferInternal("$undefined$", bufferWriter), 
-    (bufferReader: BufferReader) => {
-        serializer.fromBufferInternal(bufferReader);
-        return undefined as any;
-    });
-export const serialize = (thing: any) => serializer.toBuffer(thing);
-export const deserialize = (buff: Buffer): any => {
-    if (!buff) return null;
-    try {
-        return serializer.fromBuffer(buff);
-    }
-    catch(err) {
-        return null;
-    }
-};
+
+export const deserialize = (bytes: Uint8Array) => packr.unpack(bytes) as any;
+
 export const { getRandomVector } = randomFunctions();
 const subtle = assignSubtle();
 

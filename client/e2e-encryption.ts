@@ -1,6 +1,6 @@
 import _ from "lodash";
 import * as crypto from "../shared/cryptoOperator";
-import { ExposedSignedPublicKey, SignedKeyPair, ExportedSignedKeyPair, ExportedSigningKeyPair, KeyBundle, MessageHeader, ChatRequestHeader, Profile, StoredMessage, PublicIdentity, KeyBundleId, IssueOneTimeKeysResponse, ReplacePreKeyResponse, ServerMemo, EncryptedData, SignedEncryptedData, X3DHData, X3DHKeysData, X3DHRequestsData, X3DHDataPartial } from "../shared/commonTypes";
+import { ExposedSignedPublicKey, SignedKeyPair, ExportedSignedKeyPair, ExportedSigningKeyPair, KeyBundle, MessageHeader, ChatRequestHeader, Profile, StoredMessage, PublicIdentity, KeyBundleId, IssueOneTimeKeysResponse, ReplacePreKeyResponse, ServerMemo, EncryptedData, SignedEncryptedData, X3DHData, X3DHKeysData, X3DHRequestsData, X3DHDataPartial, NewUserData } from "../shared/commonTypes";
 import { Queue } from "async-await-queue";
 import { fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
 import { SessionCrypto } from "../shared/sessionCrypto";
@@ -313,10 +313,11 @@ class X3DHKeys {
         this.#currentPreKeyVersion = currentPreKeyVersion;
     }
 
-    static async new(identity: X3DHIdentityInterface): Promise<[X3DHKeys, X3DHKeysData]> {
+    static async new(identity: X3DHIdentityInterface): Promise<[NewUserData["firstKeys"], X3DHKeys, X3DHKeysData]> {
         const x3dhKeys = new X3DHKeys(identity, new Map(), 0);
-        const x3dhKeysData = await x3dhKeys.exportData();
-        return [x3dhKeys, x3dhKeysData];
+        const { preKey } = await x3dhKeys.replacePreKey();
+        const { oneTimeKeys, x3dhKeysData } = await x3dhKeys.issueOneTimeKeys(1);
+        return [{ preKey, oneTimeKey: oneTimeKeys[0] }, x3dhKeys, x3dhKeysData];
     }
 
     static async import(encryptedKeys: EncryptedData, identity: X3DHIdentityInterface) : Promise<X3DHKeys> {
@@ -366,6 +367,8 @@ class X3DHKeys {
                 oneTimeKeys,
                 issuedBundles
             };
+            const serialized = crypto.serialize(exportedUser);
+            const deserialized = crypto.deserialize(serialized);
             return await this.#identity.x3dhEncrypt(exportedUser, `Export|Import ${username} X3DH Keys`);
         }
         catch (err) {
@@ -798,12 +801,12 @@ export class X3DHManager {
         this.publicIdentity = x3dhIdentity.publicIdentity;
     }
 
-    static async new(username: string, encryptionBaseVector: CryptoKey): Promise<[X3DHManager, { x3dhIdentity: EncryptedData, x3dhData: X3DHData }]> {
+    static async new(username: string, encryptionBaseVector: CryptoKey): Promise<[X3DHManager, { firstKeys: NewUserData["firstKeys"], x3dhIdentity: EncryptedData, x3dhData: X3DHData }]> {
         const [identity, x3dhIdentity] = await X3DHIdentity.new(username, encryptionBaseVector);
-        const [keys, x3dhKeysData] = await X3DHKeys.new(identity.interface);
+        const [firstKeys, keys, x3dhKeysData] = await X3DHKeys.new(identity.interface);
         const [requests, x3dhRequestsData] = await X3DHRequests.new(identity.interface, keys.interface);
         const manager = new X3DHManager(identity, keys, requests);
-        return [manager, { x3dhIdentity, x3dhData: { ...x3dhKeysData, ...x3dhRequestsData } }]
+        return [manager, { firstKeys, x3dhIdentity, x3dhData: { ...x3dhKeysData, ...x3dhRequestsData } }]
     }
 
     static async import(username: string, x3dhIdentity: EncryptedData, x3dhData: X3DHData, encryptionBaseVector: CryptoKey): Promise<X3DHManager> {
