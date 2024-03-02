@@ -66,7 +66,7 @@ export function NewChatPopup({ validate, escOnEnter, initialChatWith, returnUser
             <div style={{ display: "flex", alignContent: "center", justifyContent: "stretch" }}>
               <ControlledTextField
                 autoFocus
-                autoComplete="new-random"
+                autoComplete="username"
                 role="presentation"
                 variant="outlined"
                 highlightColor="#1f7a1f"

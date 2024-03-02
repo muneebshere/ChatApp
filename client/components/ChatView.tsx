@@ -560,7 +560,8 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
             paddingBottom: "8px",
             paddingInline: "2px" }}>
           <StyledScrollingTextarea
-            openKeyboardManual
+            inputMode="text"
+            inputModeManual
             autoFocus={true}
             ref={textareaRef}
             placeholder="Type a message"

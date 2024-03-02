@@ -138,6 +138,7 @@ export default function SignUpForm() {
           highlightColor="#1f7a1f"
           placeholder="Please choose a unique username" 
           type="text"
+          autoComplete="username"
           value={username}
           preventSpaces
           setValue={setUsername}

@@ -50,6 +50,8 @@ interface TextareaAutosizeProps
   endDecoratorStyle?: React.CSSProperties;
 
   openKeyboardManual?: boolean;
+
+  inputModeManual?: boolean;
 }
 
 type State = {
@@ -103,7 +105,7 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
   props: TextareaAutosizeProps,
   ref: ForwardedRef<Element>,
 ) {
-  const { onChange, onHeightUpdate, maxRows, minRows = 1, style, value, onSubmit, openKeyboardManual, tabbedOutside, onClick, ...other } = props;
+  const { onChange, onHeightUpdate, maxRows, minRows = 1, style, value, onSubmit, openKeyboardManual, tabbedOutside, onClick, inputModeManual, inputMode, ...other } = props;
 
   const virtualkeyboardpolicy = openKeyboardManual ? "manual" : "auto";
   const { current: isControlled } = useRef(value != null);
@@ -114,6 +116,7 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
   const [state, setState] = useState<State>({
     outerHeightStyle: 0,
   });
+  const [inputModeState, setInputModeState] = useState<typeof inputMode>(inputModeManual ? "none" : (inputMode || "text"));
 
   const getUpdatedState = useCallback(() => {
     const input = inputRef.current!;
@@ -305,12 +308,17 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
   }, [tabbedOutside]);
 
   const onClickKeyboard: React.MouseEventHandler<HTMLTextAreaElement> = 
-    openKeyboardManual
+    inputModeManual
       ? (e) => {
-        (navigator as any).virtualKeyboard?.show();
+        setInputModeState(inputMode || "text");
         onClick?.(e);
       }
-      : onClick;
+      : (openKeyboardManual
+          ? (e) => {
+            (navigator as any).virtualKeyboard?.show();
+            onClick?.(e);
+          }
+          : onClick);
 
   return (
     <React.Fragment>
@@ -319,6 +327,7 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
         onChange={handleChange}
         onKeyDown={handleSubmit}
         onKeyUp={handleKeyUp}
+        inputMode={inputModeState}
         virtualkeyboardpolicy={virtualkeyboardpolicy}
         onClick={onClickKeyboard}
         ref={handleRef}
