@@ -220,10 +220,7 @@ function ChatCard({ chat, isCurrent, setCurrent, setUnread }: ChatCardProps) {
   useEffect(() => setUnread(chat.otherUser, unreadMessages > 0), [unreadMessages]);
 
   return (<ListItemButton 
-    onClick={() => {
-      setCurrent();
-      chat.activate();
-    }} 
+    onClick={() => setCurrent()} 
     selected={isCurrent} 
     sx={{ borderRadius: "10px" }}
     variant={isCurrent ? "soft" : "plain"}

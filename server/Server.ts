@@ -89,7 +89,7 @@ async function main() {
     const cookieParserMiddle = cookieParser(cookieSign);
     const cookieOptions: CookieOptions = { httpOnly: true, secure: true, sameSite: "strict", signed: true };
     const app = express()
-                    .use(express.static("../public"))
+                    .use("/files", express.static(path.resolve("../public")))
                     .use(cors(corsOptions))
                     .use(cookieParserMiddle)
                     .use(express.json());
@@ -339,6 +339,10 @@ async function main() {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         if (!ipRep) return res.status(400).end();
         return res.clearCookie("authNonce").status(200).end();
+    });
+
+    app.get("/*", async (req, res) => {
+       res.status(200).sendFile(path.resolve("../public/index.html")); 
     });
     
     io.use((socket: Socket, next) => {

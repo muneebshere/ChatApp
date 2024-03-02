@@ -31,8 +31,11 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
   const giveBackFocus = useRef<() => void>(null);
   
   useEffect(() => {
-    const popStateListener = (event: PopStateEvent) => setCurrentChatWith(event.state?.currentChatWith);
+    const popStateListener = (event: PopStateEvent) => switchToChat(event.state?.currentChatWith);
     window.addEventListener("popstate", popStateListener);
+    const currentChatUrl = [...window.location.pathname.matchAll(/^\/chat\/([a-z][a-z0-9_]{2,14})$/g)][0]?.[1] || "";
+    if (switchToChat(currentChatUrl)) setState(currentChatUrl, true);
+    else setState("", true);
     client.subscribeChange(() => {
       setChats(client.chatsList);
       setProfile(client.profile);
@@ -40,9 +43,26 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
     return () => window.removeEventListener("popstate", popStateListener);
   }, []);
 
-  function openChat(chat: string) {
-    window.history.pushState({ currentChatWith: chat }, "", chat ? `#${chat}`: "");
-    setCurrentChatWith(chat);
+  function switchToChat(otherUser: string) {
+    const chat = client.getChatByUser(otherUser);
+    if (chat) {
+      setCurrentChatWith(otherUser);
+      chat.activate();
+    }
+    else setCurrentChatWith("");
+    return !!chat;
+  }
+
+  function setState(currentChatWith: string, replace = false) {
+    const url = currentChatWith ? `/chat/${currentChatWith}` : "/";
+    if (replace) window.history.replaceState({ currentChatWith }, "", url);
+    else window.history.pushState({ currentChatWith }, "", url);
+  }
+
+  function openChat(otherUser: string) {
+    if (otherUser === currentChatWith) return;
+    if (switchToChat(otherUser)) setState(otherUser);
+    else setState("");
   }
 
   function getView() {

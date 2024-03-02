@@ -27,9 +27,8 @@ type SavedSessionData = Readonly<{
     sessionRecordKey: Buffer, 
     userData: Omit<UserData, "encryptionBaseDerive">}>;
 
-const PORT = 443;
 const { hostname, protocol } = window.location;
-const baseURL = `${protocol}//${hostname}:${PORT}`;
+const baseURL = `${protocol}//${hostname}`;
 const axInstance = axios.create({ baseURL, maxRedirects: 0, timeout: 2000 });
 
 export type AuthConnectionStatus = Extract<ConnectionStatus, "Online" | "ClientOffline" | "ServerUnreachable">

@@ -37,7 +37,7 @@ createRoot(document.getElementById("root")).render(<Root/>);
 setupJsHashChecker();
 
 async function setupJsHashChecker() {
-  const response = await fetch("./main.js");
+  const response = await fetch("/files/main.js");
   const currentJsHash = await crypto.digestToBase64("SHA-256", await response.arrayBuffer());
   let changed = false;
   let interval: number = null;
@@ -124,13 +124,6 @@ function App() {
       return result;
     }
     client = result;
-    let currentChatWith = window.history.state?.currentChatWith || window.location.hash.slice(1);
-    if (!client.chatsList.find((c) => currentChatWith === c.otherUser)) {
-      currentChatWith = null;
-      window.location.hash = ""
-    }
-    window.history.replaceState({ currentChatWith }, "", currentChatWith ? `#${currentChatWith}` : "");
-    setCurrentChatWith(currentChatWith);
     client.subscribeStatus(setStatus);
     return { reason: false };
   }

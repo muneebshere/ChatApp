@@ -584,19 +584,17 @@ export default class Client {
         await Promise.all(_.map(chatsData, async (chatData) => this.instantiateChat(chatData, "")));
     }
 
-    private async loadReceivedRequests() {
-        const successes = await Promise.all(_.map(this.#x3dhManager.allPendingReceivedRequests, 
-            async (receivedRequest) => {
-                this.addChat(new ReceivedChatRequest(this.receivedChatRequestInterface, receivedRequest));
-        }));
-        return successes.every((s) => s);
+    private loadReceivedRequests() {
+        for (const receivedRequest of this.#x3dhManager.allPendingReceivedRequests) {
+            this.addChat(new ReceivedChatRequest(this.receivedChatRequestInterface, receivedRequest));
+        }
     }
 
     private async loadSentRequests() {
         const successes = await Promise.all(_.map(this.#x3dhManager.allPendingSentRequests, 
             async ({ sessionId, myAlias, otherAlias, messageId, timestamp, otherUser, text }) => {
-                if (!(await this.processSentRequest(sessionId, myAlias, otherAlias)))
-                    this.addChat(new SentChatRequest(otherUser, sessionId, messageId, timestamp, text ));
+                this.addChat(new SentChatRequest(otherUser, sessionId, messageId, timestamp, text ));
+                await this.processSentRequest(sessionId, myAlias, otherAlias);
         }));
         return successes.every((s) => s);
     }
@@ -620,7 +618,7 @@ export default class Client {
     }
 
     private async receiveSentRequestResponse(message: MessageHeader) {
-        const { sessionId, headerId, toAlias, fromAlias } = message;
+        const { sessionId, headerId, toAlias } = message;
         const sentRequest = this.chatSessionIdsList.get(sessionId);
         if (!sentRequest || sentRequest.type !== "SentRequest") {
             return false;
