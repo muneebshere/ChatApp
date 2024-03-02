@@ -373,4 +373,5 @@ async function main() {
     backendServer.listen(PORT, () => console.log(`listening on *:${PORT}`));
 }
 
+process.on("uncaughtException", (err, origin) => logError({ err, origin }));
 main();

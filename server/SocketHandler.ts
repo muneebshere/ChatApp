@@ -1,11 +1,21 @@
 import _ from "lodash";
 import { Socket } from "socket.io";
 import { SessionCrypto } from "../shared/sessionCrypto";
-import { Failure, ErrorStrings, Username, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, EncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Receipt, MessageIdentifier, ChatIdentifier, SessionIdentifier, HeaderIdentifier, Backup, SocketServerSideEventsKey, SocketServerRequestParameters, SocketServerRequestReturn, ServerMemo, X3DHKeysData, X3DHRequestsData, X3DHData, X3DHDataPartial, SignedEncryptedData, MutableChatData } from "../shared/commonTypes";
-import { allSettledResults, awaitCallback, failure, logError, typedEntries } from "../shared/commonFunctions";
+import { Failure, ErrorStrings, Username, RequestKeyBundleResponse, SocketClientSideEvents, ChatRequestHeader, EncryptedData, MessageHeader, StoredMessage, ChatData, SocketClientSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Receipt, MessageIdentifier, ChatIdentifier, SessionIdentifier, HeaderIdentifier, Backup, SocketServerSideEventsKey, SocketServerRequestParameters, SocketServerRequestReturn, ServerMemo, X3DHKeysData, X3DHData, X3DHDataPartial, SignedEncryptedData, MutableChatData, StatusTransmitData, DirectChannelRequest, PerspectiveSessionInfo } from "../shared/commonTypes";
+import { allSettledResults, failure, logError, typedEntries } from "../shared/commonFunctions";
 import MongoHandlerCentral, { ServerConfig } from "./MongoHandler";
 
-export type Notify = Readonly<{ type: "Message" | "Receipt", sessionId: string } | { type: "ServerMemo", serverMemos: ServerMemo[] } | { type: "Request" }>;
+export type Notify = Readonly<{ 
+    type: "Message" | "Receipt", 
+    sessionId: string } | {
+        type: "ServerMemo", 
+        serverMemos: ServerMemo[] 
+    } | {
+        type: "DirectHeader", 
+        header: MessageHeader 
+    } | { 
+        type: "Request" 
+    }>;
 
 type ResponseMap = Readonly<{
     [E in SocketClientSideEventsKey]: (arg: SocketClientRequestParameters[E]) => Promise<SocketClientRequestReturn[E] | Failure>
@@ -13,87 +23,89 @@ type ResponseMap = Readonly<{
 
 type EmitHandler = (data: string, respond: (recv: boolean) => void) => void;
 
-type RoomUser = [string, Socket, SessionCrypto];
+type ChannelUser = [string, Socket];
 
-async function createRoom([username1, socket1, sessionCrypto1]: RoomUser, [username2, socket2, sessionCrypto2]: RoomUser, messageTimeoutMs = 20000): Promise<() => void> {
+async function createDirectChannel(channelId: string, sessionId: string, [initiatorAlias, initiatorSocket]: ChannelUser, [acceptorAlias, acceptorSocket]: ChannelUser, messageTimeoutMs = 20000): Promise<() => void> {
 
-    function configureSocket(socketRecv: Socket, cryptoRecv: SessionCrypto, socketForw: Socket, cryptoForw: SessionCrypto, socketEvent: string) {
-        const decrypt = (data: string) => cryptoRecv.decryptVerifyFromBase64(data, socketEvent);
-        const encrypt = (data: any) => cryptoForw.signEncryptToBase64(data, socketEvent);
-        const repackage = async (data: string) => await encrypt(await decrypt(data))
-        const forward: EmitHandler =
-            messageTimeoutMs > 0
-                ? async (data, respond) => {
-                    const timeout = setTimeout(() => respond(false), messageTimeoutMs);
-                    socketForw.emit(socketEvent, await repackage(data), (response: boolean) => {
-                        clearTimeout(timeout);
-                        respond(response);
-                    });
-                }
-                : async (data, respond) => socketForw.emit(socketEvent, await repackage(data), respond);
-        socketRecv.on(socketEvent, forward);
-        return forward;
-    }
-
-    function constructRoom() {
-        const socket1Event = `${username1} -> ${username2}`;
-        const socket2Event = `${username2} -> ${username1}`;
-        const forward1 = configureSocket(socket1, sessionCrypto1, socket2, sessionCrypto2, socket1Event);
-        const forward2 = configureSocket(socket2, sessionCrypto2, socket1, sessionCrypto1, socket2Event);
-        const dispose = () => {
-            socket1?.emit(socket2Event, "room-disconnected");
-            socket2?.emit(socket1Event, "room-disconnected");
-            socket1?.off(socket1Event, forward1);
-            socket2?.off(socket2Event, forward2);
+    try {
+        const configureSocket = (socketRecv: Socket, socketForw: Socket, socketEvent: string) => {
+            const forward: EmitHandler =
+                messageTimeoutMs > 0
+                    ? async (data, respond) => {
+                        const timeout = setTimeout(() => respond(false), messageTimeoutMs);
+                        socketForw.emit(socketEvent, data, (response: boolean) => {
+                            clearTimeout(timeout);
+                            respond(response);
+                        });
+                    }
+                    : async (data, respond) => socketForw.emit(socketEvent, data, respond);
+            socketRecv.on(socketEvent, forward);
+            return forward;
         }
-        socket1.on("disconnect", dispose);
-        socket2.on("disconnect", dispose);
-        return dispose;
-    }
-
-    function awaitClientRoomReady(socket: Socket, otherUsername: string) {
-        return new Promise<boolean>((resolve) => {
-            const response = (withUser: string) => {
-                if (withUser === otherUsername) {
-                    socket.off(SocketServerSideEvents.ClientRoomReady, response);
-                    resolve(true);
+        const awaitClient = (socket: Socket) => {
+            return new Promise<string>(resolve => {
+                socket.once(`${channelId}-establishing`, (response: string) => resolve(response));
+                setTimeout(() => resolve(null), 2000);
+            });
+        }
+        const promptClient = (socketRecv: Socket, socketForw: Socket, message: string) => {
+            return new Promise<boolean>(resolve => {
+                socketRecv.emit(`${channelId}-establishing`, message, (response: string) => {
+                    if (response) socketForw.emit(`${channelId}-accepted`, response);
+                    resolve(!!response);
+                });
+                setTimeout(() => resolve(false), 1000);
+            });
+        }
+        console.log(`Attempting to establish channel between socket#${initiatorSocket.id} and socket#${acceptorSocket.id}.`);
+        const [initiatorEstablishing, acceptorEstablishing] = await allSettledResults([awaitClient(initiatorSocket), awaitClient(acceptorSocket)]);
+        if (initiatorEstablishing && acceptorEstablishing) {
+            console.log(`Socket#${initiatorSocket.id} and socket#${acceptorSocket.id}: both establishing connection.`);
+            const [initiatorAcceptedInit, acceptorAccepted] = await allSettledResults([promptClient(initiatorSocket, acceptorSocket, acceptorEstablishing), promptClient(acceptorSocket, initiatorSocket, initiatorEstablishing)]);
+            if (initiatorAcceptedInit && acceptorAccepted) {
+                console.log(`Socket#${initiatorSocket.id} and socket#${acceptorSocket.id}: both accepted connection.`);
+                const socketInitiatorEvent = `${sessionId}: ${initiatorAlias} -> ${acceptorAlias}`;
+                const socketAcceptorEvent = `${sessionId}: ${acceptorAlias} -> ${initiatorAlias}`;
+                const forward1 = configureSocket(initiatorSocket, acceptorSocket, socketInitiatorEvent);
+                const forward2 = configureSocket(acceptorSocket, initiatorSocket, socketAcceptorEvent);
+                const dispose = () => {
+                    initiatorSocket?.emit(socketAcceptorEvent, "channel-disconnected");
+                    acceptorSocket?.emit(socketInitiatorEvent, "channel-disconnected");
+                    initiatorSocket?.off(socketInitiatorEvent, forward1);
+                    acceptorSocket?.off(socketAcceptorEvent, forward2);
                 }
-            };
-            socket.on(SocketServerSideEvents.ClientRoomReady, response);
-            setTimeout(() => {
-                socket.off(SocketServerSideEvents.ClientRoomReady, response);
-                resolve(false);
-            }, 1000);
-        });
+                initiatorSocket.on("disconnect", dispose);
+                acceptorSocket.on("disconnect", dispose);
+                return dispose;
+            }
+        }
+        console.log("Couldn't establish channel");
+        console.log(`Initiator socket#${initiatorSocket.id} establishing: ${!!initiatorEstablishing}.\n`);
+        console.log(`Acceptor socket#${acceptorSocket.id} establishing: ${!!acceptorEstablishing}.\n`);
+        console.log(`Initiator socket#${initiatorSocket.id} accepted: ${!!initiatorEstablishing}.\n`);
+        console.log(`Acceptor socket#${acceptorSocket.id} accepted: ${!!acceptorEstablishing}.\n`);
+        return null;
     }
-
-    const established1 = awaitClientRoomReady(socket1, username2);
-    const established2 = awaitClientRoomReady(socket2, username1);
-
-    socket1.emit(SocketServerSideEvents.ServerRoomReady, username2);
-    socket2.emit(SocketServerSideEvents.ServerRoomReady, username1);
-
-    const [est1, est2] = await allSettledResults([established1, established2]);
-    if (est1 && est2) {
-        const dispose = constructRoom();
-        socket1.emit(username2, "confirmed");
-        socket2.emit(username1, "confirmed");
-        return dispose;
-    }
-    else {
+    catch(err) {
+        logError(err);
         return null;
     }
 }
 
-function halfCreateRoom(roomUser1: RoomUser, messageTimeoutMs = 20000) {
-    return (roomUser2: RoomUser) => createRoom(roomUser1, roomUser2, messageTimeoutMs);
+function initializeDirectChannel(channelId: string, sessionId: string, channelInitiator: ChannelUser, messageTimeoutMs = 20000) {
+    return (channelAcceptor: ChannelUser) => createDirectChannel(channelId, sessionId, channelInitiator, channelAcceptor, messageTimeoutMs);
 }
 
 export default class SocketHandler {
     static serverConfig: ServerConfig;
     private static socketHandlers = new Map<string, SocketHandler>();
     private static onlineUsers = new Map<string, { sessionReference: string, ipRep: string }>();
-
+    private static waitingChannels = new Map<string, & Readonly<{
+        sessionId: string,
+        initiatorAlias: string,
+        acceptorAlias: string,
+        halfChannel: ReturnType<typeof initializeDirectChannel>
+    }>>();
     private readonly responseMap: ResponseMap = {
         [SocketClientSideEvents.ClientLoaded]: this.OnClientLoad,
         [SocketClientSideEvents.UsernameExists]: this.UsernameExists,
@@ -123,16 +135,18 @@ export default class SocketHandler {
         [SocketClientSideEvents.SendReceipt]: this.SendReceipt,
         [SocketClientSideEvents.GetAllReceipts]: this.GetAllReceipts,
         [SocketClientSideEvents.ClearAllReceipts]: this.ClearAllReceipts,
-        [SocketClientSideEvents.RequestRoom]: this.RoomRequested
+        [SocketClientSideEvents.RequestDirectChannel]: this.RequestDirectChannel,
+        [SocketClientSideEvents.TransmitStatus]: this.TransmitStatus
     };
-    private readonly deleteSelf: () => void;
+    
     private interval: NodeJS.Timeout;
     #sessionCrypto: SessionCrypto;
     #socket: Socket;
     #mongoHandler: typeof MongoHandlerCentral.UserHandlerType;
-    #openToRoomTemp: Username;
     #username: string;
-    #disposeRooms: (() => void)[] = [];
+    readonly #deleteSelf: () => void;
+    readonly #disposeChannels: (() => void)[] = [];
+    readonly #notifyOffline = new Map<string, MessageHeader>();
 
     static get sessionReferences() {
         return Array.from(this.socketHandlers.keys());
@@ -166,7 +180,7 @@ export default class SocketHandler {
         this.#mongoHandler = mongoHandler;
         this.#sessionCrypto = sessionCrypto;
         this.#mongoHandler.subscribe(this.notify.bind(this));
-        this.deleteSelf = () => SocketHandler.socketHandlers.delete(sessionReference);
+        this.#deleteSelf = () => SocketHandler.socketHandlers.delete(sessionReference);
         SocketHandler.socketHandlers.set(sessionReference, this);
         SocketHandler.onlineUsers.set(username, { sessionReference, ipRep });
     }
@@ -180,7 +194,7 @@ export default class SocketHandler {
         clearInterval(this.interval);
         if (this.#socket) {
             console.log(`Disonnected: socket#${this.#socket.id} due to ${reason}.`);
-            this.#disposeRooms.forEach((disposeRoom) => disposeRoom());
+            this.#disposeChannels.forEach((disposeRoom) => disposeRoom());
             this.#socket.removeAllListeners();
             await this.request(SocketServerSideEvents.ServerDisconnecting, { reason }, 500);
             this.#socket?.disconnect(true);
@@ -199,16 +213,16 @@ export default class SocketHandler {
             socket.on(event, async (data: string, resolve) => await this.respond(event, data, responseBy, resolve));
         }
         socket.on("disconnect", async () => await this.deregisterSocket(""));
-        this.interval = setInterval(async () => {
+        /* this.interval = setInterval(async () => {
             const response = await this.request(SocketServerSideEvents.PollConnection, [], 9500);
             if (response?.reason !== false || response.details.alive !== "aliveHere") this.dispose("No response when polled.");
-        }, 5000)
+        }, 5000) */
         return true;
     }
 
     private async request<E extends SocketServerSideEventsKey>(event: E, data: SocketServerRequestParameters[E], timeout = 0): Promise<SocketServerRequestReturn[E] | Failure> {
         if (!this.#socket) return failure(ErrorStrings.NoConnectivity);
-        const { payload } = await awaitCallback<any>(async (resolve) => {
+        const { payload } = await new Promise<any>(async (resolve) => {
             this.#socket.emit(event, (await this.#sessionCrypto?.signEncryptToBase64({ payload: data }, event)),
                 async (response: string) => resolve((response && await this.#sessionCrypto?.decryptVerifyFromBase64(response, event)) || {}));
             if (timeout > 0) {
@@ -320,20 +334,39 @@ export default class SocketHandler {
         return { keyBundle };
     }
 
-    private async RoomRequested({ username }: Username): Promise<Failure> {
-        if (!this.#username || this.#username === username) return failure(ErrorStrings.InvalidRequest);
-        const otherSocketHandler = SocketHandler.socketHandlers.get(SocketHandler.onlineUsers.get(username)?.sessionReference);
-        if (!otherSocketHandler) return failure(ErrorStrings.ProcessFailed);
-        const response  = await otherSocketHandler.requestRoom(this.#username);
-        if (response?.reason === false) {
-            const halfRoom = halfCreateRoom([this.#username, this.#socket, this.#sessionCrypto]);
-            otherSocketHandler.establishRoom(this.#username, halfRoom).then((dispose) => {
-                if (dispose) {
-                    this.#disposeRooms.push(dispose);
-                }
-            });
+    private async RequestDirectChannel({ action, directChannelId, header }: DirectChannelRequest): Promise<Failure> {
+        if (!this.#username) return failure(ErrorStrings.InvalidRequest);
+        const { sessionId, fromAlias, toAlias } = header;
+        if (action === "requesting") {
+            console.log(`Socket#${this.#socket.id} requested direct channel.`);
+            const halfChannel: ReturnType<typeof initializeDirectChannel> = async (channelUser2) => {
+                const dispose = await initializeDirectChannel(directChannelId, sessionId, [fromAlias, this.#socket])(channelUser2);
+                if (dispose) this.#disposeChannels.push(dispose);
+                return dispose;
+            };
+            SocketHandler.waitingChannels.set(directChannelId, { sessionId, initiatorAlias: fromAlias, acceptorAlias: toAlias , halfChannel });
+            const success = this.#mongoHandler.sendDirectHeader(header);
+            if (success) setTimeout(() => SocketHandler.waitingChannels.delete(directChannelId), 2000);
+            else SocketHandler.waitingChannels.delete(directChannelId);
+            return success 
+                    ? { reason: false } 
+                    : failure(ErrorStrings.ProcessFailed);
         }
-        return response;
+        else if (action === "responding") {
+            console.log(`Socket#${this.#socket.id} responded to direct channel.`);
+            const waitingChannel = SocketHandler.waitingChannels.get(directChannelId);
+            SocketHandler.waitingChannels.delete(directChannelId);
+            if (!waitingChannel) return failure(ErrorStrings.ProcessFailed);
+            const { halfChannel, ...req } = waitingChannel;
+            if (req.sessionId !== sessionId || req.initiatorAlias !== toAlias || req.acceptorAlias !== fromAlias) return failure(ErrorStrings.InvalidRequest);
+            const success = this.#mongoHandler.sendDirectHeader(header);
+            if (success) {
+                halfChannel([fromAlias, this.#socket]).then(dispose => this.#disposeChannels.push(dispose));
+                return { reason: false };
+            }
+            else return  failure(ErrorStrings.ProcessFailed);
+        }
+        else return failure(ErrorStrings.InvalidRequest);
     }
 
     private async SendChatRequest(chatRequest: ChatRequestHeader): Promise<Failure> {
@@ -445,6 +478,13 @@ export default class SocketHandler {
         return { reason: false };
     }
 
+    private async TransmitStatus(status: StatusTransmitData): Promise<Failure> {
+        const { sessionId, toAlias, fromAlias, online, offline } = status;
+        if (!this.#mongoHandler.sendDirectHeader({ sessionId, toAlias, fromAlias, ...online })) return failure(ErrorStrings.ProcessFailed);
+        this.#notifyOffline.set(sessionId, { sessionId, toAlias, fromAlias, ...offline });
+        return { reason: false };
+    }
+
     private async GetAllReceipts({ toAlias, sessionId }: SessionIdentifier): Promise<Receipt[] | Failure> {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         return (await this.#mongoHandler.getAllReceipts(toAlias, sessionId)) || failure(ErrorStrings.ProcessFailed);
@@ -454,27 +494,6 @@ export default class SocketHandler {
         if (!this.#username) return failure(ErrorStrings.InvalidRequest);
         if (!(await this.#mongoHandler.clearAllReceipts(toAlias, sessionId))) return failure(ErrorStrings.ProcessFailed);
         return { reason: false };
-    }
-
-    private async requestRoom(username: string): Promise<Failure> {
-        if (!this.#username || this.#username === username) return failure(ErrorStrings.InvalidRequest);
-        const response: Failure = await this.request(SocketServerSideEvents.RoomRequested, { username }, 2000);
-        if (response?.reason === false) {
-            this.#openToRoomTemp = { username };
-            setTimeout(() => { this.#openToRoomTemp = null; }, 5000);
-        }
-        return response;
-    }
-
-    private async establishRoom(username: string, halfRoom: (roomUser2: RoomUser) => Promise<() => void>): Promise<(() => void)> 
-    {
-        if (!this.#openToRoomTemp || this.#openToRoomTemp.username !== username) return null;
-        return halfRoom([this.#username, this.#socket, this.#sessionCrypto]).then((dispose) => {
-            if (dispose) {
-                this.#disposeRooms.push(dispose);
-            }
-            return dispose;
-        });
     }
 
     private async notify(notify: Notify) {
@@ -487,6 +506,9 @@ export default class SocketHandler {
         else if (notify.type === "ServerMemo") {
             await this.request(SocketServerSideEvents.ServerMemoDeposited, _.pick(notify, "serverMemos"));
         }
+        else if (notify.type === "DirectHeader") {
+            await this.request(SocketServerSideEvents.DirectHeaderReceived, _.pick(notify, "header"));
+        }
         else {
             await this.request(SocketServerSideEvents.ReceiptReceived, _.pick(notify, "sessionId"));
         }
@@ -494,9 +516,13 @@ export default class SocketHandler {
 
     private async dispose(reason: string) {
         await this.deregisterSocket(reason);
+        await Promise.all(Array.from(this.#notifyOffline.entries()).map(([,header]) => this.#mongoHandler.sendDirectHeader(header)));
+        this.#notifyOffline.clear();
+        this.#disposeChannels.forEach((disposeChannel) => disposeChannel());
+        this.#disposeChannels.length = 0;
         this.#mongoHandler?.unsubscribe();
         SocketHandler.onlineUsers.delete(this.#username);
-        this.deleteSelf();
+        this.#deleteSelf();
         this.#sessionCrypto = null;
         this.#username = null;
         this.#mongoHandler = null;

@@ -1,6 +1,6 @@
 import _ from "lodash";
 import * as crypto from "../shared/cryptoOperator";
-import { ExposedSignedPublicKey, SignedKeyPair, ExportedSignedKeyPair, ExportedSigningKeyPair, KeyBundle, MessageHeader, ChatRequestHeader, Profile, StoredMessage, PublicIdentity, KeyBundleId, IssueOneTimeKeysResponse, ReplacePreKeyResponse, ServerMemo, EncryptedData, SignedEncryptedData, X3DHData, X3DHKeysData, X3DHRequestsData, X3DHDataPartial, NewUserData } from "../shared/commonTypes";
+import { ExposedSignedPublicKey, SignedKeyPair, ExportedSignedKeyPair, ExportedSigningKeyPair, KeyBundle, MessageHeader, ChatRequestHeader, Profile, StoredMessage, PublicIdentity, KeyBundleId, IssueOneTimeKeysResponse, ReplacePreKeyResponse, ServerMemo, EncryptedData, SignedEncryptedData, X3DHData, X3DHKeysData, X3DHRequestsData, X3DHDataPartial, NewUserData, DirectChannelRequest } from "../shared/commonTypes";
 import { Queue } from "async-await-queue";
 import { fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
 import { SessionCrypto } from "../shared/sessionCrypto";
@@ -25,9 +25,35 @@ type MessageEvent = Readonly<{
     event: "delivered" | "seen";
 } | {
     event: "typing" | "stopped-typing";
+} | {
+    event: "status-online";
+    responding: boolean;
+} | {
+    event: "status-offline";
+    responding: false
 }>;
 
-type MessageContent = MessageText | MessageEvent | { profile: Profile };
+type ProfileMessage = { 
+    readonly profile: Profile 
+};
+
+export type DirectChannelMessage = Readonly<{ 
+    action: "requesting" | "responding" | "establishing" | "accepted", 
+    directChannelId: string
+}>;
+
+export type RTCSessionMessage = Readonly<{
+    rtcSessionId: string,
+    role: "offer" | "answer";
+    sessionDescription: RTCSessionDescription;
+}>;
+
+type ICECandidateMessage = Readonly<{
+    rtcSessionId: string,
+    candidate: RTCIceCandidate
+}>;
+
+type MessageContent = MessageText | MessageEvent | ProfileMessage | DirectChannelMessage | RTCSessionMessage | ICECandidateMessage;
 
 type ReceivingMessage = MessageBody & MessageContent;
 

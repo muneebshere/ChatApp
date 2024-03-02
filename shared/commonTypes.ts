@@ -182,10 +182,10 @@ export type SessionIdentifier = Readonly<{
     toAlias: string
 }>;
 
-export type ChatSessionDetails = Readonly<{
-    sessionId: string;
-    myAlias: string;
-    otherAlias: string;
+export type PerspectiveSessionInfo = Readonly<{
+    sessionId: string,
+    myAlias: string,
+    otherAlias: string
 }>;
 
 export type Failure = Readonly<{
@@ -297,9 +297,15 @@ export type ReplacePreKeyResponse = Readonly<{
     x3dhKeysData: X3DHKeysData;
     preKey: [number, ExposedSignedPublicKey];
 }>
-
 export type RequestIssueNewKeysResponse = IssueOneTimeKeysResponse | ReplacePreKeyResponse;
 
+export type StatusTransmitData = Pick<MessageHeader, "sessionId" | "fromAlias" | "toAlias"> & { online: Omit<MessageHeader, "sessionId" | "fromAlias" | "toAlias">, offline: Omit<MessageHeader, "sessionId" | "fromAlias" | "toAlias"> };
+
+export type DirectChannelRequest = Readonly<{ 
+    action: "requesting" | "responding", 
+    directChannelId: string, 
+    header: MessageHeader 
+}>;
 
 enum SocketClientSideEventsEnum {
     ClientLoaded,
@@ -336,10 +342,11 @@ enum SocketClientSideEventsEnum {
     GetAllReceipts,
     ClearAllReceipts,
 
-    RequestRoom,
+    RequestDirectChannel,
+    TransmitStatus
 }
 
-export type SocketClientSideEventsKey = Exclude<keyof typeof SocketClientSideEventsEnum, number>
+export type SocketClientSideEventsKey = keyof typeof SocketClientSideEventsEnum;
 
 type SocketClientSideEventsMap = {
     [E in SocketClientSideEventsKey]: E
@@ -372,7 +379,7 @@ type SocketClientRequestParametersMap = {
     StoreMessage: StoredMessage,
     CreateChat: ChatData & { otherUser: string },
     UpdateChat: ChatIdentifier & Partial<MutableChatData>,
-    RegisterPendingSession: Readonly<{ sessionId: string, myAlias: string, otherAlias: string }>,
+    RegisterPendingSession: PerspectiveSessionInfo,
     SendChatRequest: ChatRequestHeader,
     SendMessage: MessageHeader,
     MessageHeaderProcessed: HeaderIdentifier & SessionIdentifier,
@@ -384,7 +391,8 @@ type SocketClientRequestParametersMap = {
     SendReceipt: Receipt,
     GetAllReceipts: SessionIdentifier,
     ClearAllReceipts: SessionIdentifier,
-    RequestRoom: Username,
+    RequestDirectChannel: DirectChannelRequest,
+    TransmitStatus: StatusTransmitData
 }
 
 export type SocketClientRequestParameters = {
@@ -420,7 +428,8 @@ type SocketClientRequestReturnMap = {
     SendReceipt: never,
     GetAllReceipts: Receipt[],
     ClearAllReceipts: never,
-    RequestRoom: never,
+    RequestDirectChannel: never,
+    TransmitStatus: never
 }
 
 export type SocketClientRequestReturn = {
@@ -434,13 +443,11 @@ enum SocketServerSideEventsEnum {
     MessageReceived,
     ChatRequestReceived,
     ReceiptReceived,
-    RoomRequested,
-    ClientRoomReady,
-    ServerRoomReady,
+    DirectHeaderReceived,
     ServerDisconnecting
 }
 
-export type SocketServerSideEventsKey = Exclude<keyof typeof SocketServerSideEventsEnum, number>
+export type SocketServerSideEventsKey = keyof typeof SocketServerSideEventsEnum;
 
 type SocketServerSideEventsMap = {
     [E in SocketServerSideEventsKey]: E
@@ -463,9 +470,7 @@ type SocketServerRequestParametersMap = {
     MessageReceived: { sessionId: string },
     ChatRequestReceived: {},
     ReceiptReceived: { sessionId: string },
-    RoomRequested: Username,
-    ClientRoomReady: string,
-    ServerRoomReady: string,
+    DirectHeaderReceived: { header: MessageHeader },
     ServerDisconnecting: { reason: string }
 }
 
@@ -480,16 +485,13 @@ type SocketServerRequestReturnMap = {
     MessageReceived: never,
     ChatRequestReceived: never,
     ReceiptReceived: never,
-    RoomRequested: Failure,
-    ClientRoomReady: never,
-    ServerRoomReady: never,
+    DirectHeaderReceived: never,
     ServerDisconnecting: {}
 }
 
 export type SocketServerRequestReturn = {
     [E in SocketServerSideEventsKey]: SocketServerRequestReturnMap[E];
 }
-
 
 export enum ErrorStrings {
     NoConnectivity = "NoConnectivity",
@@ -501,3 +503,7 @@ export enum ErrorStrings {
     IncorrectPassword = "IncorrectPassword",
     TooManyWrongTries = "TooManyWrongTries"
 }
+
+export type Writeable<T> = { 
+    -readonly [P in keyof T]: T[P] 
+};

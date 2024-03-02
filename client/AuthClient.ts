@@ -6,7 +6,7 @@ import { X3DHManager } from "./e2e-encryption";
 import * as crypto from "../shared/cryptoOperator";
 import { serialize, deserialize } from "../shared/cryptoOperator";
 import * as esrp from "../shared/ellipticSRP";
-import { awaitCallback, failure, fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
+import { failure, fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
 import { ErrorStrings, Failure, Username, SignUpRequest, NewUserData, Profile, SignUpChallengeResponse, LogInRequest, LogInChallengeResponse, SavePasswordRequest, SavePasswordResponse, SignUpChallenge, LogInResponse, LogInChallenge, LogInSavedRequest, LogInSavedResponse, LogInPermitted, SignUpResponse, EncryptedData, UserData  } from "../shared/commonTypes";
 import Client, { ConnectionStatus } from "./Client";
 
@@ -113,14 +113,12 @@ export default class AuthClient {
             return await this.verified;
         }
         this.issuedNonce = null;
-        this.verified = awaitCallback<boolean>(async (resolve) => {
+        return await (this.verified = new Promise(async (resolve) => {
             const response = await this.get(`/verifyAuthentication/${nonceId}/${authToken}/${sessionRecordKey}`);
             console.log(`Authentication verified: ${response?.data?.verified} for nonce id ${nonceId}`);
             resolve(response?.status === 200 ? response.data.confirmed : null);
-        });
-        const verified = await this.verified;
-        this.verified = null;
-        return verified;
+            this.verified = null;
+        }));
     }
 
     static async signUp(profile: Profile, password: string, savePassword: boolean): Promise<Client | Failure> {

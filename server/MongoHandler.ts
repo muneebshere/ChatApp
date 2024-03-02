@@ -1,9 +1,9 @@
-import _, { isError } from "lodash";
+import _ from "lodash";
 import { Buffer } from "node:buffer";
 import { Binary } from "mongodb";
 import * as mongoose from "mongoose";
 import { Schema } from "mongoose";
-import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, StoredMessage, NewUserData, EncryptedData, Receipt, Backup, ChatSessionDetails, Username, NewAuthData, KeyBundleId, ExposedSignedPublicKey, PasswordDeriveInfo, PasswordEntangleInfo, PublicIdentity, UserData, SignedEncryptedData, RequestIssueNewKeysResponse, ServerMemo, X3DHKeysData, X3DHRequestsData, X3DHData, X3DHDataPartial, ChatIdentifier, MutableChatData } from "../shared/commonTypes";
+import { ChatData, KeyBundle, MessageHeader, ChatRequestHeader, StoredMessage, NewUserData, EncryptedData, Receipt, Backup, Username, NewAuthData, KeyBundleId, ExposedSignedPublicKey, PasswordDeriveInfo, PasswordEntangleInfo, PublicIdentity, SignedEncryptedData, RequestIssueNewKeysResponse, ServerMemo, X3DHKeysData, X3DHData, X3DHDataPartial, ChatIdentifier, MutableChatData, PerspectiveSessionInfo } from "../shared/commonTypes";
 import * as crypto from "../shared/cryptoOperator";
 import { defaultServerConfig, parseIpReadable } from "./Server";
 import { Notify } from "./SocketHandler";
@@ -139,8 +139,7 @@ type User = {
 type AccessKey = {
     readonly accessId: string;
 };
-
-type ChatSessionAccessKey = AccessKey & ChatSessionDetails
+type ChatSessionAccessKey = AccessKey & PerspectiveSessionInfo
 
 type KeyBundleAccessKey = AccessKey & KeyBundle;
 
@@ -1334,6 +1333,16 @@ export default class MongoHandlerCentral {
                 logError(err);
                 return false;
             }
+        }
+
+        sendDirectHeader(header: MessageHeader): boolean {
+            const { toAlias, fromAlias, sessionId } = header;
+            const sessionMatchError = this.getSessionMatchError({ sessionId, myAlias: fromAlias, otherAlias: toAlias });
+            if (sessionMatchError) return false;
+            const notify = MongoHandlerCentral.sessionHooks.get(`${sessionId}@${toAlias}`);
+            if (!notify) return false;
+            notify({ type: "DirectHeader", header });
+            return true;
         }
 
         subscribe(notify: typeof this.notify) {

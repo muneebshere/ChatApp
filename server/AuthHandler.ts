@@ -2,7 +2,7 @@ import _ from "lodash";
 import { Buffer } from "node:buffer";
 import * as crypto from "../shared/cryptoOperator";
 import { Failure, ErrorStrings, Username, SignUpRequest, SignUpChallenge, SignUpChallengeResponse, NewUserData, LogInRequest, LogInChallenge, UserData, LogInChallengeResponse, LogInSavedRequest, SavePasswordRequest, LogInResponse, LogInSavedResponse, SavePasswordResponse, LogInPermitted, SignUpResponse, PublicIdentity } from "../shared/commonTypes";
-import { awaitCallback, failure, logError } from "../shared/commonFunctions";
+import { failure, logError } from "../shared/commonFunctions";
 import MongoHandlerCentral from "./MongoHandler";
 import * as esrp from "../shared/ellipticSRP";
 import SocketHandler from "./SocketHandler";

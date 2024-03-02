@@ -1,12 +1,10 @@
 import _ from "lodash";
-import { Socket } from "socket.io-client";
-import { SessionCrypto } from "../shared/sessionCrypto";
-import { ChattingSession, SendingMessage, ViewReceivedRequest } from "./e2e-encryption";
+import { ChattingSession, DirectChannelMessage, SendingMessage, ViewReceivedRequest } from "./e2e-encryption";
 import * as crypto from "../shared/cryptoOperator";
-import { MessageHeader, ChatRequestHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, SocketServerSideEvents, DeliveryInfo, Receipt, Backup, Profile  } from "../shared/commonTypes";
+import { MessageHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, DeliveryInfo, Receipt, Backup, Profile, PerspectiveSessionInfo  } from "../shared/commonTypes";
 import { DateTime } from "luxon";
-import { allSettledResults, awaitCallback, logError, randomFunctions } from "../shared/commonFunctions";
-import { ClientChatInterface, ClientReceivedChatRequestInterface } from "./Client";
+import { allSettledResults, logError, randomFunctions, splitPromise } from "../shared/commonFunctions";
+import { ClientChatInterface, ClientReceivedChatRequestInterface, DirectChannelMethods } from "./Client";
 import { noProfilePictureImage } from "./imageUtilities";
 
 const { getRandomString } = randomFunctions();
@@ -37,7 +35,7 @@ export abstract class AbstractChat {
     abstract get lastActive(): number;
     abstract subscribeActivity(notifyActivity: () => void): void;
     abstract unsubscribeActivity(): void;
-
+    abstract activate(): void;
     matchesName(search: string) {
         const searchLowerCase = search.toLowerCase();
         const { otherUser, displayName, contactName } = this.details;
@@ -54,7 +52,6 @@ export class SentChatRequest extends AbstractChat {
     readonly lastActive: number;
     readonly type = "SentRequest";
     readonly details: ChatDetails;
-
     constructor(otherUser: string, sessionId: string, messageId: string, timestamp: number, text: string) {
         super();
         this.otherUser = otherUser;
@@ -78,12 +75,11 @@ export class SentChatRequest extends AbstractChat {
         const unreadMessages = 0
         this.details = { otherUser, displayName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages, draft: null };
     }
-
     subscribeActivity() {
     }
-
     unsubscribeActivity() { 
     }
+    activate(): void {}
 }
 
 export class ReceivedChatRequest extends AbstractChat {
@@ -98,13 +94,11 @@ export class ReceivedChatRequest extends AbstractChat {
     private readonly isOtherTyping = false;
     private unreadMessages = 1;
     private notifyActivity: () => void;
-
     get details(): ChatDetails {
         const { otherUser, contactDetails: { displayName, profilePicture, contactName }, isOnline, isOtherTyping, unreadMessages } = this;
         const lastActivity = this.chatMessage.displayMessage;
         return { otherUser, displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages, draft: null };
     }
-
     constructor(clientInterface: ClientReceivedChatRequestInterface, viewRequest: ViewReceivedRequest) {
         super();
         const { text, messageId, sessionId, timestamp, profile: { username: otherUser, ...contactDetails } } = viewRequest;
@@ -115,7 +109,6 @@ export class ReceivedChatRequest extends AbstractChat {
         this.chatMessage = ChatMessage.new({ messageId, text, timestamp, sentByMe: false }, true)[0];
         this.clientInterface = clientInterface;
     }
-
     async rejectRequest() {
         return await this.clientInterface.rejectReceivedRequest(this.sessionId);
     }
@@ -123,19 +116,17 @@ export class ReceivedChatRequest extends AbstractChat {
     async respondToRequest(respondingAt: number) {
         return await this.clientInterface.acceptReceivedRequest(this.sessionId, respondingAt);
     }
-
     markVisited() {
         this.unreadMessages = 0;
         this.notifyActivity?.();
     }
-
     subscribeActivity(notifyActivity: () => void) {
         this.notifyActivity = notifyActivity;
     }
-
     unsubscribeActivity() {
         this.notifyActivity = null;
     }
+    activate(): void {}
 }
 
 export class Chat extends AbstractChat {
@@ -146,8 +137,23 @@ export class Chat extends AbstractChat {
     readonly otherUser: string;
     readonly myAlias: string;
     readonly otherAlias: string;
+    private directChannelStatus: {
+        readonly status: "disconnected" | "established"
+    } | ({ 
+            readonly directChannelId: string; 
+        } & (Readonly<{
+            status: "requested"
+        }> | Readonly<{
+            status: "responded",
+            sendAccepted: (send: boolean) => void
+        }> | Readonly<{
+            status: "establishing",
+            verifyAccepted: (verified: boolean) => void
+    }>)) = { status: "disconnected" };
+    private directChannel: DirectChannelMethods = null;
     private disposed = false;
     private isLoading = false;
+    private isOnline = false;
     private loadedUpto: number;
     private lastActivity: DisplayMessage;
     private otherTyping: boolean;
@@ -168,8 +174,6 @@ export class Chat extends AbstractChat {
     private readonly clientInterface: ClientChatInterface;
     readonly #chattingSession: ChattingSession;
     readonly #encryptionBaseVector: CryptoKey;
-    #sessionCrypto: SessionCrypto;
-    #socket: Socket;
 
     private constructor(chatId: string, timeRatio: number, recipientDetails: Contact, encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, chattingSession: ChattingSession) {
         super();
@@ -191,7 +195,7 @@ export class Chat extends AbstractChat {
         this.#encryptionBaseVector = encryptionBaseVector;
     }
 
-    static async instantiate(chatData: ChatData, encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, firstMessage?: FirstMessage) {
+    static async instantiate(chatData: ChatData, encryptionBaseVector: CryptoKey, clientInterface: ClientChatInterface, firstMessage?: FirstMessage): Promise<[Chat, (header: MessageHeader) => Promise<void>]> {
         const { chatId, timeRatioRecord, contactDetailsRecord, exportedChattingSession } = chatData;
         const { timeRatio }: { timeRatio: number } = await crypto.deriveDecrypt(timeRatioRecord, encryptionBaseVector, `${chatId} Time Ratio`);
         const { contactDetails }: { contactDetails: Contact } = await crypto.deriveDecrypt(contactDetailsRecord, encryptionBaseVector, `${chatId} Contact Details`);
@@ -202,11 +206,134 @@ export class Chat extends AbstractChat {
             const delivery = { delivered: respondedAt, seen: respondedAt };
             await chat.encryptStoreMessage({ messageId, text, timestamp, sentByMe, delivery });
         }
+        // chat.transmitStatus(false);
         chat.loadNext().then(() => chat.checkNew());
-        return chat;
+        return [chat, async (header) => { chat.processMessageHeader(header, false) }];
     }
 
-    private get hasRoom() { return !!this.#sessionCrypto; }
+    private async createDirectChannelHeader(action: "requesting"): Promise<[string, MessageHeader]>;
+    private async createDirectChannelHeader(action: "responding" | "establishing" | "accepted", directChannelId: string): Promise<MessageHeader>;
+    private async createDirectChannelHeader(action: "requesting" | "responding" | "establishing" | "accepted", directChannelId?: string): Promise<MessageHeader | [string, MessageHeader]> {
+        const requesting = action === "requesting";
+        const messageId = `f${getRandomString(14, "hex")}`;
+        const timestamp = Date.now();
+        if (requesting) directChannelId = getRandomString(20, "hex");
+        const header = await this.createHeader({ messageId, timestamp, directChannelId, action });
+        return requesting ? [directChannelId, header] : header;
+    }
+
+    private async initiateCreateDirectChannel({ directChannelId, sessionId, myAlias, otherAlias }: Omit<DirectChannelMessage, "action"> & PerspectiveSessionInfo, reset: () => void) {
+        const [resolveAccepted, canReturnAccepted] = splitPromise<boolean>();
+        const [resolveVerified, canReturnVerified] = splitPromise<boolean>();
+        const terminate = (): null => {
+            reset();
+            resolveAccepted(false);
+            resolveVerified(false);
+            return null;
+        }
+        const establishingHeader = await this.createDirectChannelHeader("establishing", directChannelId);
+        if (!establishingHeader) return terminate();
+        this.directChannelStatus = { directChannelId, status: "responded", sendAccepted: resolveAccepted };
+        return await this.clientInterface.establishDirectChannel({ 
+            info: { 
+                directChannelId, 
+                sessionId, 
+                myAlias, 
+                otherAlias }, 
+            establishingHeader,
+            getAcceptedHeader: async (establishing) => {
+                if ((await this.processMessageHeader(establishing, false))?.bounced) return terminate();
+                const acceptedHeader = await this.createDirectChannelHeader("accepted", directChannelId);
+                if (!acceptedHeader) return terminate();
+                console.log("Sending accepted header.");
+                if (await canReturnAccepted) {
+                    this.directChannelStatus = { directChannelId, status: "establishing", verifyAccepted: resolveVerified };
+                    return acceptedHeader;
+                }
+                else return terminate();
+            },
+            verifyAcceptedHeader: async (accepted) => {
+                if ((await this.processMessageHeader(accepted, false))?.bounced) return terminate();
+                console.log(`Accepted header ${(await canReturnVerified) ? "verified" : "rejected"}.`);
+                if (await canReturnVerified) return true;
+                else return terminate();
+            },
+            onMessageReceived: async (message) => {
+                console.log(`Message received through direct channel`);
+                return this.processMessageHeader(message, true);
+            },
+            onDisconnected: () => this.disconnectChannel()
+        });
+
+    }
+
+    private async establishDirectChannel(request?: DirectChannelMessage & PerspectiveSessionInfo) {
+        const reset = () => {
+            console.log("Resetting direct channel status.");
+            if (this.directChannelStatus.status !== "established") {
+                this.directChannelStatus = { status: "disconnected" };
+                this.directChannel = null;
+            }
+        }
+        if (!request) {
+            if (this.directChannelStatus.status !== "disconnected") return reset();
+            console.log("Requesting direct channel.");
+            const [directChannelId, header] = (await this.createDirectChannelHeader("requesting")) || [];
+            if (!header) return reset();
+            const result = await this.clientInterface.RequestDirectChannel({ action: "requesting", directChannelId, header });
+            if (result?.reason === false) this.directChannelStatus = { status: "requested", directChannelId };
+            else {
+                logError(result);
+                reset();
+            }
+        }
+        else {
+            const { action, directChannelId, sessionId, myAlias, otherAlias } = request;
+            if (!action || !directChannelId) return reset();
+            const respond = async () => {
+                const directChannel = await this.initiateCreateDirectChannel({ directChannelId, sessionId, myAlias, otherAlias }, reset);
+                if (!directChannel) return reset();
+                this.directChannel = directChannel;
+                this.directChannelStatus = { status: "established" };
+            }
+            if (this.directChannelStatus.status === "disconnected") {
+                if (action !== "requesting") return reset();
+                console.log("Direct channel requested.");
+                const header = await this.createDirectChannelHeader("responding", directChannelId);
+                if (!header) return reset();
+                const result = await this.clientInterface.RequestDirectChannel({ action: "responding", directChannelId, header });
+                if (result?.reason !== false) {
+                    logError(result);
+                    reset();
+                }
+                else await respond();
+            }
+            else if (this.directChannelStatus.status === "requested") {
+                console.log("Direct channel response received.");
+                action === "responding" && this.directChannelStatus.directChannelId === directChannelId
+                    ? await respond()
+                    : reset();
+            }
+            else if (this.directChannelStatus.status === "responded") {
+                const { sendAccepted } = this.directChannelStatus;
+                if (action === "establishing" && this.directChannelStatus.directChannelId === directChannelId) sendAccepted(true);
+                else {
+                    sendAccepted(false);
+                    reset();
+                }
+            }
+            else if (this.directChannelStatus.status === "establishing") {
+                const { verifyAccepted } = this.directChannelStatus;
+                if (action === "accepted" && this.directChannelStatus.directChannelId === directChannelId) verifyAccepted(true);
+                else {
+                    verifyAccepted(false);
+                    reset();
+                }
+                
+            }
+            else if (this.directChannelStatus.status === "established") return;
+        }
+    }
 
     set lastDraft(value: string) {
         this.draft = value;
@@ -218,8 +345,7 @@ export class Chat extends AbstractChat {
     get lastActive() { return this.lastActivity?.timestamp || Date.now(); }
 
     get details(): ChatDetails {
-        const { otherUser, contactDetails: { displayName, profilePicture, contactName }, lastActivity, otherTyping: isOtherTyping, draft } = this;
-        const isOnline = this.hasRoom;
+        const { otherUser, contactDetails: { displayName, profilePicture, contactName }, lastActivity, otherTyping: isOtherTyping, draft, isOnline } = this;
         const unreadMessages = this.unreadMessagesSet.size;
         return { otherUser, displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages, draft };
     }
@@ -236,6 +362,9 @@ export class Chat extends AbstractChat {
 
     hasMessage(messageId: string) {
         return this.messagesList.has(messageId);
+    }
+    private get hasDirectChannel() {
+        return this.directChannel && this.directChannelStatus?.status === "established";
     }
 
     private set isOtherTyping(value: boolean) {
@@ -254,6 +383,8 @@ export class Chat extends AbstractChat {
 
     markRendered() { this.rendered = true }
 
+    activate() { this.establishDirectChannel() }
+
     subscribe(notifyAdded: (event: ChatEvent) => void) {
         this.notify = notifyAdded;
     }
@@ -270,36 +401,10 @@ export class Chat extends AbstractChat {
         this.notifyActivity = null;
     }
 
-    disconnectRoom() {
-        this.#socket?.off(this.receivingEvent);
-        this.#socket = null;
-        this.#sessionCrypto = null;
-        this.notify?.("details-change");
-        this.notifyActivity?.();
-        this.clientInterface.notifyClient(this);
-    }
-
-    async establishRoom(sessionCrypto: SessionCrypto, socket: Socket) {
-        if (this.disposed) {
-            return false;
-        }
-        const confirmed = await new Promise((resolve) => {
-            socket.once(this.otherUser, (confirmation: string) => resolve(confirmation === "confirmed"));
-            socket?.emit(SocketServerSideEvents.ClientRoomReady, this.otherUser);
-            window.setTimeout(() => resolve(false), 1000);
-        })
-        if (!confirmed) {
-            socket.off(this.otherUser);
-            return false;
-        }
-        this.#sessionCrypto = sessionCrypto;
-        this.#socket = socket;
-        this.#socket.on(this.receivingEvent, this.receiveMessage.bind(this));
-        this.#socket.on("disconnect", () => {
-            this.disconnectRoom();
-        })
-        this.notifyActivity?.();
-        this.notify?.("details-change");
+    disconnectChannel() {
+        this.directChannel?.disconnect();
+        this.directChannel = null;
+        this.directChannelStatus = { status: "disconnected" };
     }
 
     async sendProfile(profile: Profile) {
@@ -308,8 +413,7 @@ export class Chat extends AbstractChat {
         }
         const timestamp = Date.now();
         const messageId = `f${getRandomString(14, "hex")}`;
-        const sendingMessage: SendingMessage = { messageId, timestamp, profile };
-        return !!(await this.dispatchSendingMessage(sendingMessage, true));
+        return !!(await this.dispatchSendingMessage({ messageId, timestamp, profile }, "AnyChannel"));
     }
 
     async sendMessage(messageContent: MessageContent) {
@@ -333,7 +437,7 @@ export class Chat extends AbstractChat {
             delivery: null
         };
         this.addMessagesToList([displayMessage]);
-        const result = await this.dispatchSendingMessage(sendingMessage, true);
+        const result = await this.dispatchSendingMessage(sendingMessage, "AnyChannel");
         if (!result) return false;
         await this.encryptStoreMessage(displayMessage);
         const chatMessage = this.messagesList.get(messageId);
@@ -355,49 +459,65 @@ export class Chat extends AbstractChat {
         if (this.disposed) {
             return false;
         }
-        const sendWithoutRoom = event === "delivered" || event === "seen";
-        if (sendWithoutRoom) this.encryptStoreMessage(this.messagesList.get(reportingAbout).displayMessage);
-        if (!sendWithoutRoom && !this.hasRoom) return false;
-        if (event === "seen" && this.unreadMessagesSet.has(reportingAbout)) {
-            this.unreadMessagesSet.delete(reportingAbout);
-            this.notifyActivity?.();  
-        }
         const messageId = `f${getRandomString(14, "hex")}`;
-        const sendingMessage: SendingMessage =
-            event === "delivered" || event === "seen"
-                ? { messageId, timestamp, event, reportingAbout }
-                : { messageId, timestamp, event };
-        const result = await this.dispatchSendingMessage(sendingMessage, sendWithoutRoom);
-        if (!result) return false;
-        return true;
+        if (event === "typing" || event === "stopped-typing") {
+            if (!this.hasDirectChannel) return false;
+            return !!(await this.dispatchSendingMessage({ messageId, timestamp, event }, "DirectChannelOnly"));
+        }
+        else {
+            if (event === "seen" && this.unreadMessagesSet.has(reportingAbout)) {
+                this.unreadMessagesSet.delete(reportingAbout);
+                this.notifyActivity?.();  
+            }
+            this.encryptStoreMessage(this.messagesList.get(reportingAbout).displayMessage); 
+            return !!(await this.dispatchSendingMessage({ messageId, timestamp, event, reportingAbout }, "AnyChannel"));
+        }
     }
 
-    private async dispatchSendingMessage(sendingMessage: SendingMessage, sendWithoutRoom: boolean): Promise<{ acknowledged: boolean }> {
-        if (!this.clientInterface.isConnected) return null;
+    private async transmitStatus(responding: boolean) {
+        if (!this.clientInterface.isConnected) return;
+        const onlineHeader = await this.createHeader({ messageId: `f${getRandomString(14, "hex")}`, timestamp: Date.now(), event: "status-online", responding });
+        if (!onlineHeader) return;
+        const { sessionId, fromAlias, toAlias, ...online } = onlineHeader;
+        const offlineHeader = await this.createHeader({ messageId: `f${getRandomString(14, "hex")}`, timestamp: Date.now(), event: "status-offline", responding: false });
+        if (!offlineHeader) return;
+        const { sessionId: s, fromAlias: f, toAlias: t, ...offline } = onlineHeader;
+        await this.clientInterface.TransmitStatus({ sessionId, fromAlias, toAlias, online, offline });
+    }
+
+    private async createHeader(sendingMessage: SendingMessage): Promise<MessageHeader> {
         const messageHeader = await this.#chattingSession.sendMessage(sendingMessage, async (exportedChattingSession) => {
             const result = await this.clientInterface.UpdateChat({ chatId: this.chatId, exportedChattingSession });
             return result?.reason === false;
         });
-        if (messageHeader === "Could Not Save") {
-            logError(messageHeader);
-            return null;
-        }
+        if (messageHeader !== "Could Not Save") return messageHeader;
+        logError(messageHeader);
+        return null;
+    }
+
+    private async dispatchSendingMessage(sendingMessage: SendingMessage, channelType: "DirectChannelOnly" | "WithoutDirectChannel" | "AnyChannel"): Promise<{ acknowledged: boolean }> {
+        if (!this.clientInterface.isConnected) return null;
+        if (!this.hasDirectChannel && this.isOnline) this.establishDirectChannel();
+        const messageHeader = await this.createHeader(sendingMessage);
+        if (!messageHeader) return null;
         const { sessionId, headerId } = messageHeader;
-        if (this.hasRoom) {
+        if (this.hasDirectChannel && channelType !== "WithoutDirectChannel") {
             const response = await this.dispatch(messageHeader);
             if (response) {
                 const { signature, bounced } = response;
-                if (!(await this.#chattingSession.verifyReceipt(headerId, signature, bounced)) || bounced) {
+                if (bounced || !(await this.#chattingSession.verifyReceipt(headerId, signature, bounced))) {
                     console.log("Resending.");
-                    return this.dispatchSendingMessage(sendingMessage, sendWithoutRoom);
+                    return this.dispatchSendingMessage(sendingMessage, channelType);
                 }
                 else return { acknowledged: true };
             }
         }
-        if (sendWithoutRoom) {
+        if (channelType !== "DirectChannelOnly") {
             const content = await crypto.deriveEncrypt(sendingMessage, this.#encryptionBaseVector, this.sessionId);
-            const backup: Backup = { byAlias: this.myAlias, sessionId, headerId, content };
-            await this.clientInterface.StoreBackup(backup);
+            if (channelType !== "WithoutDirectChannel") {
+                const backup: Backup = { byAlias: this.myAlias, sessionId, headerId, content };
+                await this.clientInterface.StoreBackup(backup);
+            }
             await this.clientInterface.SendMessage(messageHeader);
             return { acknowledged: false };
         }
@@ -513,34 +633,10 @@ export class Chat extends AbstractChat {
     }
 
     private async dispatch(messageHeader: MessageHeader) {
-        return await awaitCallback<{ signature: string, bounced: boolean }>(async (resolve) => {
-            if (!this.#socket) resolve(null);
-            else this.#socket.emit(this.sendingEvent, await this.#sessionCrypto.signEncryptToBase64(messageHeader, this.sendingEvent), (response: { signature: string, bounced: boolean }) => resolve(response));
-        }, 1000);
-    }
-
-    private async receiveMessage(data: string, ack: (response: { signature: string, bounced: boolean }) => void) {
-        if (!data) {
-            ack(null);
-            return;
-        }
-        if (data === "room-disconnected") {
-            this.disconnectRoom();
-            return;
-        }
-        try {
-            const decryptedData: MessageHeader = await this.#sessionCrypto.decryptVerifyFromBase64(data, this.receivingEvent);
-            if (!decryptedData) {
-                ack(null);
-            }
-            else {
-                ack(await this.processMessageHeader(decryptedData, true));
-            }
-        }
-        catch (e: any) {
-            logError(e);
-            ack(null);
-        }
+        return await new Promise<{ signature: string, bounced: boolean }>(async (resolve) => {
+            if (!this.directChannel) resolve(null);
+            else this.directChannel.sendMessage(messageHeader, 1000);
+        });
     }
 
     private async decryptPushMessages(messages: StoredMessage[]) {
@@ -557,34 +653,29 @@ export class Chat extends AbstractChat {
         await this.clientInterface.StoreMessage(encryptedMessage);
     }
 
-    private async processMessageHeader(encryptedMessage: MessageHeader, live: boolean): Promise<{ signature: string, bounced: boolean }> {
-        const { sessionId, headerId } = encryptedMessage;
-        const toAlias = this.otherAlias;
+    private async processMessageHeader(encryptedMessage: MessageHeader, live: boolean): Promise<{ signature?: string, bounced?: boolean }> {
+        const { sessionId, fromAlias, toAlias, headerId } = encryptedMessage;
+        const { myAlias, otherAlias } = this;
         const [messageBody, signature] = await this.#chattingSession.receiveMessage(encryptedMessage, async (exportedChattingSession) => {
             const result = await this.clientInterface.UpdateChat({ chatId: this.chatId, exportedChattingSession });
             return result?.reason === false; 
         });
-        const sendReceipt = async ({ bounced }: { bounced: boolean }) => {
+        const respond = async ({ bounced }: { bounced: boolean }) => {
             live || await this.clientInterface.MessageHeaderProcessed({ sessionId, headerId, toAlias: this.myAlias });
-            live || await this.clientInterface.SendReceipt({ toAlias, sessionId, headerId, signature, bounced });
+            live || await this.clientInterface.SendReceipt({ toAlias: this.otherAlias, sessionId, headerId, signature, bounced });
             return { signature, bounced };
         }
+        if (sessionId !== this.sessionId || toAlias !== myAlias || fromAlias !== otherAlias) return respond({ bounced: true });
         if (typeof messageBody === "string") {
             logError(messageBody);
-            return sendReceipt({ bounced: true });
+            return respond({ bounced: true });
         };
         const { sender, timestamp, messageId } = messageBody;
         if (sender !== this.otherUser) {
-            return sendReceipt({ bounced: true });
+            return respond({ bounced: true });
         }
         let displayMessage: DisplayMessage;
-        if ("event" in messageBody) {
-            if (messageBody.event !== "delivered" && messageBody.event !== "seen") {
-                if ((Date.now() - timestamp) < 3000) {
-                    this.isOtherTyping = messageBody.event === "typing";
-                }
-                return sendReceipt({ bounced: false });
-            }
+        if ("reportingAbout" in messageBody) {
             const { event, reportingAbout } = messageBody;
             const chatMessage = this.messagesList.get(reportingAbout);
             if (chatMessage) {
@@ -603,6 +694,25 @@ export class Chat extends AbstractChat {
                 }
             }
         }
+        else if ("event" in messageBody) {
+            if (messageBody.event === "status-online") {
+                this.isOnline = true;
+                this.notifyActivity?.();
+                // if (!messageBody.responding) this.transmitStatus(true);
+                return {};
+            }
+            else if (messageBody.event === "status-offline") {
+                this.isOnline = false;
+                this.notifyActivity?.();
+                return {};
+            }
+            else {
+                if ((Date.now() - timestamp) < 3000) {
+                    this.isOtherTyping = messageBody.event === "typing";
+                }
+                return respond({ bounced: false });
+            }
+        }
         else if ("profile" in messageBody) {
             const { profile } = messageBody;
             (async () => {
@@ -617,18 +727,29 @@ export class Chat extends AbstractChat {
                 } 
             })();
         }
+        else if ("directChannelId" in messageBody) {
+            const { directChannelId, action } = messageBody;
+            if (typeof directChannelId !== "string" || typeof action !== "string") return respond({ bounced: true });
+            this.establishDirectChannel({ directChannelId, action, sessionId, myAlias, otherAlias });
+        }
+        else if ("role" in messageBody) {
+            const { role, sessionDescription } = messageBody;
+        }
+        else if ("candidate" in messageBody) {
+            const { candidate } = messageBody
+        }
         else {
             const { text, replyingTo } = messageBody;
             const replyingToInfo = await this.populateReplyingTo(replyingTo);
             if (replyingToInfo === undefined) {
                 logError("Failed to come up with replied-to message.");
-                return sendReceipt({ bounced: true });
+                return respond({ bounced: true });
             }
             displayMessage = { messageId, timestamp, text, replyingToInfo, sentByMe: false };
             this.addMessagesToList([displayMessage]);
         }
         if (displayMessage) await this.encryptStoreMessage(displayMessage);
-        return sendReceipt({ bounced: false });
+        return respond({ bounced: false });
     }
 
     private async populateReplyingTo(replyId: string): Promise<ReplyingToInfo> {
@@ -669,7 +790,7 @@ export class Chat extends AbstractChat {
                 return;
             }
             const sendingMessage: SendingMessage = await crypto.deriveDecrypt(backup.content, this.#encryptionBaseVector, this.sessionId);
-            await this.dispatchSendingMessage(sendingMessage, true);
+            await this.dispatchSendingMessage(sendingMessage, "AnyChannel");
         }
 
     }

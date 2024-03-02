@@ -11,7 +11,13 @@ export const serialize = (obj: any) => {
     return Buffer.from(serialized.buffer, serialized.byteOffset, serialized.byteLength);
 }
 
-export const deserialize = (bytes: Uint8Array) => packr.unpack(bytes) as any;
+export const deserialize = (bytes: Uint8Array) => {
+    try {
+        return packr.unpack(bytes) as any;
+    } catch(err) {
+        return null;
+    }
+}
 
 export const { getRandomVector } = randomFunctions();
 const subtle = assignSubtle();

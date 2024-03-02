@@ -3,26 +3,41 @@ import { match } from "ts-pattern";
 import axios from "axios";
 import { io, Socket } from "socket.io-client";
 import { SessionCrypto } from "../shared/sessionCrypto";
-import {  ChattingSession, ViewReceivedRequest, X3DHManager } from "./e2e-encryption";
+import {  ChattingSession, X3DHManager } from "./e2e-encryption";
+import { serialize, deserialize } from "../shared/cryptoOperator";
 import * as crypto from "../shared/cryptoOperator";
-import { allSettledResults, awaitCallback, failure, fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
-import { ErrorStrings, Failure, Username, SocketClientSideEvents, MessageHeader, ChatRequestHeader, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Profile, EncryptedData, SocketServerRequestParameters, SocketServerRequestReturn, ServerMemo, KeyBundleId, SignedEncryptedData, X3DHKeysData, X3DHData  } from "../shared/commonTypes";
+import { allSettledResults, failure, fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
+import { Writeable, ErrorStrings, Failure, SocketClientSideEvents, MessageHeader, ChatRequestHeader, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Profile, EncryptedData, SocketServerRequestParameters, SocketServerRequestReturn, ServerMemo, KeyBundleId, X3DHKeysData, PerspectiveSessionInfo  } from "../shared/commonTypes";
 import { SentChatRequest, Chat, ReceivedChatRequest, FirstMessage } from "./ChatClasses";
 import AuthClient, { isClientOnline } from "./AuthClient";
 
 const { getRandomString } = randomFunctions();
 axios.defaults.withCredentials = true;
 
-const chatMethods = ["SendMessage", "GetMessageHeaders", "GetMessagesByNumber", "GetMessagesUptoTimestamp", "GetMessagesUptoId", "GetMessageById", "StoreMessage", "MessageHeaderProcessed", "UpdateChat", "StoreBackup", "GetBackupById", "BackupProcessed", "SendReceipt", "GetAllReceipts", "ClearAllReceipts"] as const;
-
-type ChatMethods = typeof chatMethods[number];
+const chatMethods: SocketClientSideEventsKey[] = ["SendMessage", "GetMessageHeaders", "GetMessagesByNumber", "GetMessagesUptoTimestamp", "GetMessagesUptoId", "GetMessageById", "StoreMessage", "MessageHeaderProcessed", "UpdateChat", "StoreBackup", "GetBackupById", "BackupProcessed", "SendReceipt", "GetAllReceipts", "ClearAllReceipts", "TransmitStatus", "RequestDirectChannel"] as const;
 
 export type ConnectionStatus = "NotLoaded" | "NotLoggedIn" | "ClientOffline" | "ServerUnreachable" | "Unauthenticated" | "UnknownConnectivityError" | "Online" | "LoggingOut";
 
-export type ClientChatInterface = Pick<RequestMap, ChatMethods> & Readonly<{
+type DirectChannelParams = Readonly<{
+    info: PerspectiveSessionInfo & { readonly directChannelId: string },
+    establishingHeader: MessageHeader,
+    getAcceptedHeader: (establishing: MessageHeader) => Promise<MessageHeader>,
+    verifyAcceptedHeader: (accepted: MessageHeader) => Promise<boolean>,
+    onMessageReceived: (message: MessageHeader) => Promise<{ signature?: string, bounced?: boolean }>,
+    onDisconnected: () => void
+}>;
+
+export type DirectChannelMethods = Readonly<{
+    sendMessage: (messageHeader: MessageHeader, timeout?: number) => Promise<{ signature: string, bounced: boolean }>,
+    disconnect: () => void
+}>;
+
+export type ClientChatInterface = Pick<RequestMap, typeof chatMethods[number]> & Readonly<{
     isConnected: () => boolean, 
     notifyClient: (chat: Chat) => void,
-    importChattingSession: (encryptedSession: EncryptedData) => Promise<ChattingSession> }>
+    establishDirectChannel: (params: DirectChannelParams) => Promise<DirectChannelMethods>,
+    importChattingSession: (encryptedSession: EncryptedData) => Promise<ChattingSession>
+}>;
 
 export type ClientReceivedChatRequestInterface = Readonly<{
     rejectReceivedRequest: (sessionId: string) => Promise<boolean>,
@@ -39,7 +54,7 @@ function SocketHandler(socket: () => Socket, sessionCrypto: () => SessionCrypto,
         if (!isConnected()) {
             return failure(ErrorStrings.NoConnectivity);
         }
-        const { payload } = await awaitCallback<any>(async (resolve) => {
+        const { payload } = await new Promise<any>(async (resolve) => {
             socket().emit(event, (await sessionCrypto()?.signEncryptToBase64({ payload: data }, event)),
                 async (response: string) => resolve((response && await sessionCrypto()?.decryptVerifyFromBase64(response, event)) || {}));
             if (timeout > 0) {
@@ -63,14 +78,14 @@ function SocketHandler(socket: () => Socket, sessionCrypto: () => SessionCrypto,
 
 export default class Client {
     private readonly responseMap: Map<SocketServerSideEventsKey, any> = new Map([
-        [SocketServerSideEvents.RoomRequested, this.roomRequested] as [SocketServerSideEventsKey, any],
-        [SocketServerSideEvents.RequestIssueNewKeys, this.issueNewKeys],
+        [SocketServerSideEvents.RequestIssueNewKeys, this.issueNewKeys] as [SocketServerSideEventsKey, any],
         [SocketServerSideEvents.PollConnection, this.indicateConnectionAlive],
         [SocketServerSideEvents.ServerMemoDeposited, this.receiveServerMemos],
         [SocketServerSideEvents.MessageReceived, this.messageReceived],
         [SocketServerSideEvents.ChatRequestReceived, this.chatRequestReceived],
         [SocketServerSideEvents.ReceiptReceived, this.receiptReceived],
-        [SocketServerSideEvents.ServerDisconnecting, this.setDisconnectReason]
+        [SocketServerSideEvents.ServerDisconnecting, this.setDisconnectReason],
+        [SocketServerSideEvents.DirectHeaderReceived, this.directHeaderReceived]
     ]);
     private readonly url: string;
     private notifyStatus: (status: ConnectionStatus) => void;
@@ -96,6 +111,7 @@ export default class Client {
     private readonly chatUsersList = new Set<string>();
     private readonly chatSessionIdsList = new Map<string, Chat | ReceivedChatRequest | SentChatRequest>();
     private readonly chatUsernamesList = new Map<string, Chat | ReceivedChatRequest | SentChatRequest>();
+    private readonly directHeaderCallbackList = new Map<string, (header: MessageHeader) => Promise<void>>();
     private chatInterface: ClientChatInterface;
     private receivedChatRequestInterface: ClientReceivedChatRequestInterface;
 
@@ -199,7 +215,7 @@ export default class Client {
                 if (this.disconnectReason) AuthClient.terminateCurrentSession("logging-out");
                 else this.reconnect();
             });
-            const success = (await awaitCallback<boolean>(async (resolve) => {
+            const success = (await new Promise(async (resolve) => {
                 this.#socket.io.once("error", (err) => {
                     logError(err);
                     if ((err as any).type === "TransportError") console.log("Server unavailable.");
@@ -212,7 +228,11 @@ export default class Client {
                 });
                 this.#socket.once("connect", () => resolve(true));
                 this.#socket.connect();
-            }, 5000, false)) && this.isConnected;
+                window.setTimeout(() => resolve(false), 5000);
+            })) && this.isConnected;
+            this.#socket.off("error");
+            this.#socket.off("connect_error");
+            this.#socket.off("connect");
             if (success) {
                 this.#socketHandler = SocketHandler(() => this.#socket, () => this.#sessionCrypto, () => this.isConnected);
                 this.constructChatInterface();
@@ -245,7 +265,6 @@ export default class Client {
                 .filter((chat) => !!chat),
                     async (chat) => {
                         await chat.checkNew();
-                        await this.requestRoom(chat); 
             })
             _.map(this.#x3dhManager.allPendingSentRequests,
                     async ({ sessionId, myAlias, otherAlias }) => {
@@ -290,9 +309,9 @@ export default class Client {
     }
 
     private constructChatInterface() {
-        const chatInterface: any = {};
+        const chatInterface: Partial<Writeable<ClientChatInterface>> = {};
         for (const method of chatMethods) {
-            chatInterface[method] = this.#socketHandler[method];
+                chatInterface[method] = this.#socketHandler[method] as any;
         }
         chatInterface["isConnected"] = () => this.isConnected;
         chatInterface["notifyClient"] = (chat: Chat) => {
@@ -301,11 +320,70 @@ export default class Client {
             }
         }
         chatInterface["importChattingSession"] = async (encryptedSession: EncryptedData) => this.#x3dhManager.importChattingSession(encryptedSession);
-        this.chatInterface = chatInterface;
+        chatInterface["establishDirectChannel"] = async ({ info, establishingHeader, getAcceptedHeader, verifyAcceptedHeader, onMessageReceived, onDisconnected }) => {
+            try {
+                const { directChannelId, sessionId, myAlias, otherAlias } = info;
+                const estEvent = `${directChannelId}-establishing`;
+                const accEvent = `${directChannelId}-accepted`;
+                console.log(`Client socket#${this.#socket.id} proceeding with establishing direct channel`);
+                const protocolSucceeded = await new Promise<boolean>(async resolve => {
+                    let timeout: number;
+                    this.#socket.once(estEvent, async (establishingResponse: string, callback) => {
+                        window.clearTimeout(timeout);
+                        console.log(`Received establishing header`);
+                        const acceptedHeader = await getAcceptedHeader(deserialize(fromBase64(establishingResponse)));
+                        if (!acceptedHeader) return resolve(false);
+                        this.#socket.once(accEvent, async (acceptedResponse: string) => {
+                            console.log(`Received accepted header`);
+                            resolve(await verifyAcceptedHeader(deserialize(fromBase64(acceptedResponse))));
+                        });
+                        callback(serialize(acceptedHeader).toString("base64"));
+                        window.setTimeout(() => resolve(false), 1000);
+                    });
+                    this.#socket.emit(estEvent, crypto.serialize(establishingHeader).toString("base64"));
+                    timeout = window.setTimeout(() => resolve(false), 2000);
+                });
+                if (!protocolSucceeded) console.log(`Establishing direct channel failed.`);
+                if (!protocolSucceeded) return null;
+                console.log(`Establishing direct channel succeeded.`);
+                const sendingEvent = `${sessionId}: ${myAlias} -> ${otherAlias}`;
+                const receivingEvent = `${sessionId}: ${otherAlias} -> ${myAlias}`;
+                this.#socket.on(receivingEvent, async (data: string, ack: (response: { signature?: string, bounced?: boolean }) => void) => {
+                    if (!data) ack(null);
+                    else if (data === "room-disconnected") onDisconnected();
+                    else try {
+                        const deserialized: MessageHeader = deserialize(fromBase64(data));
+                        if (!deserialized) ack(null);
+                        else ack(await onMessageReceived(deserialized));
+                    }
+                    catch (e: any) {
+                        logError(e);
+                        ack(null);
+                    }
+                });
+                this.#socket.on("disconnect", () => onDisconnected());
+                return {
+                    sendMessage: (messageHeader, timeout) => {
+                        return new Promise<{ signature: string, bounced: boolean }>(async (resolve) => {
+                            if (!this.#socket) resolve(null);
+                            else this.#socket.emit(sendingEvent, serialize(messageHeader).toString("base64"), (response: { signature: string, bounced: boolean }) => resolve(response));
+                            if (timeout) window.setTimeout(() => resolve(null), timeout);
+                        });
+                    },
+                    disconnect: () => this.#socket?.off(receivingEvent)
+                }
+
+            }
+            catch(err) {
+                logError(err);
+                return null;
+            }
+        }
+        this.chatInterface = chatInterface as ClientChatInterface;
         this.receivedChatRequestInterface = {
             acceptReceivedRequest: (sessionId: string, respondingAt: number) => this.acceptReceivedRequest(sessionId, respondingAt),
             rejectReceivedRequest: (sessionId: string) => this.rejectReceivedRequest(sessionId)
-        }
+        } as typeof this.receivedChatRequestInterface;
     }
 
     private addChat(chat: Chat | ReceivedChatRequest | SentChatRequest) {
@@ -321,7 +399,7 @@ export default class Client {
         this.chatUsernamesList.delete(chat.otherUser);
         this.chatUsersList.delete(chat.otherUser);
         if (chat.type === "Chat") {
-            chat.disconnectRoom();
+            chat.disconnectChannel();
         }
         dontNotify || this.notifyChange?.();
     }
@@ -453,14 +531,14 @@ export default class Client {
     }
 
     private async instantiateChat(chatData: ChatData, removePrevious: string, firstMessage?: FirstMessage) {
-        const chat = await Chat.instantiate(chatData, this.#encryptionBaseVector, this.chatInterface, firstMessage);
-        return await awaitCallback(async (resolve) => {
+        const [chat, callback] = await Chat.instantiate(chatData, this.#encryptionBaseVector, this.chatInterface, firstMessage);
+        return await new Promise(async (resolve) => {
             chat.subscribeActivity(() => {
                 if (chat.details?.lastActivity?.messageId) {
                     chat.unsubscribeActivity();
                     if (removePrevious) this.removeChat(removePrevious, "sessionId", true);
                     this.addChat(chat);
-                    this.requestRoom(chat);
+                    this.directHeaderCallbackList.set(chat.sessionId, callback);
                     resolve(true);
                 }
             });
@@ -669,47 +747,6 @@ export default class Client {
         }
     }
 
-    private awaitServerRoomReady(otherUsername: string) {
-        return new Promise<boolean>((resolve) => {
-            const response = (withUser: string) => {
-                if (withUser === otherUsername) {
-                    this.#socket.off(SocketServerSideEvents.ServerRoomReady, response);
-                    resolve(true);
-                }
-            };
-            this.#socket.on(SocketServerSideEvents.ServerRoomReady, response);
-            setTimeout(() => {
-                this.#socket.off(SocketServerSideEvents.ServerRoomReady, response);
-                resolve(false);
-            }, 1000);
-        });
-    }
-
-    private async roomRequested({ username }: Username) {
-        if (username === this.#username) return failure(ErrorStrings.InvalidRequest);
-        const chat = this.chatUsernamesList.get(username);
-        if (!chat || chat.type !== "Chat") return failure(ErrorStrings.InvalidRequest);
-        this.awaitServerRoomReady(username).then((ready) => {
-            if (ready) {
-                chat.establishRoom(this.#sessionCrypto, this.#socket);
-            }
-        })
-        return { reason: false };
-    }
-
-    private async requestRoom(chat: Chat) {
-        const waitReady = this.awaitServerRoomReady(chat.otherUser);
-        const response = await this.#socketHandler.RequestRoom({ username: chat.otherUser }, 2000);
-        if (response?.reason !== false) {
-            return response;
-        }
-        const confirmed = await waitReady.then(async (ready) => {
-            return ready ? await chat.establishRoom(this.#sessionCrypto, this.#socket) : false;
-        });
-        if (!confirmed) return failure(ErrorStrings.ProcessFailed);
-        return { reason: false };
-    }
-
     private async messageReceived({ sessionId }: { sessionId: string }) {
         return await match(this.chatSessionIdsList.get(sessionId)?.type)
             .with("Chat", () => (this.chatSessionIdsList.get(sessionId) as Chat)?.loadUnprocessedMessages())
@@ -727,6 +764,10 @@ export default class Client {
     private async chatRequestReceived() {
         await this.fetchNewReceivedRequests();
         return await this.loadReceivedRequests();
+    }
+
+    private async directHeaderReceived({ header }: { header: MessageHeader }) {
+        this.directHeaderCallbackList.get(header.sessionId)?.(header);
     }
 
     private async issueNewKeys({ n }: { n: number }) {

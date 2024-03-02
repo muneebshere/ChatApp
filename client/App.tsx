@@ -12,6 +12,7 @@ import { generateAvatar, extractInitials } from "./imageUtilities";
 import * as crypto from "../shared/cryptoOperator";
 import AuthClient, { AuthConnectionStatus } from "./AuthClient";
 import { Failure } from "../shared/commonTypes";
+import { logError } from "../shared/commonFunctions";
 
 export type SubmitResponse = {
   displayName?: string;
@@ -28,7 +29,12 @@ if ("virtualKeyboard" in navigator) {
   (navigator.virtualKeyboard as any).overlaysContent = true;
 }
 
+window.onerror = function(message, url, line, col, error) {
+  logError({ message, url, line, col, error });
+};
+
 createRoot(document.getElementById("root")).render(<Root/>);
+setupJsHashChecker();
 
 async function setupJsHashChecker() {
   const response = await fetch("./main.js");
@@ -37,8 +43,8 @@ async function setupJsHashChecker() {
   let interval: number = null;
   setInterval();
 
-  function setInterval() {
-    interval = window.setInterval(check, 10000);
+  function setInterval(cancelled = false) {
+    interval = window.setInterval(check, cancelled ? 30000 : 2000);
   }
 
   async function check() {
@@ -50,7 +56,7 @@ async function setupJsHashChecker() {
       console.log("js file changed.");
       window.clearInterval(interval);
       if (window.confirm("Js script file out of date. Reload?")) window.history.go();
-      else setInterval();
+      else setInterval(true);
     }
   }
 

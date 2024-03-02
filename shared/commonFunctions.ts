@@ -38,13 +38,7 @@ export function randomFunctions() {
 
 export function logError(err: any): void {
     if (logOff) return;
-    const message = err.message;
-    if (message) {
-        console.log(`${message}`);
-    }
-    else {
-        console.log(`${stringify(err)}`);
-    }
+    console.log(`${stringify(err)}`);
     console.trace();
 }
 
@@ -52,17 +46,14 @@ export function fromBase64(data: string) {
     return Buffer.from(data, "base64");
 }
 
-export async function allSettledResults<T>(promises: Promise<T>[]): Promise<T[]> {
-    return (await Promise.allSettled(promises)).filter((result) => result.status === "fulfilled").map((result) => (result as PromiseFulfilledResult<T>).value);
+export function splitPromise<T>(): [(result: T) => void, Promise<T>] {
+    let resolve: (result: T) => void = null;
+    const promise = new Promise<T>((res) => resolve = res);
+    return [resolve, promise];
 }
 
-export function awaitCallback<T>(callback: (resolve: (result: T) => void) => Promise<void>, timeout = 0, timeoutResponse: T = null) {
-    return new Promise<T>(async (resolve) => {
-        await callback(resolve);
-        if (timeout) {
-            window.setTimeout(() => resolve(timeoutResponse), timeout);
-        }
-    });
+export async function allSettledResults<T>(promises: Promise<T>[]): Promise<T[]> {
+    return (await Promise.allSettled(promises)).filter((result) => result.status === "fulfilled").map((result) => (result as PromiseFulfilledResult<T>).value);
 }
 
 export type Entry<T> = { 
