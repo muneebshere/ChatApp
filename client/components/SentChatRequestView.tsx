@@ -12,9 +12,10 @@ import { ChatHeaderMemo } from "./ChatHeader";
 
 type SentChatRequestViewProps = {
   sentChatRequest: SentChatRequest;
+  closeChat: () => void;
 }
 
-export function SentChatRequestView({ sentChatRequest }: SentChatRequestViewProps) {
+export function SentChatRequestView({ sentChatRequest, closeChat }: SentChatRequestViewProps) {
   const { details: chatDetails, chatMessage, otherUser } = sentChatRequest;
   const { lastActivity: { timestamp: lastActive } } = chatDetails;
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
@@ -25,7 +26,7 @@ export function SentChatRequestView({ sentChatRequest }: SentChatRequestViewProp
                       flexDirection: "column", 
                       overflow: "clip" }}>
       <Stack direction="column" spacing={2}>
-        <ChatHeaderMemo {...{ belowXL, chatDetails }}/>
+        <ChatHeaderMemo {...{ belowXL, chatDetails, closeChat }}/>
         <div style={{ width: "100%", display: "flex", justifyContent: "center" }}>
           <DayCard date={DateTime.fromMillis(lastActive).toISODate()} forceInline={true}/>
         </div>

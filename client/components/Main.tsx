@@ -47,7 +47,7 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
     const chat = client.getChatByUser(otherUser);
     if (chat) {
       setCurrentChatWith(otherUser);
-      chat.activate();
+      // chat.activate();
     }
     else setCurrentChatWith("");
     return !!chat;
@@ -71,6 +71,7 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
       return (<ChatViewMemo 
         key={currentChatWith ?? ""}
         chat={chat}
+        closeChat={() => openChat("")}
         message={typedMessages.current.get(currentChatWith) || ""}
         setMessage={(message: string) => {
           if (currentChatWith) {
@@ -86,10 +87,16 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
         giveBackFocus={giveBackFocus}/>);
     }
     else if (chat?.type === "ReceivedRequest") {
-      return (<ReceivedChatRequestView key={currentChatWith ?? ""} receivedChatRequest={chat}/>);
+      return (<ReceivedChatRequestView 
+                key={currentChatWith ?? ""} 
+                receivedChatRequest={chat} 
+                closeChat={() => openChat("")}/>);
     }
     else if (chat?.type === "SentRequest") {
-      return (<SentChatRequestView key={currentChatWith ?? ""} sentChatRequest={chat}/>);
+      return (<SentChatRequestView 
+                key={currentChatWith ?? ""} 
+                sentChatRequest={chat}
+                closeChat={() => openChat("")}/>);
     }
     return null;
   }

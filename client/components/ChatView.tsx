@@ -51,6 +51,7 @@ export type OrientationState = {
 
 type ChatViewProps = {
   chat: Chat,
+  closeChat: () => void,
   message: string,
   setMessage: (m: string) => void,
   lastScrolledTo: ScrollState,
@@ -298,7 +299,7 @@ function useScrollOnResize(scrollRef: RefObject<HTMLDivElement>,
   }, [scrollHeight]);
 }
 
-const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastScrolledTo, allowLeaveFocus, giveBackFocus }: ChatViewProps) {
+const ChatView = function({ chat, closeChat, message, setMessage, lastScrolledTo, setLastScrolledTo, allowLeaveFocus, giveBackFocus }: ChatViewProps) {
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const mutationRef = useRef<MutationObserver>(null);
   const mainRef = useRef<HTMLDivElement>(null);
@@ -524,7 +525,7 @@ const ChatView = function({ chat, message, setMessage, lastScrolledTo, setLastSc
   return (
     <StyledSheet ref={mainRef} sx={{ height: "100%", display: "flex", flexDirection: "column", overflow: "clip" }}>
       <Stack direction="column" spacing={1} sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column", overflow: "clip" }}>
-        <ChatHeaderMemo {...{ belowXL, chatDetails }}/>
+        <ChatHeaderMemo {...{ belowXL, chatDetails, closeChat }}/>
         {(!rendered || loadingMore) &&
           <div style={{ width: "100%", display: "flex", justifyContent: "center", paddingBlock: "4px"}}>
             <CircularProgress size="sm" variant="soft" color="success"/>
