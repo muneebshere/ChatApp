@@ -19,12 +19,12 @@ type SavedAuthData = Readonly<{
     databaseAuthKeyBuffer: Buffer;
 }>;
 
-type SavedSessionData = Readonly<{ 
-    username: string, 
-    clientReference: string, 
-    sharedKeyBitsBuffer: Buffer, 
-    encryptionBase: Buffer, 
-    sessionRecordKey: Buffer, 
+type SavedSessionData = Readonly<{
+    username: string,
+    clientReference: string,
+    sharedKeyBitsBuffer: Buffer,
+    encryptionBase: Buffer,
+    sessionRecordKey: Buffer,
     userData: Omit<UserData, "encryptionBaseDerive">}>;
 
 const { hostname, protocol } = window.location;
@@ -35,20 +35,20 @@ export type AuthConnectionStatus = Extract<ConnectionStatus, "Online" | "ClientO
 
 export default class AuthClient {
 
-    private static verified: Promise<boolean> = null;
-    private static issuedNonce: { nonceId: string, authNonce: string } = null;
+    private static verified: Promise<boolean> | null = null;
+    private static issuedNonce: { nonceId: string, authNonce: string } | null = null;
     private static nonceQueue = new Queue(1, 10);
 
-    private static notifyConnectionStatus: (status: AuthConnectionStatus) => void;
+    private static notifyConnectionStatus: ((status: AuthConnectionStatus) => void) | null = null;
 
     private constructor() {}
 
-    static subscribeConnectionStatus(notifyCallback: (status: AuthConnectionStatus) => void) {
+    static subscribeConnectionStatus(notifyCallback: ((status: AuthConnectionStatus) => void) | null) {
         this.notifyConnectionStatus = notifyCallback;
         this.isServerReachable();
     }
 
-    static async latestJsHash(): Promise<string> {
+    static async latestJsHash(): Promise<string | null> {
         const response = await this.get("/latestJsHash");
         if (response?.status !== 200) return null;
         else return response.data.latestJsHash;
@@ -59,13 +59,13 @@ export default class AuthClient {
         return response?.status === 200;
     }
 
-    static async userExists(username: string): Promise<boolean> {
+    static async userExists(username: string): Promise<boolean | null> {
         const response = await this.get(`/userExists/${username}`);
         if (response?.status === 200) return response.data.exists;
         else return null;
     }
 
-    static async userLogInPermitted(username: string): Promise<LogInPermitted> {
+    static async userLogInPermitted(username: string): Promise<LogInPermitted | null> {
         const response = await this.get(`/userLogInPermitted/${username}`);
         if (response?.status === 200) return response.data;
         else return null;
@@ -89,8 +89,8 @@ export default class AuthClient {
         this.issuedNonce ||= response?.status === 200 ? response.data : {};
         this.nonceQueue.end(token);
         setTimeout(() => this.issuedNonce = null, 4500);
-        console.log(`Newly obtained nonce id ${this.issuedNonce.nonceId}`);
-        return this.issuedNonce;
+        console.log(`Newly obtained nonce id ${this.issuedNonce?.nonceId}`);
+        return this.issuedNonce!;
     }
 
     static async clearNonce() {
@@ -104,7 +104,7 @@ export default class AuthClient {
         }
     }
 
-    static async verifyAuthentication(authToken: string, sessionRecordKey: string): Promise<boolean> {
+    static async verifyAuthentication(authToken: string, sessionRecordKey: string): Promise<boolean | null> {
         const nonceId = this.issuedNonce?.nonceId;
         if (!nonceId) return null;
         if (this.verified) {
@@ -141,7 +141,7 @@ export default class AuthClient {
                 username,
                 verifierPoint,
                 clientEphemeralPublic,
-                publicIdentity        
+                publicIdentity
             };
             const resultInit: SignUpChallenge | Failure = await this.post("initiateSignUp", signUpRequest);
             if ("reason" in resultInit) {
@@ -176,7 +176,9 @@ export default class AuthClient {
                 console.log(savePasswordSuccess ? "Password saved successfully." : "Failed to save password.");
             }
             const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
-            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhManager, sessionCrypto, serverVerifyingKey);
+            const client = await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhManager, sessionCrypto, serverVerifyingKey);
+            if (!client) throw new Error("Failed to initiate client.");
+            return client;
         }
         catch (err) {
             logError(err);
@@ -232,7 +234,9 @@ export default class AuthClient {
                 console.log(savePasswordSuccess ? "Password saved successfully." : "Failed to save password.");
             }
             const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
-            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhManager, sessionCrypto, serverVerifyingKey);
+            const client = await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhManager, sessionCrypto, serverVerifyingKey);
+            if (!client) throw new Error("Failed to initiate client.");
+            return client;
         }
         catch (err) {
             logError(err);
@@ -298,7 +302,9 @@ export default class AuthClient {
             const savingSession = serialize(await crypto.deriveEncrypt(savedSessionData, saveSessionKey, "SavedSession")).toString("base64");
             window.sessionStorage.setItem("SavedSession", savingSession);
             const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
-            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhManager, sessionCrypto, serverVerifyingKey);
+            const client = await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhManager, sessionCrypto, serverVerifyingKey);
+            if (!client) throw new Error("Failed to initiate client.");
+            return client;
         }
         catch (err) {
             logError(err);
@@ -349,7 +355,9 @@ export default class AuthClient {
             window.sessionStorage.setItem("SavedSession", savingSession);
             const sessionCrypto = await x3dhManager.createSessionCrypto(clientReference, sharedKeyBits, serverIdentityVerifyingKey);
             const serverVerifyingKey = await crypto.importKey(serverIdentityVerifyingKey, "ECDSA", "public", false);
-            return await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhManager, sessionCrypto, serverVerifyingKey);
+            const client = await Client.initiate(baseURL, encryptionBaseVector, sessionRecordKey, username, profile, x3dhManager, sessionCrypto, serverVerifyingKey);
+            if (!client) throw new Error("Failed to initiate client.");
+            return client;
         }
         catch (err) {
             logError(err);
@@ -377,7 +385,7 @@ export default class AuthClient {
         return true;
     }
 
-    private static async isPasswordSaved(): Promise<false | "same-ip" | "other-ip"> {
+    private static async isPasswordSaved(): Promise<false | "same-ip" | "other-ip" | null> {
         const response = await this.get("/isPasswordSaved");
         if (response?.status !== 200) return null;
         else return response.data.passwordSaved;
@@ -428,7 +436,7 @@ export default class AuthClient {
         }
     }
 
-    private static async notifyResponseStatus(status: number) {
+    private static async notifyResponseStatus(status: number | undefined) {
         if (!this.notifyConnectionStatus) return;
         if (status === 200) this.notifyConnectionStatus("Online");
         else if (status === 404) {

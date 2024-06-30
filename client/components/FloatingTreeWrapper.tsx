@@ -6,9 +6,9 @@ import {
   FloatingTree
 } from "@floating-ui/react";
 
-type FloatingTreeProps = Readonly<{ 
-  open: boolean, 
-  children: (zIndex: number | string) => JSX.Element
+type FloatingTreeProps = Readonly<{
+  open: boolean,
+  children: (zIndex: number | string | undefined) => JSX.Element
 }>;
 
 export default function FloatingTreeWrapper({ open, children }: FloatingTreeProps) {
@@ -24,7 +24,7 @@ export default function FloatingTreeWrapper({ open, children }: FloatingTreeProp
     return isNaN(zIndexN) ? zIndex : zIndexN + 1;
   }
 
-  const zIndex = 
+  const zIndex =
     !parentId
       ? undefined
       : calculateChildZ(parentId);

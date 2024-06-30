@@ -7,7 +7,7 @@ import {  ChattingSession, X3DHManager } from "./e2e-encryption";
 import { serialize, deserialize } from "../shared/cryptoOperator";
 import * as crypto from "../shared/cryptoOperator";
 import { allSettledResults, failure, fromBase64, logError, randomFunctions } from "../shared/commonFunctions";
-import { Writeable, ErrorStrings, Failure, SocketClientSideEvents, MessageHeader, ChatRequestHeader, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Profile, EncryptedData, SocketServerRequestParameters, SocketServerRequestReturn, ServerMemo, KeyBundleId, X3DHKeysData, PerspectiveSessionInfo  } from "../shared/commonTypes";
+import { Writeable, ErrorStrings, Failure, SocketClientSideEvents, MessageHeader, ChatRequestHeader, ChatData, SocketClientSideEventsKey, SocketServerSideEventsKey, SocketServerSideEvents, SocketClientRequestParameters, SocketClientRequestReturn, Profile, EncryptedData, SocketServerRequestParameters, SocketServerRequestReturn, ServerMemo, KeyBundleId, X3DHKeysData, ProspectiveSessionInfo  } from "../shared/commonTypes";
 import { SentChatRequest, Chat, ReceivedChatRequest, FirstMessage } from "./ChatClasses";
 import AuthClient, { isClientOnline } from "./AuthClient";
 
@@ -19,24 +19,24 @@ const chatMethods: SocketClientSideEventsKey[] = ["SendMessage", "GetMessageHead
 export type ConnectionStatus = "NotLoaded" | "NotLoggedIn" | "ClientOffline" | "ServerUnreachable" | "Unauthenticated" | "UnknownConnectivityError" | "Online" | "LoggingOut";
 
 type DirectChannelParams = Readonly<{
-    info: PerspectiveSessionInfo & { readonly directChannelId: string },
+    info: ProspectiveSessionInfo & { readonly directChannelId: string },
     establishingHeader: MessageHeader,
-    getAcceptedHeader: (establishing: MessageHeader) => Promise<MessageHeader>,
-    verifyAcceptedHeader: (accepted: MessageHeader) => Promise<boolean>,
+    getAcceptedHeader: (establishing: MessageHeader) => Promise<MessageHeader | null>,
+    verifyAcceptedHeader: (accepted: MessageHeader) => Promise<boolean | null>,
     onMessageReceived: (message: MessageHeader) => Promise<{ signature?: string, bounced?: boolean }>,
     onDisconnected: () => void
 }>;
 
 export type DirectChannelMethods = Readonly<{
-    sendMessage: (messageHeader: MessageHeader, timeout?: number) => Promise<{ signature: string, bounced: boolean }>,
+    sendMessage: (messageHeader: MessageHeader, timeout?: number) => Promise<{ signature: string, bounced: boolean } | null>,
     disconnect: () => void
 }>;
 
 export type ClientChatInterface = Pick<RequestMap, typeof chatMethods[number]> & Readonly<{
-    isConnected: () => boolean, 
+    isConnected: () => boolean,
     notifyClient: (chat: Chat) => void,
-    establishDirectChannel: (params: DirectChannelParams) => Promise<DirectChannelMethods>,
-    importChattingSession: (encryptedSession: EncryptedData) => Promise<ChattingSession>
+    establishDirectChannel: (params: DirectChannelParams) => Promise<DirectChannelMethods | null>,
+    importChattingSession: (encryptedSession: EncryptedData) => Promise<ChattingSession | null>
 }>;
 
 export type ClientReceivedChatRequestInterface = Readonly<{
@@ -88,36 +88,36 @@ export default class Client {
         [SocketServerSideEvents.DirectHeaderReceived, this.directHeaderReceived]
     ]);
     private readonly url: string;
-    private notifyStatus: (status: ConnectionStatus) => void;
-    private notifyChange: () => void;
-    private countdownTick: (tryingAgainIn: number) => void;
+    private notifyStatus: ((status: ConnectionStatus) => void) | null = null;
+    private notifyChange: (() => void) | null = null;
+    private countdownTick: ((tryingAgainIn: number) => void) | null = null;
     private countdownTimer = 0;
-    private countdownTimeout = null;
+    private countdownTimeout: number | null = null;
     private connecting = false;
     private reconnecting = false;
     private isLoggingOut = false;
     private initiated = false;
     private disconnectReason = "";
 
-    #socket: Socket;
-    #profile: Profile;
-    #username: string;
-    #x3dhManager: X3DHManager;
-    #sessionCrypto: SessionCrypto
-    #socketHandler: RequestMap;
-    #encryptionBaseVector: CryptoKey;
+    #socket: Socket | null = null;
+    #profile: Profile | null = null;
+    #username: string | null = null;
+    #x3dhManager: X3DHManager | null = null;
+    #sessionCrypto: SessionCrypto | null = null;
+    #socketHandler: RequestMap | null = null;
+    #encryptionBaseVector: CryptoKey | null = null;
     #sessionRecordKey: Buffer;
     #serverVerifyingKey: CryptoKey;
     private readonly chatUsersList = new Set<string>();
     private readonly chatSessionIdsList = new Map<string, Chat | ReceivedChatRequest | SentChatRequest>();
     private readonly chatUsernamesList = new Map<string, Chat | ReceivedChatRequest | SentChatRequest>();
     private readonly directHeaderCallbackList = new Map<string, (header: MessageHeader) => Promise<void>>();
-    private chatInterface: ClientChatInterface;
-    private receivedChatRequestInterface: ClientReceivedChatRequestInterface;
+    private chatInterface: ClientChatInterface | null = null;
+    private receivedChatRequestInterface: ClientReceivedChatRequestInterface | null = null;
 
-    private static client: Client;
-    private static loadedClient: Promise<Client>;
-    private static resolveClient: () => void;
+    private static client: Client | null;
+    private static loadedClient: Promise<Client | null>;
+    private static resolveClient: (() => void) | null;
 
     private set tryingAgainIn(value: number) {
         if (value <= 0) {
@@ -136,7 +136,7 @@ export default class Client {
     private get tryingAgainIn() {
         return this.countdownTimer;
     }
-    
+
     static get isLoggedIn() {
         return !!this.client;
     }
@@ -155,7 +155,7 @@ export default class Client {
     static async initiate(url: string, encryptionBaseVector: CryptoKey, sessionRecordKey: Buffer, username: string, profile: Profile, x3dhManager: X3DHManager, sessionCrypto: SessionCrypto, serverVerifyingKey: CryptoKey) {
         if (!this.client) {
             this.client = new Client(url, encryptionBaseVector, sessionRecordKey, username, profile, x3dhManager, sessionCrypto, serverVerifyingKey);
-            Client.loadedClient = new Promise<Client>((resolve) => this.resolveClient = () => {
+            Client.loadedClient = new Promise<Client | null>((resolve) => this.resolveClient = () => {
                 resolve(this.client);
                 this.resolveClient = null;
             });
@@ -216,25 +216,25 @@ export default class Client {
                 else this.reconnect();
             });
             const success = (await new Promise(async (resolve) => {
-                this.#socket.io.once("error", (err) => {
+                this.#socket?.io.once("error", (err) => {
                     logError(err);
                     if ((err as any).type === "TransportError") console.log("Server unavailable.");
                     resolve(false);
                 });
-                this.#socket.once("connect_error", (err) => {
+                this.#socket?.once("connect_error", (err) => {
                     console.log("Server rejected socket connection.");
                     logError(err);
                     resolve(false);
                 });
-                this.#socket.once("connect", () => resolve(true));
-                this.#socket.connect();
+                this.#socket?.once("connect", () => resolve(true));
+                this.#socket?.connect();
                 window.setTimeout(() => resolve(false), 5000);
             })) && this.isConnected;
             this.#socket.off("error");
             this.#socket.off("connect_error");
             this.#socket.off("connect");
             if (success) {
-                this.#socketHandler = SocketHandler(() => this.#socket, () => this.#sessionCrypto, () => this.isConnected);
+                this.#socketHandler = SocketHandler(() => this.#socket!, () => this.#sessionCrypto!, () => this.isConnected);
                 this.constructChatInterface();
                 for (const [event, response] of this.responseMap.entries()) {
                     this.#socket.on(event, async (data: string, respond) => await this.respond(event, data, response.bind(this), respond));
@@ -266,7 +266,7 @@ export default class Client {
                     async (chat) => {
                         await chat.checkNew();
             })
-            _.map(this.#x3dhManager.allPendingSentRequests,
+            _.map(this.#x3dhManager!.allPendingSentRequests,
                     async ({ sessionId, myAlias, otherAlias }) => {
                         await this.processSentRequest(sessionId, myAlias, otherAlias);
             });
@@ -281,8 +281,8 @@ export default class Client {
     private dispose(loggingOut?: "logging-out") {
         this.notifyChange?.();
         this.notifyStatus?.("LoggingOut");
-        this.#socket.removeAllListeners();
-        this.#socket.disconnect();
+        this.#socket?.removeAllListeners();
+        this.#socket?.disconnect();
         this.#socket = null;
         this.#profile = null;
         this.#username = null;
@@ -311,7 +311,7 @@ export default class Client {
     private constructChatInterface() {
         const chatInterface: Partial<Writeable<ClientChatInterface>> = {};
         for (const method of chatMethods) {
-                chatInterface[method] = this.#socketHandler[method] as any;
+                chatInterface[method] = this.#socketHandler![method] as any;
         }
         chatInterface["isConnected"] = () => this.isConnected;
         chatInterface["notifyClient"] = (chat: Chat) => {
@@ -319,28 +319,28 @@ export default class Client {
                 this.notifyChange();
             }
         }
-        chatInterface["importChattingSession"] = async (encryptedSession: EncryptedData) => this.#x3dhManager.importChattingSession(encryptedSession);
+        chatInterface["importChattingSession"] = async (encryptedSession: EncryptedData) => this.#x3dhManager!.importChattingSession(encryptedSession);
         chatInterface["establishDirectChannel"] = async ({ info, establishingHeader, getAcceptedHeader, verifyAcceptedHeader, onMessageReceived, onDisconnected }) => {
             try {
                 const { directChannelId, sessionId, myAlias, otherAlias } = info;
                 const estEvent = `${directChannelId}-establishing`;
                 const accEvent = `${directChannelId}-accepted`;
-                console.log(`Client socket#${this.#socket.id} proceeding with establishing direct channel`);
-                const protocolSucceeded = await new Promise<boolean>(async resolve => {
+                console.log(`Client socket#${this.#socket!.id} proceeding with establishing direct channel`);
+                const protocolSucceeded = await new Promise<boolean | null>(async resolve => {
                     let timeout: number;
-                    this.#socket.once(estEvent, async (establishingResponse: string, callback) => {
+                    this.#socket!.once(estEvent, async (establishingResponse: string, callback) => {
                         window.clearTimeout(timeout);
                         console.log(`Received establishing header`);
                         const acceptedHeader = await getAcceptedHeader(deserialize(fromBase64(establishingResponse)));
                         if (!acceptedHeader) return resolve(false);
-                        this.#socket.once(accEvent, async (acceptedResponse: string) => {
+                        this.#socket!.once(accEvent, async (acceptedResponse: string) => {
                             console.log(`Received accepted header`);
                             resolve(await verifyAcceptedHeader(deserialize(fromBase64(acceptedResponse))));
                         });
                         callback(serialize(acceptedHeader).toString("base64"));
                         window.setTimeout(() => resolve(false), 1000);
                     });
-                    this.#socket.emit(estEvent, crypto.serialize(establishingHeader).toString("base64"));
+                    this.#socket!.emit(estEvent, crypto.serialize(establishingHeader).toString("base64"));
                     timeout = window.setTimeout(() => resolve(false), 2000);
                 });
                 if (!protocolSucceeded) console.log(`Establishing direct channel failed.`);
@@ -348,7 +348,7 @@ export default class Client {
                 console.log(`Establishing direct channel succeeded.`);
                 const sendingEvent = `${sessionId}: ${myAlias} -> ${otherAlias}`;
                 const receivingEvent = `${sessionId}: ${otherAlias} -> ${myAlias}`;
-                this.#socket.on(receivingEvent, async (data: string, ack: (response: { signature?: string, bounced?: boolean }) => void) => {
+                this.#socket!.on(receivingEvent, async (data: string, ack: (response: { signature?: string, bounced?: boolean } | null) => void) => {
                     if (!data) ack(null);
                     else if (data === "room-disconnected") onDisconnected();
                     else try {
@@ -361,10 +361,10 @@ export default class Client {
                         ack(null);
                     }
                 });
-                this.#socket.on("disconnect", () => onDisconnected());
+                this.#socket!.on("disconnect", () => onDisconnected());
                 return {
                     sendMessage: (messageHeader, timeout) => {
-                        return new Promise<{ signature: string, bounced: boolean }>(async (resolve) => {
+                        return new Promise<{ signature: string, bounced: boolean } | null>(async (resolve) => {
                             if (!this.#socket) resolve(null);
                             else this.#socket.emit(sendingEvent, serialize(messageHeader).toString("base64"), (response: { signature: string, bounced: boolean }) => resolve(response));
                             if (timeout) window.setTimeout(() => resolve(null), timeout);
@@ -395,46 +395,46 @@ export default class Client {
 
     private removeChat(key: string, keyType: "username" | "sessionId", dontNotify = false) {
         const chat = keyType === "username" ? this.chatUsernamesList.get(key) : this.chatSessionIdsList.get(key);
-        this.chatSessionIdsList.delete(chat.sessionId);
-        this.chatUsernamesList.delete(chat.otherUser);
-        this.chatUsersList.delete(chat.otherUser);
-        if (chat.type === "Chat") {
-            chat.disconnectChannel();
+        this.chatSessionIdsList.delete(chat!.sessionId);
+        this.chatUsernamesList.delete(chat!.otherUser);
+        this.chatUsersList.delete(chat!.otherUser);
+        if (chat!.type === "Chat") {
+            chat!.disconnectChannel();
         }
         dontNotify || this.notifyChange?.();
     }
 
-    public getChatByUser(otherUser: string): Chat | ReceivedChatRequest | SentChatRequest {
-        return this.chatUsernamesList.get(otherUser);
+    public getChatByUser(otherUser: string): Chat | ReceivedChatRequest | SentChatRequest | null {
+        return this.chatUsernamesList.get(otherUser) || null;
     }
 
     public get chatsList() {
-        return _.orderBy(Array.from(this.chatUsersList).map((user) => this.getChatByUser(user)), [(chat) => chat.lastActive], ["desc"]);
+        return _.orderBy(Array.from(this.chatUsersList).map((user) => this.getChatByUser(user)!), [(chat) => chat?.lastActive], ["desc"]);
     }
 
     public get username(): string {
-        return this.#username;
+        return this.#username!;
     }
 
     public get profile(): Profile {
-        return { ...this.#profile };
+        return { ...this.#profile! };
     }
 
     public get isConnected(): boolean {
         return this.#socket?.connected || false;
     }
 
-    subscribeChange(notifyCallback?: () => void) {
+    subscribeChange(notifyCallback: (() => void) | null = null) {
         this.notifyChange = notifyCallback;
         notifyCallback?.();
     }
 
-    subscribeStatus(notifyCallback?: (status: ConnectionStatus) => void) {
+    subscribeStatus(notifyCallback: ((status: ConnectionStatus) => void) | null = null) {
         this.notifyStatus = notifyCallback;
         Client.connectionStatus().then((status) => notifyCallback?.(status));
     }
 
-    subscribeCountdownTick(tickCallback?: (tryingAgainIn: number) => void) {
+    subscribeCountdownTick(tickCallback: ((tryingAgainIn: number) => void) | null = null) {
         this.countdownTick = tickCallback;
         tickCallback?.(this.countdownTimer);
     }
@@ -463,14 +463,14 @@ export default class Client {
             && currentProfile.description === profile.description
             && currentProfile.profilePicture === profile.profilePicture) return true;
         const nextProfile = { ...currentProfile, ...profile };
-        const profileData = await this.#x3dhManager.deriveSignEncrypt(nextProfile, this.#encryptionBaseVector, `${this.#username} User Profile`);
-        const { reason } = await this.#socketHandler.UpdateProfile({ profileData });
+        const profileData = await this.#x3dhManager!.deriveSignEncrypt(nextProfile, this.#encryptionBaseVector!, `${this.#username} User Profile`);
+        const { reason } = await this.#socketHandler!.UpdateProfile({ profileData });
         if (reason === false) {
             this.#profile = nextProfile;
             this.notifyChange?.();
             this.chatUsersList.forEach((c) => {
                 const chat = this.getChatByUser(c);
-                if (chat.type === "Chat") {
+                if (chat?.type === "Chat") {
                     chat.sendProfile(nextProfile);
                 }
             });
@@ -481,13 +481,13 @@ export default class Client {
 
     async userLogOut() {
         this.isLoggingOut = true;
-        this.notifyStatus("LoggingOut");
+        this.notifyStatus?.("LoggingOut");
         await AuthClient.userLogOut();
         this.isLoggingOut = false;
     }
 
     async checkUsernameExists(username: string) {
-        const result = await this.#socketHandler.UsernameExists({ username });
+        const result = await this.#socketHandler!.UsernameExists({ username });
         if ("reason" in result) {
             throw "Can't determine if username exists.";
         }
@@ -497,7 +497,7 @@ export default class Client {
     async sendChatRequest(otherUser: string, firstMessage: string, madeAt: number): Promise<Failure> {
         if (!this.isConnected) return failure(ErrorStrings.NoConnectivity);
         if (!(await this.checkUsernameExists(otherUser))) return failure(ErrorStrings.InvalidRequest);
-        const keyBundleResponse = await this.#socketHandler.RequestKeyBundle({ username: otherUser });
+        const keyBundleResponse = await this.#socketHandler!.RequestKeyBundle({ username: otherUser });
         if ("reason" in keyBundleResponse) {
             logError(keyBundleResponse);
             return keyBundleResponse;
@@ -505,23 +505,23 @@ export default class Client {
         const { keyBundle } = keyBundleResponse;
         const { profile } = this;
         const messageId = `f${getRandomString(14, "hex")}`;
-        const result = await this.#x3dhManager.generateChatRequest(keyBundle, messageId, firstMessage, madeAt, profile);
+        const result = await this.#x3dhManager!.generateChatRequest(keyBundle, messageId, firstMessage, madeAt, profile);
         if (typeof result === "string") {
             logError(result);
             return failure(ErrorStrings.ProcessFailed, result);
         }
         const [x3dhData, chatRequest, { sessionId, timestamp, myAlias, otherAlias }] = result;
-        const result2 = await this.#socketHandler.RegisterPendingSession({ sessionId, otherAlias, myAlias });
+        const result2 = await this.#socketHandler!.RegisterPendingSession({ sessionId, otherAlias, myAlias });
         if (result2?.reason !== false) {
             logError(result2);
             return failure(ErrorStrings.ProcessFailed);
         }
-        const result3 = await this.#socketHandler.SendChatRequest(chatRequest);
+        const result3 = await this.#socketHandler!.SendChatRequest(chatRequest);
         if (result3?.reason !== false) {
             logError(result3);
             return failure(ErrorStrings.ProcessFailed);
         }
-        const result4 = await this.#socketHandler.UpdateX3DHData({ x3dhData });
+        const result4 = await this.#socketHandler!.UpdateX3DHData({ x3dhData });
         if (result4?.reason !== false) {
             logError(result4);
             return failure(ErrorStrings.ProcessFailed);
@@ -531,7 +531,7 @@ export default class Client {
     }
 
     private async instantiateChat(chatData: ChatData, removePrevious: string, firstMessage?: FirstMessage) {
-        const [chat, callback] = await Chat.instantiate(chatData, this.#encryptionBaseVector, this.chatInterface, firstMessage);
+        const [chat, callback] = await Chat.instantiate(chatData, this.#encryptionBaseVector!, this.chatInterface!, firstMessage);
         return await new Promise(async (resolve) => {
             chat.subscribeActivity(() => {
                 if (chat.details?.lastActivity?.messageId) {
@@ -549,24 +549,25 @@ export default class Client {
         const chatId = getRandomString(15, "base64");
         const timeRatio = _.random(1, 999);
         const contactDetails = { ...profile, contactName: "" };
-        const timeRatioRecord = await crypto.deriveEncrypt({ timeRatio }, this.#encryptionBaseVector, `${chatId} Time Ratio`);
-        const contactDetailsRecord = await crypto.deriveEncrypt({ contactDetails }, this.#encryptionBaseVector, `${chatId} Contact Details`);
+        const timeRatioRecord = await crypto.deriveEncrypt({ timeRatio }, this.#encryptionBaseVector!, `${chatId} Time Ratio`);
+        const contactDetailsRecord = await crypto.deriveEncrypt({ contactDetails }, this.#encryptionBaseVector!, `${chatId} Contact Details`);
         const chatData: ChatData = { chatId, timeRatioRecord, contactDetailsRecord, exportedChattingSession };
         const { username: otherUser } = profile;
-        const { reason: r2 } = await this.#socketHandler.CreateChat({ ...chatData, otherUser });
+        const { reason: r2 } = await this.#socketHandler!.CreateChat({ ...chatData, otherUser });
         if (r2) {
             logError(r2);
             return false;
         }
         await this.instantiateChat(chatData, sessionId, firstMessage);
+        return true;
     }
 
     private async loadUser() {
-        const result = await this.#socketHandler.FetchUserData([]);
+        const result = await this.#socketHandler!.FetchUserData([]);
         if (!("reason" in result)) {
             const { x3dhIdentity, x3dhData, profileData } = result;
-            const x3dhManager = await X3DHManager.import(this.username, x3dhIdentity, x3dhData, this.#encryptionBaseVector);
-            const profile: Profile = await x3dhManager?.deriveDecryptVerify(profileData, this.#encryptionBaseVector, `${this.username} User Profile`);
+            const x3dhManager = await X3DHManager.import(this.username, x3dhIdentity, x3dhData, this.#encryptionBaseVector!);
+            const profile: Profile = await x3dhManager?.deriveDecryptVerify(profileData, this.#encryptionBaseVector!, `${this.username} User Profile`);
             if (profile) {
                 this.#x3dhManager = x3dhManager;
                 this.#profile = profile;
@@ -575,23 +576,23 @@ export default class Client {
         await Promise.all([this.loadChats(), this.fetchNewReceivedRequests().then(() => this.loadReceivedRequests()), this.loadSentRequests()]);
         this.initiated = true;
         Client.resolveClient?.();
-        this.#socketHandler.ClientLoaded([], 100);
+        this.#socketHandler!.ClientLoaded([], 100);
     }
 
     private async loadChats() {
-        const chatsData = await this.#socketHandler.GetAllChats([]);
+        const chatsData = await this.#socketHandler!.GetAllChats([]);
         if ("reason" in chatsData) return;
         await Promise.all(_.map(chatsData, async (chatData) => this.instantiateChat(chatData, "")));
     }
 
     private loadReceivedRequests() {
-        for (const receivedRequest of this.#x3dhManager.allPendingReceivedRequests) {
-            this.addChat(new ReceivedChatRequest(this.receivedChatRequestInterface, receivedRequest));
+        for (const receivedRequest of this.#x3dhManager!.allPendingReceivedRequests) {
+            this.addChat(new ReceivedChatRequest(this.receivedChatRequestInterface!, receivedRequest));
         }
     }
 
     private async loadSentRequests() {
-        const successes = await Promise.all(_.map(this.#x3dhManager.allPendingSentRequests, 
+        const successes = await Promise.all(_.map(this.#x3dhManager!.allPendingSentRequests,
             async ({ sessionId, myAlias, otherAlias, messageId, timestamp, otherUser, text }) => {
                 this.addChat(new SentChatRequest(otherUser, sessionId, messageId, timestamp, text ));
                 await this.processSentRequest(sessionId, myAlias, otherAlias);
@@ -601,13 +602,13 @@ export default class Client {
 
     private async processSentRequest(sessionId: string, toAlias?: string, fromAlias?: string) {
         if (!toAlias) {
-            const pending = this.#x3dhManager.getPendingSentRequest(sessionId);
+            const pending = this.#x3dhManager!.getPendingSentRequest(sessionId);
             if (!pending) return false;
             const { myAlias, otherAlias } = pending;
             toAlias = myAlias;
             fromAlias = otherAlias;
         }
-        const result = await this.#socketHandler.GetMessageHeaders({ sessionId, toAlias, fromAlias });
+        const result = await this.#socketHandler!.GetMessageHeaders({ sessionId, toAlias, fromAlias: fromAlias! });
         if ("reason" in result) {
             logError(result);
             return false;
@@ -624,7 +625,8 @@ export default class Client {
             return false;
         }
         let exportedChattingSession: EncryptedData;
-        const profileResponse = await this.#x3dhManager.receiveChatRequestResponse(message, async (exported) => {
+        const profileResponse = await this.#x3dhManager!.receiveChatRequestResponse(message, async (exported) => {
+            if (!exported) return false;
             exportedChattingSession = exported;
             return true;
         });
@@ -633,20 +635,20 @@ export default class Client {
             return false;
         }
         const [x3dhData, { profile, respondedAt }] = profileResponse;
-        const { reason: r1 } = await this.#socketHandler.UpdateX3DHData({ x3dhData });
+        const { reason: r1 } = await this.#socketHandler!.UpdateX3DHData({ x3dhData });
         if (r1) {
             logError(r1);
             return false;
         }
         const { messageId, text, timestamp } = sentRequest.chatMessage.displayMessage;
         const firstMessage = { messageId, text, timestamp, sentByMe: true, respondedAt };
-        await this.createNewChat(sessionId, firstMessage, profile, exportedChattingSession);
-        await this.#socketHandler.MessageHeaderProcessed({ sessionId, headerId, toAlias });
+        await this.createNewChat(sessionId, firstMessage, profile, exportedChattingSession!);
+        await this.#socketHandler!.MessageHeaderProcessed({ sessionId, headerId, toAlias });
         return true;
     }
 
     private async fetchNewReceivedRequests() {
-        const requests = await this.#socketHandler.GetAllRequests([]);
+        const requests = await this.#socketHandler!.GetAllRequests([]);
         if ("reason" in requests) {
             logError(requests);
             return false;
@@ -658,20 +660,20 @@ export default class Client {
     private async processNewReceivedRequest(request: ChatRequestHeader) {
         let deleteFromServer = true;
         let success = false;
-        const result = await this.#x3dhManager.processReceivedChatRequest(request);
+        const result = await this.#x3dhManager!.processReceivedChatRequest(request);
         if (typeof result === "string") {
             logError(result);
             if (result === "Unknown Error") deleteFromServer = false;
         }
         else {
             const [x3dhData, receivedRequest] = result;
-            if ((await this.#socketHandler.UpdateX3DHData({ x3dhData }))?.reason !== false) {
+            if ((await this.#socketHandler!.UpdateX3DHData({ x3dhData }))?.reason !== false) {
                 logError(result);
                 deleteFromServer = false;
             }
             else success = !!receivedRequest;
         }
-        if (deleteFromServer && (await this.#socketHandler.DeleteChatRequest({ headerId: request.headerId }))?.reason !== false) {
+        if (deleteFromServer && (await this.#socketHandler!.DeleteChatRequest({ headerId: request.headerId }))?.reason !== false) {
             logError(result);
             return false;
         }
@@ -680,9 +682,10 @@ export default class Client {
 
     private async acceptReceivedRequest(sessionId: string, respondedAt: number) {
         const { profile: myProfile } = this;
-        const viewChatRequest = this.#x3dhManager.getPendingReceivedRequest(sessionId);
+        const viewChatRequest = this.#x3dhManager!.getPendingReceivedRequest(sessionId);
         let exportedChattingSession: EncryptedData;
-        const response = await this.#x3dhManager.acceptChatRequest(sessionId, respondedAt, myProfile, async (exported) => {
+        const response = await this.#x3dhManager!.acceptChatRequest(sessionId, respondedAt, myProfile, async (exported) => {
+            if (!exported) return false;
             exportedChattingSession = exported;
             return true;
         });
@@ -691,30 +694,30 @@ export default class Client {
             return false;
         }
         const { profile, text, messageId, timestamp, myAlias, otherAlias } = viewChatRequest;
-        const registered = await this.#socketHandler.RegisterPendingSession({ sessionId, myAlias, otherAlias });
+        const registered = await this.#socketHandler!.RegisterPendingSession({ sessionId, myAlias, otherAlias });
         if (registered?.reason !== false) {
             logError(registered);
             return false;
         }
         const [x3dhData, messageHeader] = response;
-        const result = await this.#socketHandler.UpdateX3DHData({ x3dhData });
+        const result = await this.#socketHandler!.UpdateX3DHData({ x3dhData });
         if (result?.reason !== false) {
             logError(result);
             return false;
         }
-        const sent = await this.#socketHandler.SendMessage(messageHeader);
+        const sent = await this.#socketHandler!.SendMessage(messageHeader);
         if (sent?.reason !== false) {
             logError(sent);
             return false;
         }
         const firstMessage = { text, messageId, sentByMe: false, timestamp, respondedAt };
-        await this.createNewChat(sessionId, firstMessage, profile, exportedChattingSession);
+        await this.createNewChat(sessionId, firstMessage, profile, exportedChattingSession!);
         return true;
     }
 
     private async rejectReceivedRequest(sessionId: string) {
-        const x3dhData = await this.#x3dhManager.rejectReceivedRequest(sessionId);
-        const result = await this.#socketHandler.UpdateX3DHData({ x3dhData });
+        const x3dhData = await this.#x3dhManager!.rejectReceivedRequest(sessionId);
+        const result = await this.#socketHandler!.UpdateX3DHData({ x3dhData: x3dhData! });
         if (result?.reason !== false) {
             logError(result);
             return false;
@@ -723,7 +726,7 @@ export default class Client {
         return true;
     }
 
-    private async respond<E extends SocketServerSideEventsKey>(event: E, data: string, responseBy: (arg0: SocketServerRequestParameters[E]) => SocketServerRequestReturn[E], resolve: (arg0: string) => void) {
+    private async respond<E extends SocketServerSideEventsKey>(event: E, data: string, responseBy: (arg0: SocketServerRequestParameters[E]) => SocketServerRequestReturn[E], resolve: (arg0: string | null) => void) {
         const encryptResolve = async (response: SocketServerRequestReturn[E] | Failure) => {
             if (!this.#sessionCrypto) resolve(null);
             else resolve(await this.#sessionCrypto?.signEncryptToBase64({ payload: response }, event));
@@ -769,8 +772,8 @@ export default class Client {
     }
 
     private async issueNewKeys({ n }: { n: number }) {
-        if (n === 0) return await this.#x3dhManager.replacePreKey();
-        else return await this.#x3dhManager.issueOneTimeKeys(n);
+        if (n === 0) return await this.#x3dhManager!.replacePreKey();
+        else return await this.#x3dhManager!.issueOneTimeKeys(n);
     }
 
     private async receiveServerMemos({ serverMemos }: { serverMemos: ServerMemo[] }) {
@@ -784,16 +787,16 @@ export default class Client {
                     processed.push(result.memoId);
                 }
             }
-            await this.#socketHandler.ServerMemosProcessed({ processed, x3dhData });
+            await this.#socketHandler!.ServerMemosProcessed({ processed, x3dhData: x3dhData! });
             resolve(null);
         });
         return { reason: false };
     }
 
     private async processServerMemo(serverMemo: ServerMemo): Promise<{} | { memoId: string, x3dhData: X3DHKeysData }> {
-        const { memoId, memoData } = (await this.#x3dhManager.unpackServerMemo<{ memoType: "KeyBundleIssued", keyBundleId: KeyBundleId }>(serverMemo, this.#serverVerifyingKey)) || {};
+        const { memoId, memoData } = (await this.#x3dhManager!.unpackServerMemo<{ memoType: "KeyBundleIssued", keyBundleId: KeyBundleId }>(serverMemo, this.#serverVerifyingKey)) || {};
         if (!memoId) return {};
-        const x3dhData = await this.#x3dhManager.registerBundle(memoData.keyBundleId);
+        const x3dhData = await this.#x3dhManager!.registerBundle(memoData?.keyBundleId!);
         return { memoId, x3dhData };
     }
 

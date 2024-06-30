@@ -121,7 +121,7 @@ export async function deriveSignMac(data: Buffer, keyBits: CryptoKey | BufferSou
 
 export async function deriveVerifyMac(originalData: Buffer, signature: Buffer, keyBits: CryptoKey | BufferSource, salt: Buffer, purpose: string, length: 256 | 512 = 256) {
     return await verify(originalData, signature, await deriveMACKey(keyBits, salt, purpose, length));
-    
+
 }
 
 export async function deriveMasterKeyBits(str: string, pInfo: PasswordDeriveInfo): Promise<Buffer>;
@@ -180,6 +180,9 @@ export async function deriveDecryptVerify(encrypted: EncryptedData | SignedEncry
         const { hSalt, ciphertext } = encrypted;
         const plaintext = await decrypt(await deriveAESKey(keyBits, hSalt, purpose), ciphertext);
         if ("signature" in encrypted) {
+            if (!verifyingKey) {
+                throw new Error("No verifying key provided");
+            }
             const verified = await verify(plaintext, encrypted.signature, verifyingKey);
             if (!verified) {
                 return null;
@@ -231,10 +234,10 @@ export async function exportSignedKeyPair(signedKeyPair: SignedKeyPair, keyBits:
     return { exportedPublicKey, wrappedPrivateKey, signature };
 }
 
-export async function verifyKey(signedKey: ExposedSignedPublicKey, verifyingKey: CryptoKey | BufferSource): Promise<CryptoKey> {
+export async function verifyKey(signedKey: ExposedSignedPublicKey, verifyingKey: CryptoKey | BufferSource): Promise<CryptoKey | null> {
     const { exportedPublicKey, signature } = signedKey;
     if (!("algorithm" in verifyingKey)) {
-        verifyingKey = await importKey(verifyingKey, "ECDSA", "public", false);   
+        verifyingKey = await importKey(verifyingKey, "ECDSA", "public", false);
     }
     if (!(await verify(exportedPublicKey, signature, verifyingKey)))
         return null;
@@ -268,4 +271,5 @@ function assignSubtle(): SubtleCrypto {
     if (isNode) {
         return eval("require('node:crypto').webcrypto.subtle");
     }
+    throw new Error("Couldn't identify environment");
 }

@@ -30,14 +30,14 @@ export default function Dialog({ children, open, onDismiss, outsidePress, overla
   const role = useRole(context);
 
   const interactions = useInteractions([dismiss, role]);
-  const mainRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLDivElement | null>(null);
   const [focusElement, clickedInside] = keepFocusIn || [];
 
-  const onFocusIn = 
+  const onFocusIn =
     clickedInside
-      ? () => focusElement.current?.focus()
+      ? () => focusElement?.current?.focus()
       : null;
-  const onClick = 
+  const onClick =
     clickedInside
       ? () => clickedInside.current = false
       : null;
@@ -45,31 +45,32 @@ export default function Dialog({ children, open, onDismiss, outsidePress, overla
     clickedInside
       ? () => {
                 clickedInside.current = true;
-                focusElement.current?.focus();
+                focusElement?.current?.focus();
               }
       : null;
 
   useLayoutEffect(() => {
-    if (keepFocusIn) {
-      focusElement.current?.focus();
-      return () => {
-      mainRef.current?.removeEventListener("mousedown", onMouseDown, { capture: true });
-      mainRef.current?.removeEventListener("click", onClick, { capture: true });
-      mainRef.current?.removeEventListener("focusin", onFocusIn, { capture: true });
+      if (keepFocusIn) {
+        focusElement?.current?.focus();
+        return () => {
+        mainRef.current?.removeEventListener("mousedown", onMouseDown as any, { capture: true });
+        mainRef.current?.removeEventListener("click", onClick as any, { capture: true });
+        mainRef.current?.removeEventListener("focusin", onFocusIn as any, { capture: true });
+      }
     }
-  }
+    return undefined;
   }, []);
 
   return (
     <FloatingTreeWrapper open={open}>
       {(zIndex) => (
         <FloatingPortal>
-        <FloatingOverlay className="Dialog-overlay" 
+        <FloatingOverlay className="Dialog-overlay"
           ref={(elem) => {
             if (!keepFocusIn) return;
-            elem?.addEventListener("mousedown", onMouseDown, { capture: true });
-            elem?.addEventListener("click", onClick, { capture: true });
-            elem?.addEventListener("focusin", onFocusIn, { capture: true });
+            elem?.addEventListener("mousedown", onMouseDown as any, { capture: true });
+            elem?.addEventListener("click", onClick as any, { capture: true });
+            elem?.addEventListener("focusin", onFocusIn as any, { capture: true });
             mainRef.current = elem;
           }}
           lockScroll
@@ -84,17 +85,17 @@ export default function Dialog({ children, open, onDismiss, outsidePress, overla
                 bottom: "0px",
                 left: "0px",
                 right: "0px",
-                display: "flex", 
-                justifyContent: "center", 
+                display: "flex",
+                justifyContent: "center",
                 alignItems: "center" }}>
               <div
                 style={{
                   height: "fit-content",
                   width: "fit-content",
-                  display: "flex", 
-                  justifyContent: "center", 
+                  display: "flex",
+                  justifyContent: "center",
                   alignItems: "center" }}
-                onClick={ outsidePress 
+                onClick={ outsidePress
                   ? (e) => {
                     e.stopPropagation();
                     return false;

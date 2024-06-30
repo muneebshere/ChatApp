@@ -33,14 +33,14 @@ window.onerror = function(message, url, line, col, error) {
   logError({ message, url, line, col, error });
 };
 
-createRoot(document.getElementById("root")).render(<Root/>);
+createRoot(document.getElementById("root")!).render(<Root/>);
 setupJsHashChecker();
 
 async function setupJsHashChecker() {
   const response = await fetch("/files/main.js");
   const currentJsHash = await crypto.digestToBase64("SHA-256", await response.arrayBuffer());
   let changed = false;
-  let interval: number = null;
+  let interval: number | null = null;
   setInterval();
 
   function setInterval(cancelled = false) {
@@ -50,11 +50,11 @@ async function setupJsHashChecker() {
   async function check() {
     if (!changed) {
       const latestJsHash = await AuthClient.latestJsHash();
-      changed = latestJsHash && latestJsHash !== currentJsHash;
+      changed = !!latestJsHash && latestJsHash !== currentJsHash;
     }
     if (changed) {
       console.log("js file changed.");
-      window.clearInterval(interval);
+      window.clearInterval(interval!);
       if (window.confirm("Js script file out of date. Reload?")) window.history.go();
       else setInterval(true);
     }
@@ -78,7 +78,7 @@ function App() {
   const [status, setStatus] = useState<ConnectionStatus>("NotLoaded");
   const [connectionStatus, setConnectionStatus] = useState<AuthConnectionStatus>("Online");
   const [currentTab, setCurrentTab] = useState<0 | 1>(0);
-  const [visualHeight, setVisualHeight] = useState(window.visualViewport.height);
+  const [visualHeight, setVisualHeight] = useState(window.visualViewport!.height);
   const [currentChatWith, setCurrentChatWith] = useState("");
   const updateStatus = () => Client.connectionStatus().then((status) => setStatus(status));
   const updateConnectionStatus = useCallback((currentConnectionStatus: AuthConnectionStatus) => {
@@ -89,7 +89,7 @@ function App() {
   },[connectionStatus])
 
   useEffect(() => {
-    const updateHeight = () => setVisualHeight(window.visualViewport.height - (navigator as any).virtualKeyboard.boundingRect.height);
+    const updateHeight = () => setVisualHeight(window.visualViewport!.height - (navigator as any).virtualKeyboard.boundingRect.height);
     const onContextMenu = (e: Event) => {
       e.preventDefault();
       return false;
@@ -98,14 +98,14 @@ function App() {
     window.addEventListener("online", updateStatus);
     window.addEventListener("offline", updateStatus);
     window.addEventListener("beforeunload", (e) => AuthClient.terminateCurrentSession(), { capture: true, once: true });
-    window.visualViewport.addEventListener("resize", updateHeight);
+    window.visualViewport!.addEventListener("resize", updateHeight);
     AuthClient.subscribeConnectionStatus(updateConnectionStatus);
     initiate();
     return () => {
       document.body.removeEventListener("contextmenu", onContextMenu, { capture: true });
       window.removeEventListener("online", updateStatus);
       window.removeEventListener("offline", updateStatus);
-      window.visualViewport.removeEventListener("resize", updateHeight);
+      window.visualViewport!.removeEventListener("resize", updateHeight);
       AuthClient.subscribeConnectionStatus(null);
     }
   }, []);

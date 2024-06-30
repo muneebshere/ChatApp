@@ -12,7 +12,7 @@ export type DisconnectedStatus = Exclude<ClientConnectionStatus, "Online">;
 type DisconnectedProps = {
   status: DisconnectedStatus;
   countdownTick: {
-    subscribe: (tick: (tryingAgainIn: number) => void) => void;
+    subscribe: (tick: ((tryingAgainIn: number) => void) | null) => void;
     pause: () => void;
     resume: () => void;
   }
@@ -41,27 +41,27 @@ function displayProps(status: DisconnectedStatus, tryingAgainIn: number, dots: n
     return { fuseBorder, color, icon, message, buttonAction };
   }
   else {
-    const fuseBorder: SxProps = 
-      tryingAgainIn > 0 
-        ? { borderBottomRightRadius: 0, borderBottomLeftRadius: 0 } 
+    const fuseBorder: SxProps =
+      tryingAgainIn > 0
+        ? { borderBottomRightRadius: 0, borderBottomLeftRadius: 0 }
         : {};
     const color = "danger";
-    const icon = 
+    const icon =
       status === "ClientOffline"
             ? <WifiOff sx={{ fontSize: "2.5rem", marginBlock: "auto" }}/>
-            : (status === "ServerUnreachable" 
+            : (status === "ServerUnreachable"
                 ? <CloudOff sx={{ fontSize: "2.5rem", marginBlock: "auto" }}/>
                 : <MobiledataOffSharp sx={{ fontSize: "2.5rem", marginBlock: "auto" }}/>);
-    const message = 
+    const message =
       (status === "ClientOffline"
           ? "You are offline."
           : (status === "ServerUnreachable"
               ? "Couldn't reach server."
               : "Connection down.")) +
-      (paused 
+      (paused
         ? ""
-        :(tryingAgainIn <= 0 
-          ? ` Reconnecting${'.'.repeat((dots % 5) + 1)}` 
+        :(tryingAgainIn <= 0
+          ? ` Reconnecting${'.'.repeat((dots % 5) + 1)}`
           : ` Attempting to reconnect in ${Math.ceil(tryingAgainIn/1000)}.`));
     const buttonAction = unauthenticated(status) ? "Reload page" : "Retry now";
     return { fuseBorder, color, icon, message, buttonAction };
@@ -73,10 +73,10 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
   const [tryingAgainIn, setTryingAgainIn] = useState(0);
   const [dots, setDots] = useState(0);
   const [paused, setPaused] = useState(false);
-  const waitValueRef = useRef(30);
-  const waitTillRef = useRef(1);
+  const waitValueRef = useRef<number | null>(30);
+  const waitTillRef = useRef<number | null>(1);
   const [warnReload, setWarnReload] = useState(false);
-  const intervalRef = useRef<number>(null);
+  const intervalRef = useRef<number | null>(null);
   const previousStatus = usePrevious(status);
   const display = displayProps(status, tryingAgainIn, dots, paused);
   const retrying = tryingAgainIn <= 0;
@@ -86,9 +86,9 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
       if (waitTillRef.current && Date.now() > waitTillRef.current) {
         setWarnReload(true);
       }
-    } 
+    }
     else {
-      setWarnReload(false); 
+      setWarnReload(false);
       if (retrying && !paused) {
         intervalRef.current = window.setInterval(() => setDots((dots) => dots + 1), 500);
       }
@@ -120,18 +120,18 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
   }, []);
 
   const retryButton = (
-    <IconButton 
-      variant="soft" 
+    <IconButton
+      variant="soft"
       color={display.color}
       disabled={!unauthenticated(status) && tryingAgainIn === 0}
       onClick={
-        unauthenticated(status) 
-          ? () => window.history.go() 
-          : () => { 
+        unauthenticated(status)
+          ? () => window.history.go()
+          : () => {
             setPaused(false);
             countdownTick.resume();
             forceReconnect();
-          }} 
+          }}
       sx={{ borderRadius: "100%", padding: "0px", width: "fit-content", margin: "auto" }}>
       <ReplayCircleFilledSharp sx={{ fontSize: "1.8rem" }}/>
     </IconButton>);
@@ -139,8 +139,8 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
   return (
     <div style={{ width: "100%", display: "flex", flexDirection: "row", padding: 0, justifyContent: "center" }}>
       <Stack direction="column" sx={{ width: belowXL ? "100%" : "40%" }}>
-        <Alert 
-          variant="soft" 
+        <Alert
+          variant="soft"
           size="md"
           color={display.color}
           sx={{ justifyContent: "center", ...display.fuseBorder }}>
@@ -152,13 +152,13 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
               </DisableSelectTypography>
               {!unauthenticated(status) && !paused && !retrying &&
                 <Stack direction="column" spacing={0.2}>
-                  <IconButton 
-                    variant="soft" 
+                  <IconButton
+                    variant="soft"
                     color="danger"
                     onClick={() => {
                       countdownTick.pause();
                       setPaused(true);
-                    }} 
+                    }}
                     sx={{ borderRadius: "100%", padding: "0px", width: "fit-content", margin: "auto" }}>
                     <StopCircleSharp sx={{ fontSize: "1.8rem" }}/>
                   </IconButton>
@@ -175,7 +175,7 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
                     :  (<CircularProgress
                           variant="soft"
                           color="danger"
-                          thickness={2} 
+                          thickness={2}
                           determinate
                           value={paused ? 0 : 100 - (tryingAgainIn/50)}
                           sx={{ margin: "auto", "--CircularProgress-size": "38px" }}>
@@ -188,9 +188,9 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
             </Stack>
           </Stack>
         </Alert>
-        {!unauthenticated(status) && !retrying && !paused && 
-        <LinearProgress 
-          variant="soft" 
+        {!unauthenticated(status) && !retrying && !paused &&
+        <LinearProgress
+          variant="soft"
           color="danger"
           thickness={3}
           determinate
@@ -226,7 +226,7 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
           </DisableSelectTypography>
           <DisableSelectTypography textColor="text.tertiary" textAlign="left" sx={{ marginBottom: "3px" }}>
             <span>
-              You may be logged out on reloading if you didn't select 
+              You may be logged out on reloading if you didn't select
             </span>
             <span style={{ fontWeight: "bold", whiteSpace: "pre-wrap" }}>
               {" Save password "}
@@ -242,7 +242,7 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
             <DisableSelectTypography sx={{ marginBlock: "auto", marginInline: 0 }}>
               Ask me again in:
             </DisableSelectTypography>
-            <Select 
+            <Select
               size="sm"
               defaultValue={waitValueRef.current}
               indicator={<KeyboardArrowDown/>}
@@ -267,7 +267,7 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
             <Grid xs={6} sx={{ display: "flex", flexWrap: "wrap", justifyContent: "center", paddingInline: "45px" }}>
               <Button variant="solid" color="primary" sx={{ flexGrow: 1 }} onClick={ () => {
                   setWarnReload(false);
-                  window.history.go(); 
+                  window.history.go();
                 } }>
                   Reload page
               </Button>
@@ -283,7 +283,7 @@ export default function DisconnectedAlert({ status, countdownTick, forceReconnec
               </Button>
             </Grid>
           </Grid>
-        </Sheet>      
+        </Sheet>
       </Dialog>
     </div>
   )

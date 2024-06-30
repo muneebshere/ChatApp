@@ -37,14 +37,14 @@ export default function SvgMessageCard(props: SvgMessageProps) {
             ], { duration: 1000, easing: "ease-out", id: "darkenAnimation" }).onfinish = () => darkenFinished();
         }
       };
-    } 
+    }
   }, [darken]);
-  
+
   const pointWidth = 15;
   const pointHeight = 10;
   const polygon = sentByMe ? "polygon(100% 0%, 0% 100%, 0% 0%)" : "polygon(0 0, 100% 0%, 100% 100%)";
 
-  const PointBefore = 
+  const PointBefore =
     first
       ? styled.div`
       :before {
@@ -59,14 +59,14 @@ export default function SvgMessageCard(props: SvgMessageProps) {
         clip-path: ${polygon};
       }`
       : styled.div``;
-  
+
   const outerStyle: React.CSSProperties = {
     display: "flex",
     justifyContent: sentByMe ? "flex-end" : "flex-start",
     filter: shadowString
   }
-      
-  const radiusPosition: React.CSSProperties = 
+
+  const radiusPosition: React.CSSProperties =
     first
       ? (sentByMe
         ? { borderTopRightRadius: 0 }

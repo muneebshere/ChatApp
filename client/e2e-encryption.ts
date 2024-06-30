@@ -33,12 +33,12 @@ type MessageEvent = Readonly<{
     responding: false
 }>;
 
-type ProfileMessage = { 
-    readonly profile: Profile 
+type ProfileMessage = {
+    readonly profile: Profile
 };
 
-export type DirectChannelMessage = Readonly<{ 
-    action: "requesting" | "responding" | "establishing" | "accepted", 
+export type DirectChannelMessage = Readonly<{
+    action: "requesting" | "responding" | "establishing" | "accepted",
     directChannelId: string
 }>;
 
@@ -59,7 +59,7 @@ type ReceivingMessage = MessageBody & MessageContent;
 
 export type SendingMessage = Omit<MessageBody, "sender"> & MessageContent;
 
-type ChatRequestBody = Readonly<{ 
+type ChatRequestBody = Readonly<{
     messageId: string;
     myAlias: string;
     yourAlias: string;
@@ -95,7 +95,7 @@ export type ViewReceivedRequest = Omit<ViewSentRequest, "otherUser"> & Readonly<
 
 type ReceivedChatRequest = ViewReceivedRequest & Readonly<{
     sharedRoot: Buffer,
-    importedVerifyingIdentityKey: CryptoKey, 
+    importedVerifyingIdentityKey: CryptoKey,
     importedDHInitializer: CryptoKey
 }>;
 
@@ -105,7 +105,7 @@ type ExportedSentChatRequest = Omit<SentChatRequest, "recipientVerifyKey" | "myP
 }>;
 
 type ExportedReceivedChatRequest = Omit<ReceivedChatRequest, "importedVerifyingIdentityKey" |  "importedDHInitializer"> & Readonly<{
-    importedVerifyingIdentityKey: Buffer, 
+    importedVerifyingIdentityKey: Buffer,
     importedDHInitializer: Buffer
 }>;
 
@@ -167,10 +167,10 @@ interface X3DHIdentityInterface {
 }
 
 interface X3DHKeysInterface {
-    getIssuedBundle(bundleId: string): KeyBundleId;
-    getPreKey(version: number): CryptoKey;
-    getOneTimeKey(oneTimeKeyIdentifier: string): CryptoKey;
-    delete(bundleId: string): Promise<X3DHKeysData>
+    getIssuedBundle(bundleId: string): KeyBundleId | undefined;
+    getPreKey(version: number): CryptoKey | undefined;
+    getOneTimeKey(oneTimeKeyIdentifier: string | undefined): CryptoKey | undefined;
+    delete(bundleId: string): Promise<X3DHKeysData | null>
 }
 
 class X3DHIdentity {
@@ -206,11 +206,11 @@ class X3DHIdentity {
                 deriveDecryptVerify: <T extends any>(encryptedData: SignedEncryptedData, sharedRoot: CryptoKey | Buffer, purpose: string, otherVerifyingKey?: CryptoKey) => this.deriveDecryptVerify(encryptedData, sharedRoot, purpose, otherVerifyingKey),
                 x3dhEncrypt: <T extends any>(initialData: T, purpose: string) => this.x3dhEncrypt(initialData, purpose),
                 x3dhDecrypt: <T extends any>(encryptedData: EncryptedData, purpose: string) => this.x3dhDecrypt(encryptedData, purpose),
-                sign: (data: Buffer) => this.sign(data) 
+                sign: (data: Buffer) => this.sign(data)
             };
     }
 
-    static async new(username: string, encryptionBaseVector: CryptoKey): Promise<[X3DHIdentity, EncryptedData]> {
+    static async new(username: string, encryptionBaseVector: CryptoKey): Promise<[X3DHIdentity, EncryptedData] | null> {
             const identitySigningKeyPair = await crypto.generateKeyPair("ECDSA");
             const identityDHKeyPair = await crypto.generateSignedKeyPair(identitySigningKeyPair.privateKey);
             const x3dhBase = getRandomVector(64);
@@ -218,10 +218,11 @@ class X3DHIdentity {
             const x3dhBaseVector = await crypto.importRaw(x3dhBase);
             const identity = new X3DHIdentity(username, x3dhBaseVector, x3dhBaseEncrypted, identitySigningKeyPair, await crypto.exportKey(identitySigningKeyPair.publicKey), identityDHKeyPair);
             const exported = await identity.export(encryptionBaseVector);
+            if (!exported) return null;
             return [identity, exported];
     }
 
-    static async import(username: string, encryptedIdentity: EncryptedData, encryptionBaseVector: CryptoKey) : Promise<X3DHIdentity> {
+    static async import(username: string, encryptedIdentity: EncryptedData, encryptionBaseVector: CryptoKey) : Promise<X3DHIdentity | null> {
         try {
             const importedIdentity: ExportedX3DHIdentity = await crypto.deriveDecrypt(encryptedIdentity, encryptionBaseVector,`Export|Import ${username} X3DH Identity`);
             if (!importedIdentity) {
@@ -244,7 +245,7 @@ class X3DHIdentity {
         }
     }
 
-    private async export(encryptionBaseVector: CryptoKey): Promise<EncryptedData> {
+    private async export(encryptionBaseVector: CryptoKey): Promise<EncryptedData | null> {
         try {
             const { username } = this;
             const identitySigningKeyPair = await crypto.exportSigningKeyPair(this.#identitySigningKeyPair, encryptionBaseVector, `User ${username} X3DH Identity Signing`);
@@ -329,7 +330,7 @@ class X3DHKeys {
     readonly interface = {
         getIssuedBundle: (bundleId: string) => this.getIssuedBundle(bundleId),
         getPreKey: (version: number) => this.getPreKey(version),
-        getOneTimeKey: (oneTimeKeyIdentifier: string) => this.getOneTimeKey(oneTimeKeyIdentifier),
+        getOneTimeKey: (oneTimeKeyIdentifier: string | undefined) => this.getOneTimeKey(oneTimeKeyIdentifier),
         delete: (bundleId: string) => this.delete(bundleId)
     };
 
@@ -339,14 +340,16 @@ class X3DHKeys {
         this.#currentPreKeyVersion = currentPreKeyVersion;
     }
 
-    static async new(identity: X3DHIdentityInterface): Promise<[NewUserData["firstKeys"], X3DHKeys, X3DHKeysData]> {
+    static async new(identity: X3DHIdentityInterface): Promise<[NewUserData["firstKeys"], X3DHKeys, X3DHKeysData] | null> {
         const x3dhKeys = new X3DHKeys(identity, new Map(), 0);
-        const { preKey } = await x3dhKeys.replacePreKey();
-        const { oneTimeKeys, x3dhKeysData } = await x3dhKeys.issueOneTimeKeys(1);
+        const { preKey } = await x3dhKeys.replacePreKey() || { preKey: null };
+        const keys = await x3dhKeys.issueOneTimeKeys(1);
+        if (!keys || !preKey) return null;
+        const { oneTimeKeys, x3dhKeysData } = keys;
         return [{ preKey, oneTimeKey: oneTimeKeys[0] }, x3dhKeys, x3dhKeysData];
     }
 
-    static async import(encryptedKeys: EncryptedData, identity: X3DHIdentityInterface) : Promise<X3DHKeys> {
+    static async import(encryptedKeys: EncryptedData, identity: X3DHIdentityInterface) : Promise<X3DHKeys | null> {
         try {
             const { username } = identity;
             const importedKeys: ExportedX3DHKeys = await identity.x3dhDecrypt(encryptedKeys, `Export|Import ${username} X3DH Keys`);
@@ -355,8 +358,8 @@ class X3DHKeys {
             }
             const {
                 currentPreKeyVersion,
-                preKeys, 
-                oneTimeKeys, 
+                preKeys,
+                oneTimeKeys,
                 issuedBundles: encryptedIssuedBundles } = importedKeys;
             const issuedBundles: Map<string, KeyBundleId> = await identity.x3dhDecrypt(encryptedIssuedBundles, `${username} X3DH Issued Bundles`);
             const x3dhKeys = new X3DHKeys(identity, issuedBundles, currentPreKeyVersion);
@@ -374,7 +377,7 @@ class X3DHKeys {
         }
     }
 
-    private async export(): Promise<EncryptedData> {
+    private async export(): Promise<EncryptedData | null> {
         try {
             const currentPreKeyVersion = this.#currentPreKeyVersion;
             const { username } = this.#identity;
@@ -400,36 +403,38 @@ class X3DHKeys {
         catch (err) {
             logError(err);
             return null;
-        } 
+        }
     }
 
-    private async exportData(): Promise<X3DHKeysData> {
+    private async exportData(): Promise<X3DHKeysData | null> {
         const x3dhKeys = await this.export();
+        if (!x3dhKeys) return null;
         return { x3dhKeys };
     }
 
-    getIssuedBundle(bundleId: string): KeyBundleId {
+    getIssuedBundle(bundleId: string): KeyBundleId | undefined {
         return this.#issuedBundles.get(bundleId);
     }
 
-    getPreKey(version: number): CryptoKey {
+    getPreKey(version: number): CryptoKey | undefined {
         return this.#preKeys.get(version);
     }
 
-    getOneTimeKey(oneTimeKeyIdentifier: string): CryptoKey {
+    getOneTimeKey(oneTimeKeyIdentifier: string | undefined): CryptoKey | undefined {
+        if (!oneTimeKeyIdentifier) return undefined;
         return this.#oneTimeKeys.get(oneTimeKeyIdentifier);
     }
 
-    async delete(bundleId: string): Promise<X3DHKeysData> {
+    async delete(bundleId: string): Promise<X3DHKeysData | null> {
         const { preKeyVersion, oneTimeKeyIdentifier } = this.#issuedBundles.get(bundleId) || {};
         if (!oneTimeKeyIdentifier) return null;
         this.#issuedBundles.delete(bundleId);
         this.#oneTimeKeys.delete(oneTimeKeyIdentifier);
-        if (preKeyVersion < this.#currentPreKeyVersion && [...this.#issuedBundles.values()].every(({ preKeyVersion: v }) => v !== preKeyVersion)) this.#preKeys.delete(preKeyVersion);
+        if (preKeyVersion! < this.#currentPreKeyVersion && [...this.#issuedBundles.values()].every(({ preKeyVersion: v }) => v !== preKeyVersion)) this.#preKeys.delete(preKeyVersion!);
         return await this.exportData();
     }
 
-    async issueOneTimeKeys(n: number): Promise<IssueOneTimeKeysResponse> {
+    async issueOneTimeKeys(n: number): Promise<IssueOneTimeKeysResponse | null> {
         const oneTimeKeys = new Array<[string, ExposedSignedPublicKey]>();
         for (let i = 0; i < n; i++) {
             const newKey = await this.#identity.generateSignedKeyPair();
@@ -438,19 +443,21 @@ class X3DHKeys {
             this.#oneTimeKeys.set(id, newKey.keyPair.privateKey);
         }
         const x3dhKeysData = await this.exportData();
+        if (!x3dhKeysData) return null;
         return { x3dhKeysData, oneTimeKeys };
     }
 
-    async replacePreKey(): Promise<ReplacePreKeyResponse> {
+    async replacePreKey(): Promise<ReplacePreKeyResponse | null> {
         const newKey = await this.#identity.generateSignedKeyPair();
         const newVersion = this.#currentPreKeyVersion + 1;
         this.#preKeys.set(newVersion, newKey.keyPair.privateKey);
         this.#currentPreKeyVersion = newVersion;
         const x3dhKeysData = await this.exportData();
+        if (!x3dhKeysData) return null;
         return { x3dhKeysData, preKey: [newVersion, crypto.exposeSignedKey(newKey)] };
     }
 
-    async registerBundle(keyBundleId: KeyBundleId): Promise<X3DHKeysData> {
+    async registerBundle(keyBundleId: KeyBundleId): Promise<X3DHKeysData | null> {
         this.#issuedBundles.set(keyBundleId.bundleId, keyBundleId);
         return await this.exportData();
     }
@@ -469,13 +476,14 @@ class X3DHRequests {
         this.maxSkip = maxSkip;
     }
 
-    static async new(identity: X3DHIdentityInterface, keys: X3DHKeysInterface, maxSkip = 20): Promise<[X3DHRequests, X3DHRequestsData]> {
+    static async new(identity: X3DHIdentityInterface, keys: X3DHKeysInterface, maxSkip = 20): Promise<[X3DHRequests, X3DHRequestsData] | null> {
         const x3dhRequests = new X3DHRequests(identity, keys, maxSkip);
         const x3dhRequestsData = await x3dhRequests.exportData();
+        if (!x3dhRequestsData) return null;
         return [x3dhRequests, x3dhRequestsData];
     }
 
-    static async import(encryptedRequests: EncryptedData, identity: X3DHIdentityInterface, keys: X3DHKeysInterface) : Promise<X3DHRequests> {
+    static async import(encryptedRequests: EncryptedData, identity: X3DHIdentityInterface, keys: X3DHKeysInterface) : Promise<X3DHRequests | null> {
         try {
             const { username } = identity;
             const importedRequests: ExportedX3DHRequests = await identity.x3dhDecrypt(encryptedRequests, `Export|Import ${username} X3DH Requests`);
@@ -511,7 +519,7 @@ class X3DHRequests {
         }
     }
 
-    private async export(): Promise<EncryptedData> {
+    private async export(): Promise<EncryptedData | null> {
         try {
             const { username } = this.#identity;
             const { maxSkip } = this;
@@ -546,8 +554,9 @@ class X3DHRequests {
         }
     }
 
-    private async exportData(): Promise<X3DHRequestsData> {
+    private async exportData(): Promise<X3DHRequestsData | null> {
         const x3dhRequests = await this.export();
+        if (!x3dhRequests) return null;
         return { x3dhRequests };
     }
 
@@ -564,14 +573,14 @@ class X3DHRequests {
     }
 
     getPendingSentRequest(sessionId: string): ViewSentRequest {
-        return _.pick(this.#sentChatRequests.get(sessionId), "messageId", "timestamp", "otherUser", "text", "sessionId", "myAlias", "otherAlias", "headerId");
+        return _.pick(this.#sentChatRequests.get(sessionId), "messageId", "timestamp", "otherUser", "text", "sessionId", "myAlias", "otherAlias", "headerId") as ViewSentRequest;
     }
 
     getPendingReceivedRequest(sessionId: string): ViewReceivedRequest {
         return _.pick(this.#receivedChatRequests.get(sessionId), "messageId", "timestamp", "otherUser", "text", "sessionId", "myAlias", "otherAlias", "headerId", "profile") as ViewReceivedRequest;
     }
 
-    async generateChatRequest(keyBundle: KeyBundle, messageId: string, text: string, timestamp: number, profileDetails: Omit<Profile, "username">) : Promise<[X3DHRequestsData, ChatRequestHeader, ViewSentRequest] | "Invalid Identity Signature" | "Invalid PreKey Signature" | "Invalid OneTimeKey Signature"> {
+    async generateChatRequest(keyBundle: KeyBundle, messageId: string, text: string, timestamp: number, profileDetails: Omit<Profile, "username">) : Promise<[X3DHRequestsData, ChatRequestHeader, ViewSentRequest] | "Invalid Identity Signature" | "Invalid PreKey Signature" | "Invalid OneTimeKey Signature" | "Could Not Save"> {
         const {
             bundleId,
             owner: yourUsername,
@@ -583,8 +592,8 @@ class X3DHRequests {
         const importedDHIdentityKey = await crypto.verifyKey(otherDHIdentityKey, importedVerifyingIdentityKey);
         if (!importedDHIdentityKey) return "Invalid Identity Signature";
         const importedPreKey = await crypto.verifyKey(publicSignedPreKey, importedVerifyingIdentityKey);
-        if (!importedDHIdentityKey) return "Invalid PreKey Signature";
-        let importedOneTimeKey: CryptoKey;
+        if (!importedPreKey) return "Invalid PreKey Signature";
+        let importedOneTimeKey: CryptoKey | null | undefined;
         if (publicOneTimeKey) {
             importedOneTimeKey = await crypto.verifyKey(publicOneTimeKey, importedVerifyingIdentityKey);
             if (!importedOneTimeKey) return "Invalid OneTimeKey Signature";
@@ -594,8 +603,8 @@ class X3DHRequests {
         const dh1 = await this.#identity.deriveSymmetricBits(importedPreKey, 512);
         const dh2 = await crypto.deriveSymmetricBits(ephemeralKeyPair.keyPair.privateKey, importedDHIdentityKey, 512);
         const dh3 = await crypto.deriveSymmetricBits(ephemeralKeyPair.keyPair.privateKey, importedPreKey, 512);
-        const dh4 = (importedOneTimeKey !== undefined) 
-                    ? [await crypto.deriveSymmetricBits(ephemeralKeyPair.keyPair.privateKey, importedOneTimeKey, 512)]
+        const dh4 = (importedOneTimeKey !== undefined)
+                    ? [await crypto.deriveSymmetricBits(ephemeralKeyPair.keyPair.privateKey, importedOneTimeKey!, 512)]
                     : [];
         const sharedRoot = Buffer.concat([dh1, dh2, dh3, ...dh4]);
         const myKeySignature = this.#identity.publicDHIdentityKey.signature.toString("base64");
@@ -612,9 +621,9 @@ class X3DHRequests {
             messageId,
             myAlias,
             yourAlias,
-            myKeySignature, 
+            myKeySignature,
             yourKeySignature,
-            yourUsername, 
+            yourUsername,
             myDHRatchetInititalizer,
             timestamp,
             text,
@@ -634,8 +643,8 @@ class X3DHRequests {
             yourBundleId: bundleId,
             initialMessage: initialCiphertext };
         const pendingRequest: ViewSentRequest = {
-            timestamp, 
-            sessionId, 
+            timestamp,
+            sessionId,
             headerId,
             myAlias,
             otherAlias: yourAlias,
@@ -646,15 +655,17 @@ class X3DHRequests {
             ...pendingRequest,
             myAlias,
             otherAlias: yourAlias,
-            recipientVerifyKey: importedVerifyingIdentityKey, 
-            sharedRoot, 
+            recipientVerifyKey: importedVerifyingIdentityKey,
+            sharedRoot,
             myPrivateDHRatchetInitializer: dhRatchetInitializer.keyPair.privateKey };
-        
+
         this.#sentChatRequests.set(sessionId, waitingRequest);
-        return [await this.exportData(), request, pendingRequest];
+        const data = await this.exportData();
+        if (!data) return "Could Not Save";
+        return [data, request, pendingRequest];
     }
 
-    async receiveChatRequestResponse(responseHeader: MessageHeader, saveSession: (arg: EncryptedData) => Promise<boolean>): Promise<[X3DHRequestsData, { profile: Profile, respondedAt: number }] | "Session Id Mismatch" | "Unverified Next Ratchet Key" | "Receving Ratchet Number Mismatch" | "Failed To Decrypt" | "Message Invalid" | "Could Not Save" | "Response Not According To Protocol" | "No Such Pending Request"> {
+    async receiveChatRequestResponse(responseHeader: MessageHeader, saveSession: (arg: EncryptedData | null) => Promise<boolean>): Promise<[X3DHRequestsData, { profile: Profile, respondedAt: number }] | "Session Id Mismatch" | "Unverified Next Ratchet Key" | "Receving Ratchet Number Mismatch" | "Failed To Decrypt" | "Message Invalid" | "Could Not Save" | "Response Not According To Protocol" | "No Such Pending Request"> {
         const { sessionId, nextDHRatchetKey } = responseHeader;
         const waitingDetails = this.#sentChatRequests.get(sessionId);
         if (!waitingDetails) {
@@ -693,6 +704,7 @@ class X3DHRequests {
         }
         this.#sentChatRequests.delete(sessionId);
         const x3dhRequestsData = await this.exportData();
+        if (!x3dhRequestsData) return "Could Not Save";
         return [x3dhRequestsData, { profile, respondedAt }];
     }
 
@@ -707,10 +719,11 @@ class X3DHRequests {
                 myPublicEphemeralKey: otherPublicEphemeralKey,
                 yourBundleId,
                 initialMessage: initMessage } = initialMessage;
-            const { preKeyVersion, oneTimeKeyIdentifier } = this.#keys.getIssuedBundle(yourBundleId); 
             if (addressedTo !== this.username) return "Incorrectly Addressed";
-            if (!preKeyVersion) return "Bundle Not Found";
-            const preKey = this.#keys.getPreKey(preKeyVersion);
+            const bundle = this.#keys.getIssuedBundle(yourBundleId);
+            if (!bundle) return "Bundle Not Found";
+            const { preKeyVersion, oneTimeKeyIdentifier } = bundle;
+            const preKey = this.#keys.getPreKey(preKeyVersion)!;
             const oneTimeKey = this.#keys.getOneTimeKey(oneTimeKeyIdentifier);
             const importedVerifyingIdentityKey = await this.importVerifyingKey(otherVerifyingIdentityKey);
             const importedDHIdentityKey = await crypto.verifyKey(otherPublicDHIdentityKey, importedVerifyingIdentityKey);
@@ -721,14 +734,14 @@ class X3DHRequests {
                 const dh1 = await crypto.deriveSymmetricBits(preKey, importedDHIdentityKey, 512);
                 const dh2 = await this.#identity.deriveSymmetricBits(importedEphemeralKey, 512);
                 const dh3 = await crypto.deriveSymmetricBits(preKey, importedEphemeralKey, 512);
-                const dh4 = (oneTimeKey !== undefined) 
+                const dh4 = (oneTimeKey !== undefined)
                             ? [await crypto.deriveSymmetricBits(oneTimeKey, importedEphemeralKey, 512)]
                             : [];
                 const sharedRoot = Buffer.concat([dh1, dh2, dh3, ...dh4]);
                 const sessionId = (await crypto.digestToBase64("SHA-256", sharedRoot)).slice(0, 15);
                 const message: ChatRequestBody = await this.#identity.deriveDecryptVerify(initMessage, sharedRoot, `${sessionId} Message Request`, importedVerifyingIdentityKey);
                 if (!message) return "Failed To Decrypt Message";
-                const { myKeySignature: otherKeySignature, 
+                const { myKeySignature: otherKeySignature,
                     yourKeySignature: myKeySignature,
                     yourUsername: myUsername,
                     myAlias: otherAlias,
@@ -739,7 +752,7 @@ class X3DHRequests {
                     profile,
                     myDHRatchetInititalizer: dhRatchetInitializer } = message;
                 const importedDHInitializer = await crypto.verifyKey(dhRatchetInitializer, importedVerifyingIdentityKey);
-                if ((myKeySignature as string) !== this.#identity.publicDHIdentityKey.signature.toString("base64") 
+                if ((myKeySignature as string) !== this.#identity.publicDHIdentityKey.signature.toString("base64")
                 || (otherKeySignature as string) !== otherPublicDHIdentityKey.signature.toString("base64")
                 || !profile.username
                 || !importedDHInitializer
@@ -752,16 +765,17 @@ class X3DHRequests {
                     myAlias,
                     otherAlias,
                     profile,
-                    timestamp, 
-                    text, 
-                    importedVerifyingIdentityKey, 
+                    timestamp,
+                    text,
+                    importedVerifyingIdentityKey,
                     sharedRoot,
                     importedDHInitializer
                 };
                 this.#receivedChatRequests.set(sessionId, receivedRequest);
-                const x3dhKeysData = (await this.#keys.delete(yourBundleId)) || {};
+                const x3dhKeysData = await this.#keys.delete(yourBundleId);
                 const x3dhRequestsData = await this.exportData();
-                const x3dhData = { ...x3dhKeysData, ...x3dhRequestsData }; 
+                if (!x3dhKeysData || !x3dhRequestsData) return "Unknown Error"
+                const x3dhData = { ...x3dhKeysData, ...x3dhRequestsData };
                 return [x3dhData, _.pick(receivedRequest, "timestamp", "sessionId", "headerId", "myAlias", "otherAlias", "messageId", "otherUser", "text") as ViewReceivedRequest];
             }
             catch (err) {
@@ -775,14 +789,14 @@ class X3DHRequests {
         }
     }
 
-    async acceptChatRequest(sessionId: string, timestamp: number, profileDetails: Omit<Profile, "username">, saveSession: (arg: EncryptedData) => Promise<boolean>)
+    async acceptChatRequest(sessionId: string, timestamp: number, profileDetails: Omit<Profile, "username">, saveSession: (arg: EncryptedData | null) => Promise<boolean>)
         : Promise<[X3DHRequestsData, MessageHeader] | "No Such Request" | "Could Not Save"> {
             const receivedRequest = this.#receivedChatRequests.get(sessionId);
             if (!receivedRequest) return "No Such Request";
             const { username } = this;
             const { profile: { username: otherUser }, myAlias, otherAlias, importedDHInitializer, importedVerifyingIdentityKey, sharedRoot } =  receivedRequest;
             const chattingSession = await ChattingSession.new(this.#identity,
-                username, 
+                username,
                 otherUser,
                 myAlias,
                 otherAlias,
@@ -796,15 +810,16 @@ class X3DHRequests {
             if (typeof result === "string") return result;
             this.#receivedChatRequests.delete(sessionId);
             const x3dhRequestsData = await this.exportData();
-            return [x3dhRequestsData, result];            
+            if (!x3dhRequestsData) return "Could Not Save"
+            return [x3dhRequestsData, result];
     }
 
-    async rejectReceivedRequest(sessionId: string): Promise<X3DHRequestsData> {
+    async rejectReceivedRequest(sessionId: string): Promise<X3DHRequestsData | null> {
         this.#receivedChatRequests.delete(sessionId);
         return await this.exportData();
     }
 
-    async deleteSentRequest(sessionId: string): Promise<X3DHRequestsData> {
+    async deleteSentRequest(sessionId: string): Promise<X3DHRequestsData | null> {
         this.#sentChatRequests.delete(sessionId);
         return await this.exportData();
     }
@@ -828,9 +843,9 @@ export class X3DHManager {
     }
 
     static async new(username: string, encryptionBaseVector: CryptoKey): Promise<[X3DHManager, { firstKeys: NewUserData["firstKeys"], x3dhIdentity: EncryptedData, x3dhData: X3DHData }]> {
-        const [identity, x3dhIdentity] = await X3DHIdentity.new(username, encryptionBaseVector);
-        const [firstKeys, keys, x3dhKeysData] = await X3DHKeys.new(identity.interface);
-        const [requests, x3dhRequestsData] = await X3DHRequests.new(identity.interface, keys.interface);
+        const [identity, x3dhIdentity] = (await X3DHIdentity.new(username, encryptionBaseVector))!;
+        const [firstKeys, keys, x3dhKeysData] = (await X3DHKeys.new(identity.interface))!;
+        const [requests, x3dhRequestsData] = (await X3DHRequests.new(identity.interface, keys.interface))!;
         const manager = new X3DHManager(identity, keys, requests);
         return [manager, { firstKeys, x3dhIdentity, x3dhData: { ...x3dhKeysData, ...x3dhRequestsData } }]
     }
@@ -838,10 +853,13 @@ export class X3DHManager {
     static async import(username: string, x3dhIdentity: EncryptedData, x3dhData: X3DHData, encryptionBaseVector: CryptoKey): Promise<X3DHManager> {
         const { x3dhKeys, x3dhRequests } = x3dhData;
         const identity = await X3DHIdentity.import(username, x3dhIdentity, encryptionBaseVector);
+        if (!identity) throw new Error("Failed To Import Identity");
         const { interface: identityInterface } = identity;
         const keys = await X3DHKeys.import(x3dhKeys, identityInterface);
+        if (!keys) throw new Error("Failed To Import Keys");
         const { interface: keysInterface } = keys;
         const requests = await X3DHRequests.import(x3dhRequests, identityInterface, keysInterface);
+        if (!requests) throw new Error("Failed To Import Requests");
         return new X3DHManager(identity, keys, requests);
     }
 
@@ -861,11 +879,11 @@ export class X3DHManager {
         return this.#x3dhRequests.getPendingReceivedRequest(sessionId);
     }
 
-    async generateChatRequest(keyBundle: KeyBundle, messageId: string, text: string, timestamp: number, profileDetails: Omit<Profile, "username">) : Promise<[X3DHRequestsData, ChatRequestHeader, ViewSentRequest] | "Invalid Identity Signature" | "Invalid PreKey Signature" | "Invalid OneTimeKey Signature"> {
+    async generateChatRequest(keyBundle: KeyBundle, messageId: string, text: string, timestamp: number, profileDetails: Omit<Profile, "username">) : Promise<[X3DHRequestsData, ChatRequestHeader, ViewSentRequest] | "Invalid Identity Signature" | "Invalid PreKey Signature" | "Invalid OneTimeKey Signature" | "Could Not Save"> {
         return await this.#x3dhRequests.generateChatRequest(keyBundle, messageId, text, timestamp, profileDetails);
     }
-    
-    async receiveChatRequestResponse(responseHeader: MessageHeader, saveSession: (arg: EncryptedData) => Promise<boolean>): Promise<[X3DHRequestsData, { profile: Profile, respondedAt: number }] | "Session Id Mismatch" | "Unverified Next Ratchet Key" | "Receving Ratchet Number Mismatch" | "Failed To Decrypt" | "Message Invalid" | "Could Not Save" | "Response Not According To Protocol" | "No Such Pending Request"> {
+
+    async receiveChatRequestResponse(responseHeader: MessageHeader, saveSession: (arg: EncryptedData | null) => Promise<boolean>): Promise<[X3DHRequestsData, { profile: Profile, respondedAt: number }] | "Session Id Mismatch" | "Unverified Next Ratchet Key" | "Receving Ratchet Number Mismatch" | "Failed To Decrypt" | "Message Invalid" | "Could Not Save" | "Response Not According To Protocol" | "No Such Pending Request"> {
         return await this.#x3dhRequests.receiveChatRequestResponse(responseHeader, saveSession);
     }
 
@@ -873,33 +891,33 @@ export class X3DHManager {
     : Promise<[X3DHDataPartial, ViewReceivedRequest] | "Incorrectly Addressed" | "Bundle Not Found" | "Invalid Identity Signature" | "Invalid Ephemeral Signature" | "Failed To Decrypt Message" | "Problem With Decrypted Message" | "Duplicate Chat Request" | "Unknown Error"> {
         return await this.#x3dhRequests.processReceivedChatRequest(initialMessage);
     }
-    
-    async acceptChatRequest(sessionId: string, timestamp: number, profileDetails: Omit<Profile, "username">, saveSession: (arg: EncryptedData) => Promise<boolean>)
+
+    async acceptChatRequest(sessionId: string, timestamp: number, profileDetails: Omit<Profile, "username">, saveSession: (arg: EncryptedData | null) => Promise<boolean>)
         : Promise<[X3DHRequestsData, MessageHeader] | "No Such Request" | "Could Not Save"> {
             return await this.#x3dhRequests.acceptChatRequest(sessionId, timestamp, profileDetails, saveSession);
     }
-    
-    async rejectReceivedRequest(sessionId: string): Promise<X3DHRequestsData> {
+
+    async rejectReceivedRequest(sessionId: string): Promise<X3DHRequestsData | null> {
         return await this.#x3dhRequests.rejectReceivedRequest(sessionId);
     }
 
-    async deleteSentRequest(sessionId: string): Promise<X3DHRequestsData> {
+    async deleteSentRequest(sessionId: string): Promise<X3DHRequestsData | null> {
         return await this.#x3dhRequests.deleteSentRequest(sessionId);
     }
 
-    async issueOneTimeKeys(n: number): Promise<IssueOneTimeKeysResponse> {
+    async issueOneTimeKeys(n: number): Promise<IssueOneTimeKeysResponse | null> {
         return await this.#x3dhKeys.issueOneTimeKeys(n);
     }
 
-    async replacePreKey(): Promise<ReplacePreKeyResponse> {
+    async replacePreKey(): Promise<ReplacePreKeyResponse | null> {
         return await this.#x3dhKeys.replacePreKey();
     }
 
-    async registerBundle(keyBundleId: KeyBundleId): Promise<X3DHKeysData> {
+    async registerBundle(keyBundleId: KeyBundleId): Promise<X3DHKeysData | null> {
         return await this.#x3dhKeys.registerBundle(keyBundleId);
     }
 
-    async unpackServerMemo<T extends any>(serverMemo: ServerMemo, serverVerifyingKey: CryptoKey): Promise<{ memoId: string, memoData: T }> {
+    async unpackServerMemo<T extends any>(serverMemo: ServerMemo, serverVerifyingKey: CryptoKey): Promise<{ memoId: string, memoData: T } | null> {
         try {
             const { memoId, encryptionPublicKey, memoData } = serverMemo;
             const importedKey = await crypto.importKey(encryptionPublicKey, "ECDH", "public", false);
@@ -942,12 +960,12 @@ export class ChattingSession {
     readonly #identity: X3DHIdentityInterface;
     readonly #otherVerifyKey: CryptoKey;
     #currentRootKey: Buffer;
-    #currentDHRatchetKey: CryptoKey;
-    #currentDHPublishKey: ExposedSignedPublicKey;
-    #currentSendingChainKey: Buffer;
-    #currentReceivingChainKey: Buffer;
-    #sendingRatchetNumber: number;
-    #receivingRatchetNumber: number;
+    #currentDHRatchetKey: CryptoKey | undefined;
+    #currentDHPublishKey: ExposedSignedPublicKey | undefined;
+    #currentSendingChainKey: Buffer | undefined;
+    #currentReceivingChainKey: Buffer | undefined;
+    #sendingRatchetNumber: number | undefined;
+    #receivingRatchetNumber: number | undefined;
     #sendingChainNumber = 0;
     #receivingChainNumber = 0;
     #previousSendingChainNumber = 0;
@@ -983,7 +1001,7 @@ export class ChattingSession {
     get lastActivity() {
         return this.lastActivityTimestamp;
     }
-    
+
     static async new(identity: X3DHIdentityInterface,
         sender: string,
         recipient: string,
@@ -993,7 +1011,7 @@ export class ChattingSession {
         sharedRoot: Buffer,
         maxSkip: number,
         dhRatchetOtherPublic: CryptoKey,
-        dhRatcherMyPrivate: CryptoKey = null): Promise<ChattingSession> {
+        dhRatcherMyPrivate: CryptoKey | null = null): Promise<ChattingSession> {
             const now = Date.now();
             const amInitiator = !!dhRatcherMyPrivate;
             const sessionId = (await crypto.digestToBase64("SHA-256", sharedRoot)).slice(0, 15);
@@ -1008,7 +1026,7 @@ export class ChattingSession {
             return chattingSession;
     }
 
-    static async import(encryptedSession: EncryptedData, identity: X3DHIdentityInterface) : Promise<ChattingSession> {
+    static async import(encryptedSession: EncryptedData, identity: X3DHIdentityInterface) : Promise<ChattingSession | null> {
         const { username } = identity;
         const decryptedSession: ExportedChattingSession = await identity.x3dhDecrypt(encryptedSession, `Export|Import ${username} Chatting Session`);
         if (!decryptedSession) {
@@ -1055,7 +1073,7 @@ export class ChattingSession {
         }
     }
 
-    private async export(): Promise<EncryptedData> {
+    private async export(): Promise<EncryptedData | null> {
         try {
             const sessionId = this.sessionId;
             const createdAt = this.createdAt;
@@ -1067,12 +1085,12 @@ export class ChattingSession {
             const maxSkip = this.#maxSkip;
             const recipientVerifyKey = await crypto.exportKey(this.#otherVerifyKey);
             const currentRootKey = this.#currentRootKey;
-            const currentDHRatchetKey = await this.#identity.userWrap(this.#currentDHRatchetKey, `${sessionId} DH Ratchet Key`);
-            const currentDHPublishKey = this.#currentDHPublishKey;
-            const currentSendingChainKey = this.#currentSendingChainKey;
-            const currentReceivingChainKey = this.#currentReceivingChainKey;
-            const sendingRatchetNumber = this.#sendingRatchetNumber;
-            const receivingRatchetNumber = this.#receivingRatchetNumber;
+            const currentDHRatchetKey = await this.#identity.userWrap(this.#currentDHRatchetKey!, `${sessionId} DH Ratchet Key`);
+            const currentDHPublishKey = this.#currentDHPublishKey!;
+            const currentSendingChainKey = this.#currentSendingChainKey!;
+            const currentReceivingChainKey = this.#currentReceivingChainKey!;
+            const sendingRatchetNumber = this.#sendingRatchetNumber!;
+            const receivingRatchetNumber = this.#receivingRatchetNumber!;
             const sendingChainNumber = this.#sendingChainNumber;
             const receivingChainNumber = this.#receivingChainNumber;
             const previousSendingChainNumber = this.#previousSendingChainNumber;
@@ -1105,11 +1123,11 @@ export class ChattingSession {
     }
 
     private async advanceFirstHalfDHRatchet(nextDHPublicKey: CryptoKey) {
-        const dhReceivingChainInput = await crypto.deriveSymmetricBits(this.#currentDHRatchetKey, nextDHPublicKey, 256);
+        const dhReceivingChainInput = await crypto.deriveSymmetricBits(this.#currentDHRatchetKey!, nextDHPublicKey, 256);
         const { nextRootKey, output: recvInput } = await this.rootChainKDFDerive(dhReceivingChainInput);
         this.#currentRootKey = nextRootKey;
         this.#currentReceivingChainKey = recvInput;
-        this.#receivingRatchetNumber += 2;
+        this.#receivingRatchetNumber! += 2;
         this.#receivingChainNumber = 0;
     }
 
@@ -1117,11 +1135,11 @@ export class ChattingSession {
         const nextRatchetKeyPair = await this.#identity.generateSignedKeyPair();
         this.#currentDHRatchetKey = nextRatchetKeyPair.keyPair.privateKey;
         this.#currentDHPublishKey = crypto.exposeSignedKey(nextRatchetKeyPair);
-        const dhSendingChainInput = await crypto.deriveSymmetricBits(this.#currentDHRatchetKey, nextDHPublicKey, 256); 
+        const dhSendingChainInput = await crypto.deriveSymmetricBits(this.#currentDHRatchetKey, nextDHPublicKey, 256);
         const { nextRootKey, output: sendInput } = await this.rootChainKDFDerive(dhSendingChainInput);
         this.#currentRootKey = nextRootKey;
         this.#currentSendingChainKey = sendInput;
-        this.#sendingRatchetNumber += 2;
+        this.#sendingRatchetNumber! += 2;
         this.#previousSendingChainNumber = this.#sendingChainNumber;
         this.#sendingChainNumber = 0;
     }
@@ -1131,12 +1149,12 @@ export class ChattingSession {
         await this.advanceSecondHalfDHRatchet(nextDHPublicKey);
     }
 
-    private async ratchetToCurrentReceived(nextDHPublicKey: CryptoKey, 
-        sendingRatchetNumber: number, 
-        sendingChainNumber: number, 
-        previousChainNumber: number): Promise<Buffer> {
-            let output: Buffer = null;
-            if ((sendingRatchetNumber - this.#receivingRatchetNumber) === 2) {
+    private async ratchetToCurrentReceived(nextDHPublicKey: CryptoKey,
+        sendingRatchetNumber: number,
+        sendingChainNumber: number,
+        previousChainNumber: number): Promise<Buffer | null> {
+            let output: Buffer | null = null;
+            if ((sendingRatchetNumber - this.#receivingRatchetNumber!) === 2) {
                 while (this.#receivingChainNumber < previousChainNumber) {
                     output = await this.advanceSymmetricRatchet("Receiving");
                     if (this.#receivingChainNumber < sendingChainNumber) {
@@ -1145,7 +1163,7 @@ export class ChattingSession {
                 }
                 await this.advanceDHRatchet(nextDHPublicKey);
             }
-            if ((sendingRatchetNumber - this.#receivingRatchetNumber) === 0) {
+            if ((sendingRatchetNumber - this.#receivingRatchetNumber!) === 0) {
                 while (this.#receivingChainNumber < sendingChainNumber) {
                     output = await this.advanceSymmetricRatchet("Receiving");
                     if (this.#receivingChainNumber < sendingChainNumber) {
@@ -1165,7 +1183,7 @@ export class ChattingSession {
     }
 
     private async advanceSymmetricRatchet(chain: "Sending" | "Receiving"): Promise<Buffer> {
-        const chainKey = chain === "Sending" ? this.#currentSendingChainKey : this.#currentReceivingChainKey;
+        const chainKey = chain === "Sending" ? this.#currentSendingChainKey! : this.#currentReceivingChainKey!;
         const { nextChainKey, messageKeyBits } = await this.messageChainKDFDerive(chainKey);
         if (chain === "Sending") {
             this.#currentSendingChainKey = nextChainKey;
@@ -1174,7 +1192,7 @@ export class ChattingSession {
         else {
             this.#currentReceivingChainKey = nextChainKey;
             this.#receivingChainNumber += 1;
-        } 
+        }
         return messageKeyBits;
     }
 
@@ -1193,8 +1211,8 @@ export class ChattingSession {
         const messageKeyBits = await crypto.deriveHKDF(messageDeriveBits, nullSalt(32), "Message Key Bits");
         return { nextChainKey, messageKeyBits }
     }
-    
-    private async advanceReversibly(advance: () => Promise<Buffer>, saveSession: (arg: EncryptedData) => Promise<boolean>): Promise<Buffer> {
+
+    private async advanceReversibly(advance: () => Promise<Buffer | null>, saveSession: (arg: EncryptedData | null) => Promise<boolean>): Promise<Buffer| null | undefined> {
         const token = Symbol();
         await this.queue.wait(token);
         const currentRootKey = this.#currentRootKey;
@@ -1230,20 +1248,19 @@ export class ChattingSession {
         return output;
     }
 
-    async sendMessage(sendingMessage: SendingMessage, saveSession: (arg: EncryptedData) => Promise<boolean>): Promise<MessageHeader | "Could Not Save"> {
-        let { timestamp, messageId } = sendingMessage;
+    async sendMessage(sendingMessage: SendingMessage, saveSession: (arg: EncryptedData | null) => Promise<boolean>): Promise<MessageHeader | "Could Not Save"> {
         const messageKeyBits = await this.advanceReversibly(() => this.advanceSymmetricRatchet("Sending"), saveSession);
         if (!messageKeyBits) return "Could Not Save";
         const sender = this.me;
         const fromAlias = this.myAlias;
         const toAlias = this.otherAlias;
         const sessionId = this.sessionId;
-        const receivingRatchetNumber = this.#receivingRatchetNumber + 2;
-        const sendingRatchetNumber = this.#sendingRatchetNumber;
+        const receivingRatchetNumber = this.#receivingRatchetNumber! + 2;
+        const sendingRatchetNumber = this.#sendingRatchetNumber!;
         const sendingChainNumber = this.#sendingChainNumber;
         const previousChainNumber = this.#previousSendingChainNumber;
-        const nextDHRatchetKey = this.#currentDHPublishKey;
-        const message: ReceivingMessage = { sender, messageId, timestamp, ...sendingMessage };
+        const nextDHRatchetKey = this.#currentDHPublishKey!;
+        const message: ReceivingMessage = { sender, ...sendingMessage };
         const headerId = getRandomString(15, "base64");
         const messageBody = await this.#identity.deriveSignEncrypt(message, messageKeyBits, `${headerId} Message Send|Receive`);
         const messageHeader: MessageHeader = {
@@ -1261,7 +1278,7 @@ export class ChattingSession {
         return messageHeader;
     }
 
-    async receiveMessage(messageHeader: MessageHeader, saveSession: (arg: EncryptedData) => Promise<boolean>): Promise<[ReceivingMessage | "Session Id Mismatch" | "Unverified Next Ratchet Key" | "Receving Ratchet Number Mismatch" | "Failed To Decrypt" | "Message Invalid" | "Could Not Save", string]> {
+    async receiveMessage(messageHeader: MessageHeader, saveSession: (arg: EncryptedData | null) => Promise<boolean>): Promise<[ReceivingMessage | "Session Id Mismatch" | "Unverified Next Ratchet Key" | "Receving Ratchet Number Mismatch" | "Failed To Decrypt" | "Message Invalid" | "Could Not Save", string]> {
         const {
             fromAlias,
             toAlias,

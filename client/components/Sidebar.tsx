@@ -28,7 +28,7 @@ type SidebarProps = {
   chats: (Chat | ReceivedChatRequest | SentChatRequest)[],
   belowXL: boolean,
   allowLeaveFocus: React.MutableRefObject<boolean>,
-  giveBackFocus: React.MutableRefObject<() => void>,
+  giveBackFocus: React.MutableRefObject<(() => void) | null>,
   profile: Profile
 }
 
@@ -59,7 +59,7 @@ export default function Sidebar({ profile, currentChatWith, openChat, chats, cli
     const n = unreadChats.size;
     document.title = "ChatApp" + (n > 0 ? ` (${n})` : "");
   }
-  
+
   async function validateNewChat(username: string) {
     if (!username) return "";
     if (client.chatsList.some((chat) => chat.otherUser.toLowerCase() === username.toLowerCase())) return "There is already an existing chat with this user.";
@@ -69,14 +69,14 @@ export default function Sidebar({ profile, currentChatWith, openChat, chats, cli
   return (
   <Stack
     ref={sidebarRef}
-    direction="column" 
+    direction="column"
     style={{ height: "100%" }}>
     <NewMessageDialog
-      newChatWith={newChatWith} 
-      warn={warn} 
+      newChatWith={newChatWith}
+      warn={warn}
       setWarn={setWarn}
-      isMessageEmpty={() => !newMessageRef.current?.trim()} 
-      belowXL={belowXL} 
+      isMessageEmpty={() => !newMessageRef.current?.trim()}
+      belowXL={belowXL}
       setNewChatWith={(newChatWith) => setNewChatWith(newChatWith)}
       setNewMessage={(message) => { newMessageRef.current = message; }}
       validate={validateNewChat}
@@ -88,17 +88,17 @@ export default function Sidebar({ profile, currentChatWith, openChat, chats, cli
         });
       }}
       />
-    <LogOutDialog 
-      dialogOpen={isLogoutDialogOpen} 
-      belowXL={belowXL} 
-      closeDialog={() => setIsLogoutDialogOpen(false)} 
+    <LogOutDialog
+      dialogOpen={isLogoutDialogOpen}
+      belowXL={belowXL}
+      closeDialog={() => setIsLogoutDialogOpen(false)}
       logOut={() => {
         setIsLogoutDialogOpen(false);
         client.userLogOut();
       }}/>
     <div style={{ display: "flex", marginBottom: 10 }}>
       <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-start", alignContent: "center", paddingLeft: 20 }}>
-        <ProfilePopup 
+        <ProfilePopup
           profile={profile}
           changeProfile={(profile) => client.updateProfile(profile)}
           width={width}
@@ -108,8 +108,8 @@ export default function Sidebar({ profile, currentChatWith, openChat, chats, cli
         </ProfilePopup>
       </div>
       <div style={{ display: "flex", flex: 1, flexWrap: "wrap", justifyContent: "flex-end", alignContent: "center", paddingRight: 15 }}>
-        <IconButton 
-          variant="solid" 
+        <IconButton
+          variant="solid"
           color="danger"
           size="sm"
           style={{ height: "32px", width: "32px", padding: 0, margin: "8px" }}
@@ -120,7 +120,7 @@ export default function Sidebar({ profile, currentChatWith, openChat, chats, cli
       </div>
     </div>
     <div style={{ display: "flex", alignContent: "center", justifyContent: "stretch", paddingBlock: 0, paddingInline: 15 }}>
-      <Input 
+      <Input
         placeholder="Search for chat"
         value={search}
         sx={{ width: "100%", "&::before": { "--Input-focusedHighlight": "#1f7a1f" } }}
@@ -129,18 +129,18 @@ export default function Sidebar({ profile, currentChatWith, openChat, chats, cli
         onMouseUp={mouseUp}
         onBlur={() => giveBackFocus.current?.()}
         endDecorator={
-          search 
+          search
             ? (<IconButton variant="soft" color="neutral" onClick={() => setSearch("")}>
                 <ClearSharp sx={{ fontSize: "1.2rem" }}/>
               </IconButton>)
-            : (<Search sx={{ fontSize: "1.2rem" }}/>) 
+            : (<Search sx={{ fontSize: "1.2rem" }}/>)
         }/>
       <NewChatPopup
         isPopupOpen={isNewChatPopupOpen}
         setIsPopupOpen={setIsNewChatPopupOpen}
-        belowXL={belowXL} 
+        belowXL={belowXL}
         placement={ belowXL ? "bottom-end" : "bottom-start" }
-        validate={validateNewChat} 
+        validate={validateNewChat}
         returnUser={(chatWith) => {
           if (chatWith) allowLeaveFocus.current = true;
           flushSync(() => setIsNewChatPopupOpen(false));
@@ -148,7 +148,7 @@ export default function Sidebar({ profile, currentChatWith, openChat, chats, cli
           setNewChatWith(chatWith);
         }}>
           <IconButton
-            variant="plain" 
+            variant="plain"
             color="success"
             style={{ marginInline: "5px" }}
             sx={ isNewChatPopupOpen ? { backgroundColor: "var(--joy-palette-success-plainHoverBg)" } : {} }
@@ -163,13 +163,13 @@ export default function Sidebar({ profile, currentChatWith, openChat, chats, cli
         {chats
           .filter((chat) => !search || chat.matchesName(search))
           .map((chat) => (<ListItem key={chat.otherUser}>
-            <ChatCard 
-              chat={chat} 
-              isCurrent={currentChatWith === chat.otherUser} 
+            <ChatCard
+              chat={chat}
+              isCurrent={currentChatWith === chat.otherUser}
               setCurrent={() => openChat(chat.otherUser) }
               setUnread={updateUnreadChats}/>
           </ListItem>))}
-      </List>            
+      </List>
     </StyledScrollbar>
   </Stack>)
 }
@@ -183,16 +183,16 @@ type ChatCardProps = Readonly<{
 
 function ChatCard({ chat, isCurrent, setCurrent, setUnread }: ChatCardProps) {
   const [refresh, setRefresh] = useState({});
-  const { displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages, draft } = refresh && chat.details; 
+  const { displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages, draft } = refresh && chat.details;
   const { text, timestamp, sentByMe, delivery } = lastActivity;
-  const [displayText, setDisplayText] = useState(""); 
+  const [displayText, setDisplayText] = useState("");
   const status = useMemo(() => {
     const commonProps: SxProps = { fontSize: "1rem", marginRight: "6px", marginBlock: "auto" };
     if (!sentByMe) return null;
     if (!delivery) return <HourglassTop sx={{ color: "gold", rotate: "-90deg", ...commonProps }}/>;
     const { delivered, seen } = delivery;
-    return delivered 
-            ? (<DoneAllSharp sx={{ color: seen ? "blue" : "gray", ...commonProps }}/>) 
+    return delivered
+            ? (<DoneAllSharp sx={{ color: seen ? "blue" : "gray", ...commonProps }}/>)
             : <DoneSharp sx={{ color: "gray", ...commonProps }}/>;
   }, [delivery]);
 
@@ -219,9 +219,9 @@ function ChatCard({ chat, isCurrent, setCurrent, setUnread }: ChatCardProps) {
 
   useEffect(() => setUnread(chat.otherUser, unreadMessages > 0), [unreadMessages]);
 
-  return (<ListItemButton 
-    onClick={() => setCurrent()} 
-    selected={isCurrent} 
+  return (<ListItemButton
+    onClick={() => setCurrent()}
+    selected={isCurrent}
     sx={{ borderRadius: "10px" }}
     variant={isCurrent ? "soft" : "plain"}
     color="success">
@@ -247,13 +247,13 @@ function ChatCard({ chat, isCurrent, setCurrent, setUnread }: ChatCardProps) {
                   typing...
                 </DisableSelectTypography>)
               : (<div style={{ flexGrow: 1, display: "flex", flexDirection: "row" }}>
-                  {draft && 
+                  {draft &&
                     <DisableSelectTypography fontWeight="lg" sx={{ color: "#1fa855" }}>
                       Draft:&nbsp;
                     </DisableSelectTypography>}
                   <DisableSelectTypography component="span" sx={{ fontStyle: draft ? "italic" : undefined, color: "#656565", "--markdown-emoji-size": "18px" }}>
-                    <ReactMarkdownVariableEmoji 
-                    className="react-markdown" 
+                    <ReactMarkdownVariableEmoji
+                    className="react-markdown"
                     components={{ p: "span", div: "span" }}
                     children={displayText}
                     remarkPlugins={[remarkGfm, remarkMath, twemoji]}
@@ -261,7 +261,7 @@ function ChatCard({ chat, isCurrent, setCurrent, setUnread }: ChatCardProps) {
                   </DisableSelectTypography>
                 </div>)}
           {!!unreadMessages &&
-            <div style={{ marginBlock: "auto", 
+            <div style={{ marginBlock: "auto",
                           marginInline: "5px",
                           display: "flex",
                           flexWrap: "wrap",
@@ -274,8 +274,8 @@ function ChatCard({ chat, isCurrent, setCurrent, setUnread }: ChatCardProps) {
                           width: "20px",
                           fontSize: "12px",
                           fontWeight: "800",
-                          borderRadius: "100%", 
-                          backgroundColor: "#1fa855", 
+                          borderRadius: "100%",
+                          backgroundColor: "#1fa855",
                           color: "white" }}>
               {unreadMessages < 10 ? unreadMessages : "9+"}
             </div>}
@@ -320,24 +320,24 @@ function LogOutDialog({ dialogOpen, belowXL, closeDialog, logOut }: LogOutDialog
         </DisableSelectTypography>
         <Grid container direction="row" sx={{ paddingTop: "15px" }}>
           <Grid xs={6} sx={{ display: "flex", justifyContent: "center", paddingInline: "20px" }}>
-            <Button 
-              variant="solid" 
-              color="primary" 
-              sx={{ flexGrow: 1 }} 
+            <Button
+              variant="solid"
+              color="primary"
+              sx={{ flexGrow: 1 }}
               onClick={closeDialog}>
               Cancel
             </Button>
           </Grid>
           <Grid xs={6} sx={{ display: "flex", justifyContent: "center", paddingInline: "20px" }}>
-            <Button 
-              variant="solid" 
-              color="danger" 
-              sx={{ flexGrow: 1 }} 
+            <Button
+              variant="solid"
+              color="danger"
+              sx={{ flexGrow: 1 }}
               onClick={logOut}>
               Logout
             </Button>
           </Grid>
         </Grid>
-      </Sheet>      
+      </Sheet>
     </Dialog>)
 }

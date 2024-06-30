@@ -31,7 +31,7 @@ interface PopoverOptions {
   forceZIndex?: number;
 };
 
-type ContextType = ReturnType<typeof useFloating> & ReturnType<typeof useInteractions> & { 
+type ContextType = ReturnType<typeof useFloating> & ReturnType<typeof useInteractions> & {
   nodeId: string,
   modal: boolean;
   open: boolean;
@@ -39,7 +39,7 @@ type ContextType = ReturnType<typeof useFloating> & ReturnType<typeof useInterac
   forceZIndex?: number;
 }
 
-const PopoverContext = createContext<ContextType>(null);
+const PopoverContext = createContext<ContextType>(null!);
 
 const usePopoverContext = () => {
   const context = useContext(PopoverContext);
@@ -79,7 +79,7 @@ export default function Popover({
     whileElementsMounted: autoUpdate,
     middleware: [
       offset(customOffset),
-      ...(allowFlip 
+      ...(allowFlip
           ? [flip({ fallbackAxisSideDirection: "end" })]
           : []),
       shift({ padding: 5 })
@@ -88,8 +88,8 @@ export default function Popover({
 
   const context = data.context;
   const click = useClick(context);
-  const dismiss = useDismiss(context, { 
-    ancestorScroll: ancestorScrollDismiss, 
+  const dismiss = useDismiss(context, {
+    ancestorScroll: ancestorScrollDismiss,
     bubbles: dismissBubbles });
   const role = useRole(context);
   const interactions = useInteractions([click, dismiss, role]);
@@ -153,8 +153,8 @@ export const PopoverContent = forwardRef<
     <FloatingTreeWrapper open={context.open}>
       {(zIndex) => (
       <FloatingPortal>
-        <FloatingFocusManager 
-          context={floatingContext} 
+        <FloatingFocusManager
+          context={floatingContext}
           modal={context.modal}
           initialFocus={-1}
           returnFocus={true}

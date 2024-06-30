@@ -19,19 +19,19 @@ type RunningClientSession = Readonly<{
 }>;
 
 type ServerSavedDetails = Readonly<{
-    username: string, 
-    authKeyBits: Buffer, 
+    username: string,
+    authKeyBits: Buffer,
     coreKeyBits: Buffer,
     laterConfirmation: Omit<esrp.ServerAuthChallengeLater, "verifierEntangled">,
 }>;
 
 type Temp = Readonly<{
     setAt: number,
-    ipRep: string 
+    ipRep: string
 }>;
 
 type ChallengeTemp = Temp & Readonly<{
-    confirmClient: (confirmationCode: Buffer) => Promise<boolean>, 
+    confirmClient: (confirmationCode: Buffer) => Promise<boolean>,
     serverConfirmationCode: Buffer,
     sharedKeyBitsBuffer: Buffer,
 }>;
@@ -103,7 +103,7 @@ export default class AuthHandler {
         else return [];
     }
 
-    async restartCrashedSession(sessionReference: string, sessionRecordKey: Buffer) { 
+    async restartCrashedSession(sessionReference: string, sessionRecordKey: Buffer) {
         if (SocketHandler.getUsername(sessionReference)) return true;
         const crashedSession = await MongoHandlerCentral.getRunningClientSession(sessionReference);
         if (!crashedSession) return false;
@@ -152,24 +152,24 @@ export default class AuthHandler {
             const databaseAuthKey = await crypto.importRaw(databaseAuthKeyBuffer);
             const onFail = new Promise<{ failed: boolean }>((resolveCallback) => resolveFailed = resolveCallback);
             if (!(await MongoHandlerCentral.createNewUser({ username, publicIdentity, verifierPoint, ...newUserData }, databaseAuthKey, onFail))) {
-                resolveFailed?.({ failed: true });
+                resolveFailed!?.({ failed: true });
                 return failure(ErrorStrings.ProcessFailed);
             }
             const sessionData: RunningClientSession = { username, ipRep, clientReference, sessionReference, sharedKeyBitsBuffer, clientIdentityVerifyingKey, databaseAuthKeyBuffer };
             const [socketHandler,, sessionRecordKeyDeriveSalt] = await this.createSocketHandler(sessionData, true);
             if (!socketHandler) {
-                resolveFailed?.({ failed: true });
+                resolveFailed!?.({ failed: true });
                 return failure(ErrorStrings.ProcessFailed);
             }
             console.log(`Saved user: ${username}`);
-            resolveFailed?.({ failed: false });
+            resolveFailed!?.({ failed: false });
             const saveSessionKey = crypto.getRandomVector(64);
             return { serverConfirmationCode, sessionRecordKeyDeriveSalt, saveSessionKey };
-            
+
         }
         catch (err) {
             logError(err);
-            resolveFailed?.({ failed: true });
+            resolveFailed!?.({ failed: true });
             return failure(ErrorStrings.ProcessFailed, err);
         }
     }
@@ -181,7 +181,7 @@ export default class AuthHandler {
         if (allowsAt && allowsAt > Date.now()) {
             return failure(ErrorStrings.TooManyWrongTries, { tries, allowsAt });
         }
-        const { verifierDerive, verifierPoint, databaseAuthKeyDerive, publicIdentity } = (await MongoHandlerCentral.getUserAuth(username)) ?? {}; 
+        const { verifierDerive, verifierPoint, databaseAuthKeyDerive, publicIdentity } = (await MongoHandlerCentral.getUserAuth(username)) ?? {};
         if (!verifierDerive) return failure(ErrorStrings.IncorrectData);
         const { confirmClient, sharedKeyBitsBuffer, serverConfirmationCode, verifierEntangled } = await esrp.serverSetupAuthChallenge(verifierPoint, clientEphemeralPublic, "now");
         this.#logInChallengeTemp.set(challengeReference, { ipRep, serverConfirmationCode, confirmClient, sharedKeyBitsBuffer, username, clientReference, publicIdentity, setAt: Date.now() });
@@ -205,7 +205,7 @@ export default class AuthHandler {
                     return failure(ErrorStrings.TooManyWrongTries, { tries, allowsAt });
                 }
                 await MongoHandlerCentral.updateUserRetries(username, ipRep, null, tries);
-                return failure(ErrorStrings.IncorrectPassword, { tries });   
+                return failure(ErrorStrings.IncorrectPassword, { tries });
             }
             else await MongoHandlerCentral.updateUserRetries(username, ipRep, null);
             if (SocketHandler.isUserActive(username)) {

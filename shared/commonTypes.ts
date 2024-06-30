@@ -1,8 +1,9 @@
 import _ from "lodash";
+import { Map as ImmutableMap } from "immutable"
 
 export type ExposedSignedPublicKey = Readonly<{
     exportedPublicKey: Buffer;
-    signature: Buffer; 
+    signature: Buffer;
 }>;
 
 export type SignedKeyPair = ExposedSignedPublicKey & {
@@ -27,15 +28,15 @@ export type ServerMemo = Readonly<{
         signature: Buffer }
 }>;
 
-export type PublicIdentity = Readonly<{ 
-    publicIdentityVerifyingKey: Buffer, 
-    publicDHIdentityKey: ExposedSignedPublicKey 
+export type PublicIdentity = Readonly<{
+    publicIdentityVerifyingKey: Buffer,
+    publicDHIdentityKey: ExposedSignedPublicKey
 }>;
 
-export type KeyBundleId = Readonly<{ 
+export type KeyBundleId = Readonly<{
     bundleId: string;
     preKeyVersion: number;
-    oneTimeKeyIdentifier?: string; 
+    oneTimeKeyIdentifier?: string;
 }>;
 
 export type KeyBundle = Readonly<{
@@ -44,7 +45,7 @@ export type KeyBundle = Readonly<{
     verifyingIdentityKey: Buffer;
     publicDHIdentityKey: ExposedSignedPublicKey;
     publicSignedPreKey: ExposedSignedPublicKey;
-    publicOneTimeKey?: ExposedSignedPublicKey; 
+    publicOneTimeKey?: ExposedSignedPublicKey;
 }>;
 
 export type PasswordDeriveInfo = Readonly<{
@@ -67,11 +68,11 @@ export type EncryptedData = Readonly<{
 }>;
 
 export type SignedEncryptedData = EncryptedData & {
-    readonly signature: Buffer; 
+    readonly signature: Buffer;
 };
 
-export type LogInPermitted = { 
-    readonly login: false | { tries: number, allowsAt: number } 
+export type LogInPermitted = {
+    readonly login: false | { tries?: number, allowsAt?: number }
 };
 
 export type Profile = Readonly<{
@@ -95,6 +96,8 @@ export type DeliveryInfo = Readonly<({
     seen: number | false;
 })>;
 
+export type DeliveryInfos = ImmutableMap<string, DeliveryInfo>
+
 export type DisplayMessage =Readonly<{
     messageId: string;
     replyingToInfo?: ReplyingToInfo;
@@ -114,7 +117,7 @@ export type MessageHeader = Readonly<{
     sendingChainNumber: number;
     previousChainNumber: number;
     nextDHRatchetKey: ExposedSignedPublicKey;
-    messageBody: SignedEncryptedData; 
+    messageBody: SignedEncryptedData;
 }>;
 
 export type ChatRequestHeader = Readonly<{
@@ -124,7 +127,7 @@ export type ChatRequestHeader = Readonly<{
     myPublicDHIdentityKey: ExposedSignedPublicKey;
     myPublicEphemeralKey: ExposedSignedPublicKey;
     yourBundleId: string;
-    initialMessage: SignedEncryptedData; 
+    initialMessage: SignedEncryptedData;
 }>;
 
 export type StoredMessage = Readonly<{
@@ -159,8 +162,8 @@ export type Receipt = Readonly<{
     bounced: boolean
 }>;
 
-export type Username = { 
-    readonly username: string 
+export type Username = {
+    readonly username: string
 };
 
 export type ChatIdentifier = {
@@ -177,12 +180,12 @@ export type HeaderIdentifier = Readonly<{
     headerId: string;
 }>;
 
-export type SessionIdentifier = Readonly<{ 
-    sessionId: string, 
+export type SessionIdentifier = Readonly<{
+    sessionId: string,
     toAlias: string
 }>;
 
-export type PerspectiveSessionInfo = Readonly<{
+export type ProspectiveSessionInfo = Readonly<{
     sessionId: string,
     myAlias: string,
     otherAlias: string
@@ -204,15 +207,15 @@ export type LogInSavedRequest = Readonly<{
 }>;
 
 export type SavePasswordRequest = Readonly<{
-    coreKeyBits: Buffer, 
-    authKeyBits: Buffer, 
-    serverKeyBits: Buffer, 
+    coreKeyBits: Buffer,
+    authKeyBits: Buffer,
+    serverKeyBits: Buffer,
     clientEphemeralPublic: Buffer
 }>;
 
-export type SavePasswordResponse = Readonly<{ 
-    verifierDerive: PasswordDeriveInfo, 
-    verifierEntangled: Buffer 
+export type SavePasswordResponse = Readonly<{
+    verifierDerive: PasswordDeriveInfo,
+    verifierEntangled: Buffer
 }>;
 
 export type NewAuthData = Readonly<{
@@ -242,7 +245,7 @@ export type SignUpChallengeResponse = LogInChallengeResponse & {
     readonly newUserDataSigned: SignedEncryptedData;
 };
 
-export type SignUpResponse = Readonly<{ 
+export type SignUpResponse = Readonly<{
     serverConfirmationCode: Buffer,
     sessionRecordKeyDeriveSalt: Buffer,
     saveSessionKey: Buffer
@@ -274,7 +277,7 @@ export type UserData = Readonly<{
     profileData: SignedEncryptedData
 }>;
 
-export type NewUserData = Readonly<{ 
+export type NewUserData = Readonly<{
     userData: UserData;
     verifierDerive: PasswordDeriveInfo;
     databaseAuthKeyDerive: PasswordEntangleInfo;
@@ -301,10 +304,10 @@ export type RequestIssueNewKeysResponse = IssueOneTimeKeysResponse | ReplacePreK
 
 export type StatusTransmitData = Pick<MessageHeader, "sessionId" | "fromAlias" | "toAlias"> & { online: Omit<MessageHeader, "sessionId" | "fromAlias" | "toAlias">, offline: Omit<MessageHeader, "sessionId" | "fromAlias" | "toAlias"> };
 
-export type DirectChannelRequest = Readonly<{ 
-    action: "requesting" | "responding", 
-    directChannelId: string, 
-    header: MessageHeader 
+export type DirectChannelRequest = Readonly<{
+    action: "requesting" | "responding",
+    directChannelId: string,
+    header: MessageHeader
 }>;
 
 enum SocketClientSideEventsEnum {
@@ -379,7 +382,7 @@ type SocketClientRequestParametersMap = {
     StoreMessage: StoredMessage,
     CreateChat: ChatData & { otherUser: string },
     UpdateChat: ChatIdentifier & Partial<MutableChatData>,
-    RegisterPendingSession: PerspectiveSessionInfo,
+    RegisterPendingSession: ProspectiveSessionInfo,
     SendChatRequest: ChatRequestHeader,
     SendMessage: MessageHeader,
     MessageHeaderProcessed: HeaderIdentifier & SessionIdentifier,
@@ -504,6 +507,6 @@ export enum ErrorStrings {
     TooManyWrongTries = "TooManyWrongTries"
 }
 
-export type Writeable<T> = { 
-    -readonly [P in keyof T]: T[P] 
+export type Writeable<T> = {
+    -readonly [P in keyof T]: T[P]
 };

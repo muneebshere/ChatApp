@@ -24,12 +24,12 @@ function disconnected(status: ClientConnectionStatus): status is DisconnectedSta
 export default function Main({ client, status, currentChatWith, setCurrentChatWith }: MainProps) {
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
   const typedMessages = useRef(new Map<string, string>());
-  const lastScrollPositions = useRef(new Map<string, ScrollState>());
+  const lastScrollPositions = useRef(new Map<string, ScrollState | null>());
   const [chats, setChats] = useState(client.chatsList);
   const [profile, setProfile] = useState(client.profile);
   const allowLeaveFocus = useRef(false);
-  const giveBackFocus = useRef<() => void>(null);
-  
+  const giveBackFocus = useRef<(() => void) | null>(null);
+
   useEffect(() => {
     const popStateListener = (event: PopStateEvent) => switchToChat(event.state?.currentChatWith);
     window.addEventListener("popstate", popStateListener);
@@ -68,7 +68,7 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
   function getView() {
     const chat = client.getChatByUser(currentChatWith);
     if (chat?.type === "Chat") {
-      return (<ChatViewMemo 
+      return (<ChatViewMemo
         key={currentChatWith ?? ""}
         chat={chat}
         closeChat={() => openChat("")}
@@ -77,7 +77,7 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
           if (currentChatWith) {
             typedMessages.current.set(currentChatWith, message)
           }}}
-        lastScrolledTo={ lastScrollPositions.current.get(currentChatWith) }
+        lastScrolledTo={ lastScrollPositions.current.get(currentChatWith) || null }
         setLastScrolledTo={(lastScrolledTo) => {
           if (currentChatWith) {
             lastScrollPositions.current.set(currentChatWith, lastScrolledTo);
@@ -87,14 +87,14 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
         giveBackFocus={giveBackFocus}/>);
     }
     else if (chat?.type === "ReceivedRequest") {
-      return (<ReceivedChatRequestView 
-                key={currentChatWith ?? ""} 
-                receivedChatRequest={chat} 
+      return (<ReceivedChatRequestView
+                key={currentChatWith ?? ""}
+                receivedChatRequest={chat}
                 closeChat={() => openChat("")}/>);
     }
     else if (chat?.type === "SentRequest") {
-      return (<SentChatRequestView 
-                key={currentChatWith ?? ""} 
+      return (<SentChatRequestView
+                key={currentChatWith ?? ""}
                 sentChatRequest={chat}
                 closeChat={() => openChat("")}/>);
     }
@@ -103,9 +103,9 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
 
   return (
   <Grid container direction="column" sx={{ flex: 1, flexBasis: "content", display: "flex", flexDirection: "column", paddingTop: "12px" }}>
-    {disconnected(status) && 
+    {disconnected(status) &&
       <Grid xs={12} sx={{ flex: 0, flexBasis: "content" }}>
-        <DisconnectedAlert 
+        <DisconnectedAlert
           status={status}
           countdownTick={{
             subscribe: (ticker) => client.subscribeCountdownTick(ticker),
@@ -114,18 +114,18 @@ export default function Main({ client, status, currentChatWith, setCurrentChatWi
           }}
           forceReconnect={ () => client.forceReconnect() }/>
       </Grid>}
-    <Grid 
-      container 
-      xs={12} 
+    <Grid
+      container
+      xs={12}
       sx={{ flex: 1, flexBasis: 0, minHeight: 0 }}>
       {(!belowXL || !currentChatWith) &&
       <Grid xs={12} xl={3} sx={{ minHeight: 0, maxHeight: "100%", display: "flex", flexDirection: "column" }}>
-        <Sidebar 
+        <Sidebar
           profile={profile}
-          currentChatWith={currentChatWith} 
-          chats={chats} 
-          openChat={openChat} 
-          client={client} 
+          currentChatWith={currentChatWith}
+          chats={chats}
+          openChat={openChat}
+          client={client}
           belowXL={belowXL}
           allowLeaveFocus={allowLeaveFocus}
           giveBackFocus={giveBackFocus}/>

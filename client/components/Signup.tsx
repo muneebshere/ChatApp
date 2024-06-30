@@ -16,13 +16,16 @@ type SignUpData = {
   readonly savePassword: boolean;
   readonly failed: boolean;
   readonly submitted: boolean;
-  readonly usernameExists: (username: string) => Promise<boolean>;
+  readonly usernameExists: (username: string) => Promise<boolean | null>;
   readonly submit: (response: SubmitResponse) => Promise<Failure>;
 }
 
 type SignUpAction<K extends keyof SignUpData> = {
-  id: K | "clear";
+  id: K;
   value: SignUpData[K];
+} | {
+  id: "clear",
+  value: null
 }
 
 type SignUpDataReducer = (data: SignUpData, action: SignUpAction<keyof SignUpData>) => SignUpData;
@@ -32,8 +35,10 @@ type SignUpContextType = {
   signUpDispatch: Dispatch<SignUpAction<keyof SignUpData>>;
 }
 
-export function signUpAction<K extends keyof SignUpData>(id: K | "clear", value: SignUpData[K]): SignUpAction<K> {
-  return { id, value };
+export function signUpAction<K extends keyof SignUpData>(id: K, value: SignUpData[K]): SignUpAction<K>;
+export function signUpAction<K extends keyof SignUpData>(id: "clear", value: null): SignUpAction<K>;
+export function signUpAction<K extends keyof SignUpData>(id: K | "clear", value: SignUpData[K] | null): SignUpAction<K> {
+  return { id, value } as SignUpAction<K>;
 }
 
 export const defaultSignUpData: Omit<SignUpData, "usernameExists" | "submit"> = {
@@ -59,10 +64,10 @@ export const defaultSignUpDataReducer: SignUpDataReducer = (data, action) => {
     .with("submitted", () => ({ ...data, submitted: value as boolean }))
     .with("failed", () => ({ ...data, failed: value as boolean }))
     .with("clear", () => ({ ...defaultSignUpData ,..._.pick(data, "usernameExists", "submit") }))
-    .otherwise(() => data);    
+    .otherwise(() => data);
 }
 
-export const SignUpContext = createContext<SignUpContextType>(null);
+export const SignUpContext = createContext<SignUpContextType>(null!);
 
 export default function SignUpForm() {
   const { signUpData: { displayName, username, password, repeatPassword, showPassword, savePassword, failed, submitted, usernameExists, submit }, signUpDispatch } = useContext(SignUpContext);
@@ -120,10 +125,10 @@ export default function SignUpForm() {
           submitLocal();
         }
       }}>
-        <ControlledTextField 
+        <ControlledTextField
           variant="outlined"
           highlightColor="#1f7a1f"
-          placeholder="Display Name (Optional)" 
+          placeholder="Display Name (Optional)"
           type="text"
           value={displayName}
           setValue={setDisplayName}
@@ -136,7 +141,7 @@ export default function SignUpForm() {
           ref={usernameInput}
           variant="outlined"
           highlightColor="#1f7a1f"
-          placeholder="Please choose a unique username" 
+          placeholder="Please choose a unique username"
           type="text"
           autoComplete="username"
           value={username}
@@ -147,7 +152,7 @@ export default function SignUpForm() {
           errorMessage={usernameError}
           onEnter={async (e) => {
             const { value } = (e.target as HTMLInputElement);
-            if (!(await getUsernameError(value))) { 
+            if (!(await getUsernameError(value))) {
               newPasswordInput.current?.focus();
             }
             else {
@@ -160,7 +165,7 @@ export default function SignUpForm() {
           autoComplete="new-password"
           variant="outlined"
           highlightColor="#1f7a1f"
-          placeholder="Please choose a new password" 
+          placeholder="Please choose a new password"
           type={ showPassword ? "text" : "password" }
           value={password}
           preventSpaces
@@ -181,12 +186,12 @@ export default function SignUpForm() {
             }
           }}/>
         {!showPassword &&
-          <ControlledTextField 
+          <ControlledTextField
             ref={passwordAgainInput}
             autoComplete="new-password"
             variant="outlined"
             highlightColor="#1f7a1f"
-            placeholder="Please re-enter password" 
+            placeholder="Please re-enter password"
             type={ "password" }
             value={repeatPassword}
             preventSpaces
@@ -197,14 +202,14 @@ export default function SignUpForm() {
             helperText="Keep this password safe. If lost, you will irretrievably lose access to all chats."
             onEnter={(e) => {
               const { value } = (e.target as HTMLInputElement);
-              if (value === newPasswordInput.current.value && isPasswordValid(value)) {
+              if (value === newPasswordInput.current?.value && isPasswordValid(value)) {
                 submitLocal();
               }
             }}/>
         }
         <FormControl orientation="horizontal">
           <FormLabel>Show password</FormLabel>
-          <StyledJoySwitch checked={showPassword} 
+          <StyledJoySwitch checked={showPassword}
             disabled={submitted}
             onChange={ (e) => setShowPassword(e?.target?.checked) }
             color={showPassword ? "success" : "neutral"}/>
@@ -212,7 +217,7 @@ export default function SignUpForm() {
         <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
           <FormControl orientation="horizontal" sx={{ width: "100%" }}>
             <FormLabel>Save password</FormLabel>
-            <StyledJoySwitch checked={savePassword} 
+            <StyledJoySwitch checked={savePassword}
               disabled={submitted}
               onChange={ (e) => setSavePassword(e?.target?.checked) }
               color={savePassword ? "success" : "neutral"}/>
@@ -224,7 +229,7 @@ export default function SignUpForm() {
         </div>
         <Button variant="solid"
           color="success"
-          onClick={submitLocal} 
+          onClick={submitLocal}
           disabled={!canSubmit}>
           <Stack direction="row" spacing={2}>
             <DisableSelectTypography textColor={ !canSubmit ? "black" : "white" }>

@@ -13,7 +13,7 @@ import { match } from "ts-pattern";
 type NewChatPopupProps = {
   initialChatWith?: string,
   escOnEnter?: boolean,
-  validate: (username: string) => Promise<string>, 
+  validate: (username: string) => Promise<string>,
   returnUser: (username: string) => void,
   isPopupOpen: boolean,
   setIsPopupOpen: (open: boolean) => void,
@@ -25,7 +25,7 @@ type NewChatPopupProps = {
 export function NewChatPopup({ validate, escOnEnter, initialChatWith, returnUser, placement, belowXL, isPopupOpen, setIsPopupOpen, children }: NewChatPopupProps) {
   const [newChatWith, setNewChatWith] = useState("");
   const [usernameInvalid, setUsernameInvalid] = useState("");
-  
+
   useEffect(() => {
     let ignore = false;
     const setUserValid = async () => {
@@ -70,7 +70,7 @@ export function NewChatPopup({ validate, escOnEnter, initialChatWith, returnUser
                 role="presentation"
                 variant="outlined"
                 highlightColor="#1f7a1f"
-                placeholder="Begin chat with" 
+                placeholder="Begin chat with"
                 type="text"
                 defaultValue={newChatWith || undefined}
                 value={newChatWith}
@@ -118,20 +118,20 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
 
   useEffect(() => {
     const updateHeight = () => setKeyboardHeight((navigator as any).virtualKeyboard.boundingRect.height);
-    window.visualViewport.addEventListener("resize", updateHeight);
+    window.visualViewport!.addEventListener("resize", updateHeight);
     return () => {
-      window.visualViewport.removeEventListener("resize", updateHeight);
+      window.visualViewport!.removeEventListener("resize", updateHeight);
     }
   }, []);
 
   return (
     <>
-      <Dialog 
+      <Dialog
         outsidePress
         overlayBackdrop="opacity(100%) blur(4px)"
         open={!!newChatWith}
         keepFocusIn={keepFocusIn}
-        onDismiss={() => { 
+        onDismiss={() => {
           if (isPopupOpen) {
             setIsPopupOpen(false);
           }
@@ -151,9 +151,9 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
             bottom: keyboardHeight ? "100px" : 0,
             p: 3,
             backgroundColor: "rgba(246, 246, 246, 0.8)",
-            boxShadow: "lg", 
+            boxShadow: "lg",
             backdropFilter: "blur(4px)"}}>
-          <CloseButton onClick={ () => {   
+          <CloseButton onClick={ () => {
               if (isPopupOpen) {
                 setIsPopupOpen(false);
               }
@@ -162,7 +162,7 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
               }
               else {
                 setWarn(true);
-              }              
+              }
             } }>
             <CloseSharp sx={{ fontSize: "1.5rem" }}/>
           </CloseButton>
@@ -172,7 +172,7 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
               level="h4"
               textColor="inherit"
               fontWeight="lg"
-              mb={1} 
+              mb={1}
               sx={{ display: "flex", textAlign: "center", flexWrap: "wrap", alignContent: "center", marginBottom: 0 }}>
                 Send chat request to
             </DisableSelectTypography>
@@ -182,24 +182,24 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
               initialChatWith={newChatWith}
               isPopupOpen={isPopupOpen}
               setIsPopupOpen={setIsPopupOpen}
-              belowXL={belowXL} 
+              belowXL={belowXL}
               placement="bottom"
-              validate={validate} 
+              validate={validate}
               returnUser={(chatWith) => {
                 flushSync(() => setIsPopupOpen(false));
                 textareaRef.current?.focus();
                 if (chatWith) setNewChatWith(chatWith);
               }}>
-              <Sheet sx={{ 
-                marginBlock: "8px", 
-                paddingBlock: "2px", 
-                paddingInline: "6px", 
-                border: "solid 0.8px black", 
-                backgroundColor: "#d8d8df", 
-                borderRadius: "12px", 
+              <Sheet sx={{
+                marginBlock: "8px",
+                paddingBlock: "2px",
+                paddingInline: "6px",
+                border: "solid 0.8px black",
+                backgroundColor: "#d8d8df",
+                borderRadius: "12px",
                 textAlign: "center",
                 ":hover" : {
-                  filter: "brightness(0.9)" 
+                  filter: "brightness(0.9)"
                 },
                 ...(isPopupOpen ? { filter: "brightness(0.9)" } : {}) }}>
                 <DisableSelectTypography
@@ -215,13 +215,13 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
             </NewChatPopup>
           </Stack>
           <Stack
-            direction="row" 
-            spacing={1} 
+            direction="row"
+            spacing={1}
             sx={{
-              flex: 0, 
-              flexBasis: "content", 
-              display: "flex", 
-              flexDirection: "row", 
+              flex: 0,
+              flexBasis: "content",
+              display: "flex",
+              flexDirection: "row",
               flexWrap: "nowrap",
               borderTopRightRadius: 20,
               borderBottomRightRadius: 20,
@@ -238,19 +238,19 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
               onSubmit={() => isMessageEmpty() || sendRequest()}
               onBlur={(e) => clickedInside.current && e.target.focus()}
               minRows={3}
-              maxRows={5} 
+              maxRows={5}
               style={{ flex: 1 }}/>
-              <IconButton 
+              <IconButton
                 variant="outlined"
-                color="success" 
+                color="success"
                 onClick={() => isMessageEmpty() || sendRequest()}
                 sx={{ flexGrow: 0, flexBasis: "content", height: "fit-content", alignSelf: "center", borderRadius: 20, backgroundColor: "var(--joy-palette-success-plainHoverBg)" }}>
                 <SendRounded sx={{ fontSize: "2rem"}}/>
               </IconButton>
           </Stack>
-        </Sheet>      
+        </Sheet>
       </Dialog>
-      <Dialog 
+      <Dialog
         outsidePress={false}
         open={warn}>
         <Sheet
@@ -281,20 +281,20 @@ export function NewMessageDialog({ warn, newChatWith, belowXL, isMessageEmpty, s
               setNewMessage("");
             }}/>
           </Grid>
-        </Sheet>      
+        </Sheet>
       </Dialog>
     </>);
   }
-  
+
   type QuitAction = "Go back" | "Close";
-  
+
   function DialogButton({ action, onClick }: Pick<ButtonProps, "onClick"> & { action: QuitAction }) {
-    const color = 
+    const color =
       match(action)
         .with("Go back", () => "success")
         .with("Close", () => "danger")
         .exhaustive() as any;
-  
+
     return (
       <Grid xs={6} sx={{ display: "flex", justifyContent: "center", paddingInline: "20px" }}>
         <Button

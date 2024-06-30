@@ -11,14 +11,14 @@ type ToastProps = Readonly<{
 export default function Toast({ children, trigger, duration = 2000, containerStyle = {} }: ToastProps) {
   const [isOpen, setIsOpen] = useState(false);
   const { refs, floatingStyles, context } = useFloating({ open: isOpen, onOpenChange: setIsOpen });
-  const timeoutRef = useRef<number>(null);
+  const timeoutRef = useRef<number | null>(null);
   const id = useId();
 
   useEffect(() => {
     setIsOpen(false);
     if (!trigger.off) {
       setTimeout(() => setIsOpen(true), 100);
-      window.clearTimeout(timeoutRef.current);
+      window.clearTimeout(timeoutRef.current!);
       timeoutRef.current = window.setTimeout(() => setIsOpen(false), duration);
     }
   }, [trigger]);

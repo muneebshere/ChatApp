@@ -10,17 +10,17 @@ import { ChatMessageList } from "../ChatClasses";
 import { SxProps } from "@mui/material";
 import { Observable } from "rxjs";
 
-export const DayCardContext = createContext<Observable<number>>(null);
+export const DayCardContext = createContext<Observable<number>>(null!);
 
 function formatDate(date: string): string {
   const dt = DateTime.fromISO(date);
   const diff = -(dt.diffNow("day").as("day"));
-  if (diff < 4) return dt.toRelativeCalendar();
-  if (diff < 7) return dt.weekdayLong;
+  if (diff < 4) return dt.toRelativeCalendar()!;
+  if (diff < 7) return dt.weekdayLong!;
   return dt.toFormat("dd/LL/y");
 }
 
-const inlineCardSx: SxProps = { 
+const inlineCardSx: SxProps = {
   padding: 1,
   width: "fit-content",
   textTransform: "capitalize",
@@ -30,7 +30,7 @@ const inlineCardSx: SxProps = {
 
 const floatingCardSx: SxProps = {
   ...inlineCardSx,
-  backgroundColor: "rgba(255, 255, 255, 0.7)", 
+  backgroundColor: "rgba(255, 255, 255, 0.7)",
   backdropFilter: "blur(30px)",
   boxShadow: undefined
 }
@@ -41,7 +41,7 @@ export function DayCard({ date, forceInline = false }: { date: string, forceInli
   const cardRef = useRef<HTMLDivElement>(null);
   const [inline, setInline] = useState(forceInline);
   const offsetFunc = (rects: ElementRects) => {
-    const crossAxis = (-floatingRef.current?.getBoundingClientRect()?.width || 0) - 10;
+    const crossAxis = -(floatingRef.current?.getBoundingClientRect()?.width || 0) - 10;
     const mainAxis = (-rects.reference.height / 2) - ((floatingRef.current?.getBoundingClientRect()?.height || 0) / 2);
     return { crossAxis, mainAxis }
   }
@@ -59,21 +59,21 @@ export function DayCard({ date, forceInline = false }: { date: string, forceInli
       <TooltipTrigger>
         <Card
           ref={cardRef}
-          variant={inline ? "plain" : "outlined"} 
+          variant={inline ? "plain" : "outlined"}
           sx={ inline ? inlineCardSx : floatingCardSx }>
-          <DisableSelectTypography level="body3" sx={{ fontWeight: 600 }}>
+          <DisableSelectTypography level="body-sm" sx={{ fontWeight: 600 }}>
             {formatDate(date)}
           </DisableSelectTypography>
         </Card>
       </TooltipTrigger>
       <TooltipContent>
         <div ref={floatingRef} style={{ width: "fit-content",
-                      backgroundColor: "#bebdbc", 
-                      borderColor: "rgba(237, 237, 237, 0.7)", 
+                      backgroundColor: "#bebdbc",
+                      borderColor: "rgba(237, 237, 237, 0.7)",
                       boxShadow: "0px 0.5px 4px #e4e4e4",
                       position: "absolute",
                       zIndex: 2 }}>
-          <DisableSelectTypography level="body3" noWrap sx={{ cursor: "default", color: "black" }}>
+          <DisableSelectTypography level="body-sm" noWrap sx={{ cursor: "default", color: "black" }}>
             {DateTime.fromISO(date).toFormat("d LLLL y")}
           </DisableSelectTypography>
         </div>
@@ -83,7 +83,7 @@ export function DayCard({ date, forceInline = false }: { date: string, forceInli
 
 const MessageSubList = function({ chatMessageList }: { chatMessageList: ChatMessageList }) {
   const [chatMessages, setChatMessages] = useState(chatMessageList.messageList);
-  
+
   useEffect(() => {
     chatMessageList.subscribe(() => {
       setChatMessages(chatMessageList.messageList);
@@ -107,7 +107,7 @@ const MessageSubList = function({ chatMessageList }: { chatMessageList: ChatMess
   )
 }
 
-const MessageSubListMemo = memo(MessageSubList, 
+const MessageSubListMemo = memo(MessageSubList,
   (prev, next) => prev.chatMessageList === next.chatMessageList);
 
 const MessageList = function({ chatMessageLists }: { chatMessageLists: ChatMessageList[] }) {
@@ -120,5 +120,5 @@ const MessageList = function({ chatMessageLists }: { chatMessageLists: ChatMessa
     </List>)
 }
 
-export const MessageListMemo = memo(MessageList, 
+export const MessageListMemo = memo(MessageList,
   (prev, next) => prev.chatMessageLists.length === next.chatMessageLists.length);

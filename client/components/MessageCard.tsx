@@ -16,7 +16,7 @@ import mermaid from "mermaid";
 import { DateTime } from "luxon";
 import SvgMessageCard from "./SvgMessageCard";
 import "katex/dist/katex.min.css";
-import { ReplyingToMemo } from "./ReplyingTo";
+import { ReplyingToMemo, ReplyingToProps } from "./ReplyingTo";
 import { ReactMarkdownLastPara } from "./CommonElementStyles";
 import { ReplyingToInfo, DeliveryInfo } from "../../shared/commonTypes";
 import { ElementRects } from "@floating-ui/react";
@@ -45,7 +45,7 @@ export type MessageCardContextData = Readonly<{
   toggleScroll?: (scrollOn: boolean) => void;
 }>;
 
-export const MessageCardContext = createContext<MessageCardContextData>(null);
+export const MessageCardContext = createContext<MessageCardContextData>(null!);
 
 const ScrollingTypography: typeof DisableSelectTypography = styled(DisableSelectTypography)`
 scrollbar-width: thin;
@@ -81,9 +81,9 @@ function StatusButton({ delivery }: { delivery: DeliveryInfo }) {
   }
   else {
     const { delivered, seen } = delivery
-    const statusIcon = 
-    delivered 
-      ? (<DoneAllSharp sx={{ color: seen ? "blue" : "gray", fontSize: "1rem", cursor: "pointer" }}/>) 
+    const statusIcon =
+    delivered
+      ? (<DoneAllSharp sx={{ color: seen ? "blue" : "gray", fontSize: "1rem", cursor: "pointer" }}/>)
       : <DoneSharp sx={{ color: "gray", fontSize: "1rem", cursor: "pointer" }}/>;
     const deliveredText = delivered ? DateTime.fromMillis(delivered).toFormat("dd/LL/y, h:mm a") : "Not delivered";
     const seenText = seen ? DateTime.fromMillis(seen).toFormat("dd/LL/y, h:mm a") : "Not seen";
@@ -93,11 +93,11 @@ function StatusButton({ delivery }: { delivery: DeliveryInfo }) {
             {statusIcon}
         </PopoverTrigger>
         <PopoverContent>
-          <div style={{ borderRadius: 8, 
-                        padding: 10, 
-                        border: "0.1px solid #d8d8df", 
-                        backgroundColor: "rgba(244, 246, 244, 0.8)", 
-                        boxShadow: "0px 1px 3px 1.5px #eeeeee", 
+          <div style={{ borderRadius: 8,
+                        padding: 10,
+                        border: "0.1px solid #d8d8df",
+                        backgroundColor: "rgba(244, 246, 244, 0.8)",
+                        boxShadow: "0px 1px 3px 1.5px #eeeeee",
                         backdropFilter: "blur(4px)" }}
                 tabIndex={-1}
                 >
@@ -136,14 +136,14 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
   const [isFirstOfType, setIsFirstOfType] = useState(chatMessage.isFirstOfType);
   const [delivery, setDelivery] = useState(chatMessage.delivery);
   const scrollRef = useRef<HTMLDivElementScroll>(null);
-  const bodyRef = useRef<HTMLSpanElement>(null);
-  const statusRef = useRef<HTMLDivElement>(null);
-  const floatingRef = useRef<HTMLDivElement>(null);
-  const sheetRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLSpanElement | null>(null);
+  const statusRef = useRef<HTMLDivElement | null>(null);
+  const floatingRef = useRef<HTMLDivElement | null>(null);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
   const [statusWidth, statusHeight] = useSize(statusRef, "client");
   const [fixedWidth, setFixedWidth] = useState(0);
   const offsetFunc = (rects: ElementRects) => {
-    const crossAxis = (-floatingRef.current?.getBoundingClientRect()?.width || 0) + rects.reference.width;
+    const crossAxis = -(floatingRef.current?.getBoundingClientRect()?.width || 0) + rects.reference.width;
     return { crossAxis }
   }
   const replyingData = useMemo(() => ({ replyId: messageId, replyToOwn: sentByMe, displayText: text }), []);
@@ -158,7 +158,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
     return false;
   };
   const action = useCallback(() => setReplyTo(replyingData), []);
-  const handlers = useSwipeDrag(scrollRef, 100, 70, action, toggleScroll, fixedWidth ? bodyRef : null);
+  const handlers = useSwipeDrag(scrollRef, 100, 70, action, toggleScroll, fixedWidth ? bodyRef : undefined);
 
   useEffectOnce(() => {
     chatMessage.subscribe((event) => {
@@ -173,10 +173,10 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
   })
 
   useUpdateEffect(() => {
-    if (highlighted === messageId) { 
-      scrollRef.current.scrollIntoViewIfNeeded(true);
+    if (highlighted === messageId) {
+      scrollRef.current!.scrollIntoViewIfNeeded(true);
       setDarken(true);
-    } 
+    }
   }, [highlighted]);
 
   useUpdateEffect(() => {
@@ -204,11 +204,11 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
       }
       registerMessageRef(messageRef);
     }
-    return () => !sentByMe && sheetRef.current?.removeEventListener("seen" as any, seenListener);
+    return () => (!sentByMe && sheetRef.current?.removeEventListener("seen" as any, seenListener)) as void;
   }, []);
 
   const repliedMessage = useMemo(() => {
-    const props = replyingToInfo ? { chatWith, sentByMe, highlightReplied, ...replyingToInfo } : null;
+    const props = replyingToInfo ? { chatWith, sentByMe, highlightReplied, ...replyingToInfo } : {} as ReplyingToProps;
     return replyingToInfo
       ? <ReplyingToMemo { ...props} maxChars={200}/>
       : null
@@ -223,17 +223,17 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
         <StyledSheet className="MessageCard" sx={{ width: "100%", display: "flex", flexGrow: 1, justifyContent: side, alignContent: "flex-start", padding: 0, margin: 0 }} ref={sheetRef} id={messageId} data-seen={sentByMe ? 10 : delivery?.seen}>
           <SvgMessageCard background={messageColor} first={isFirstOfType} sentByMe={sentByMe} shadowColor="#adb5bd" darken={darken} darkenFinished={() => setDarken(false) }>
             <Stack direction="column"
-              sx={{ width: "fit-content", 
-                    padding: 1.5, 
-                    paddingBottom: 0.5, 
-                    alignContent: "flex-start", 
+              sx={{ width: "fit-content",
+                    padding: 1.5,
+                    paddingBottom: 0.5,
+                    alignContent: "flex-start",
                     textAlign: "start" }}>
                 {repliedMessage && repliedMessage}
                 <MessageBody {...{ chatWith, messageId, fixedWidth, statusWidth, statusHeight, text, displayToast }} ref={(bodyElem) => bodyRef.current = bodyElem}/>
-              <Stack ref={statusRef} 
-                    direction="row" 
-                    spacing={1} 
-                    sx={{ width: "fit-content", 
+              <Stack ref={statusRef}
+                    direction="row"
+                    spacing={1}
+                    sx={{ width: "fit-content",
                           alignItems: "center",
                           position: "absolute",
                           bottom: "8px",
@@ -246,8 +246,8 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
                   </TooltipTrigger>
                   <TooltipContent>
                     <div ref={floatingRef} style={{ width: "fit-content",
-                                  backgroundColor: "#bebdbc", 
-                                  borderColor: "rgba(237, 237, 237, 0.7)", 
+                                  backgroundColor: "#bebdbc",
+                                  borderColor: "rgba(237, 237, 237, 0.7)",
                                   boxShadow: "0px 0.5px 4px #e4e4e4",
                                   position: "absolute",
                                   zIndex: 2 }}>
@@ -263,7 +263,7 @@ function MessageCardWithHighlight(message: { chatMessage: ChatMessage } & Messag
               </Stack>
             </Stack>
           </SvgMessageCard>
-        </StyledSheet>        
+        </StyledSheet>
       </Grid>
     </Grid>
   )
@@ -279,10 +279,10 @@ type MessageBodyProps = Readonly<{
   displayToast: () => void
 }>
 
-const MessageBody = forwardRef<HTMLSpanElement>(function ({ chatWith, messageId, fixedWidth, statusWidth, statusHeight, text, displayToast }: MessageBodyProps, bodyRef: (elem: HTMLSpanElement) => void) {
+const MessageBody = forwardRef<HTMLSpanElement, MessageBodyProps>(function ({ chatWith, messageId, fixedWidth, statusWidth, statusHeight, text, displayToast }: MessageBodyProps, bodyRef) {
 
   function killFootnotes(bodyElem: HTMLSpanElement) {
-    bodyRef(bodyElem);
+    (bodyRef as any)(bodyElem);
     const links = bodyElem?.querySelectorAll("a") || [];
     for (const link of links) {
       if (link.href.includes("#")) link.removeAttribute("href");
@@ -300,7 +300,7 @@ const MessageBody = forwardRef<HTMLSpanElement>(function ({ chatWith, messageId,
     }
   }
 
-  const handleMermaidOrCode: CodeComponent = 
+  const handleMermaidOrCode: CodeComponent =
     ({ node, inline, className, children, ...props }) => {
       if (className === "language-mermaid" && !inline) {
         const definition = (children as string[])[0];
@@ -309,9 +309,9 @@ const MessageBody = forwardRef<HTMLSpanElement>(function ({ chatWith, messageId,
           try {
             const { svg, bindFunctions } = await mermaid.render(id, definition, elem);
             elem.innerHTML = svg;
-            bindFunctions(elem);
+            bindFunctions?.(elem);
             const { height } = elem.getBoundingClientRect();
-            document.querySelector(`#scroll-${chatWith.split(" ")[0]}`).scrollBy({ top: height, behavior: "instant" });
+            document.querySelector(`#scroll-${chatWith.split(" ")[0]}`)!.scrollBy({ top: height, behavior: "instant" });
           }
           catch(e) {
             logError(e);
@@ -335,10 +335,10 @@ const MessageBody = forwardRef<HTMLSpanElement>(function ({ chatWith, messageId,
 
   return (
     <ScrollingTypography
-      id={`${messageId}-body`} 
+      id={`${messageId}-body`}
       ref={killFootnotes}
       component="span"
-      sx={{ 
+      sx={{
         width: fixedWidth ? `${fixedWidth}px` : "fit-content",
         marginBottom: fixedWidth ? "12px" : undefined,
         paddingBottom: fixedWidth ? "2px" : undefined,
@@ -362,15 +362,15 @@ const MessageBody = forwardRef<HTMLSpanElement>(function ({ chatWith, messageId,
       onClick={doubleClickCopy}>
       <ReactMarkdownLastPara
         className="react-markdown"
-        children={modifyOnlyEmojies(text)} 
+        children={modifyOnlyEmojies(text)}
         remarkPlugins={[remarkGfm, remarkMath, twemoji]}
         rehypePlugins={[rehypeKatex, rehypeRaw]}
         components={{ pre: "div", code: handleMermaidOrCode }}/>
     </ScrollingTypography>);
 })
 
-const MessageCardMemo = memo(MessageCardWithHighlight, 
-  (prev, next) => 
+const MessageCardMemo = memo(MessageCardWithHighlight,
+  (prev, next) =>
     prev.chatWith === next.chatWith
     && prev.totalWidth === next.totalWidth
     && prev.chatMessage === next.chatMessage

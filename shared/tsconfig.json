@@ -3,13 +3,23 @@
     "compilerOptions": {
       "module": "NodeNext",
       "sourceMap": true,
-      "noImplicitAny": false,
+      "alwaysStrict": true,
+      "strict": true,
+      "noImplicitAny": true,
+      "noImplicitReturns": true,
+      "noImplicitOverride": true,
+      "noImplicitThis": true,
       "jsx": "preserve"
     }
   },
   "compilerOptions": {
     "outDir": "./ts/",
-    "noImplicitAny": false,
+    "alwaysStrict": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noImplicitOverride": true,
+    "noImplicitThis": true,
     "module": "NodeNext",
     "target": "ES2022",
     "jsx": "react",

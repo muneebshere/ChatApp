@@ -18,13 +18,16 @@ type LogInData = {
   readonly tryCount: number;
   readonly failed: boolean;
   readonly submitted: boolean;
-  readonly userLoginPermitted: (username: string) => Promise<LogInPermitted>;
+  readonly userLoginPermitted: (username: string) => Promise<LogInPermitted | null>;
   readonly submit: (response: SubmitResponse) => Promise<Failure>;
 }
 
 type LogInAction<K extends keyof LogInData> = {
-  id: K | "clear";
+  id: K;
   value: LogInData[K];
+} | {
+  id: "clear",
+  value: null
 }
 
 type LogInDataReducer = (data: LogInData, action: LogInAction<keyof LogInData>) => LogInData;
@@ -34,8 +37,10 @@ type LogInContextType = {
   logInDispatch: Dispatch<LogInAction<keyof LogInData>>;
 }
 
+export function logInAction<K extends keyof LogInData>(id: K , value: LogInData[K]): LogInAction<K>;
+export function logInAction<K extends keyof LogInData>(id: "clear", value: null): LogInAction<K>;
 export function logInAction<K extends keyof LogInData>(id: K | "clear", value: LogInData[K]): LogInAction<K> {
-  return { id, value };
+  return { id, value } as LogInAction<K>;
 }
 
 export const defaultLogInData: Omit<LogInData, "submit" | "userLoginPermitted"> = {
@@ -68,7 +73,7 @@ export const defaultLogInDataReducer: LogInDataReducer = (data, action) => {
     .otherwise(() => data);
 }
 
-export const LogInContext = createContext<LogInContextType>(null);
+export const LogInContext = createContext<LogInContextType>(null!);
 
 export default function LogInForm() {
   const { logInData: { username, usernameEntered, password, lastIncorrectPasswords, showPassword, savePassword, tryAgainIn, tryCount, failed, submitted, userLoginPermitted, submit },  logInDispatch } = useContext(LogInContext);
@@ -84,12 +89,12 @@ export default function LogInForm() {
   const setTryAgainIn = (tryAgainIn: number) => logInDispatch(logInAction("tryAgainIn", tryAgainIn));
   const setTryCount = (tryCount: number) => logInDispatch(logInAction("tryCount", tryCount));
   const canSubmit = !submitted && password && validatePassword(password) || tryAgainIn <= 0;
-  const timerRef = useRef<number>(null);
+  const timerRef = useRef<number | null>(null);
   const decrementTimer = useCallback(() => setTryAgainIn(tryAgainIn - 1000), [tryAgainIn]);
 
   useEffect(() => {
     if (username) {
-      userLoginPermitted(username).then((result) => setUsernameError(result?.login ? null: "No such user.")).catch(() => {});
+      userLoginPermitted(username).then((result) => setUsernameError(result?.login ? "": "No such user.")).catch(() => {});
     }
   }, [username]);
 
@@ -97,7 +102,7 @@ export default function LogInForm() {
     if (tryAgainIn) {
       timerRef.current = window.setTimeout(decrementTimer, 1000);
     }
-    return () => window.clearTimeout(timerRef.current);
+    return () => window.clearTimeout(timerRef.current!);
   }, [tryAgainIn]);
 
   async function onUsernameEntered() {
@@ -160,11 +165,11 @@ export default function LogInForm() {
       }}>
       {!usernameEntered &&
         <React.Fragment>
-          <ControlledTextField 
+          <ControlledTextField
             autoComplete="username"
             variant="outlined"
             highlightColor="#1f7a1f"
-            placeholder="Please enter your username" 
+            placeholder="Please enter your username"
             type="text"
             value={username}
             preventSpaces
@@ -175,10 +180,10 @@ export default function LogInForm() {
             autoFocus={!usernameEntered}
             forceFocus={!usernameEntered}
             onEnter={onUsernameEntered}/>
-          <Button 
+          <Button
             variant="solid"
             color="success"
-            onClick={onUsernameEntered} 
+            onClick={onUsernameEntered}
             disabled={ !!usernameError }>
               Next
           </Button>
@@ -186,11 +191,11 @@ export default function LogInForm() {
       }
       {usernameEntered &&
         <React.Fragment>
-          <ControlledTextField 
+          <ControlledTextField
             variant="outlined"
             highlightColor="#1f7a1f"
             autoComplete="current-password"
-            placeholder="Please enter your password" 
+            placeholder="Please enter your password"
             type={ showPassword ? "text" : "password" }
             value={password}
             preventSpaces
@@ -204,13 +209,13 @@ export default function LogInForm() {
             <FormLabel>Show password</FormLabel>
             <StyledJoySwitch checked={showPassword}
               disabled={submitted}
-              onChange={ (e) => setShowPassword(e?.target?.checked) } 
+              onChange={ (e) => setShowPassword(e?.target?.checked) }
               color={showPassword ? "success" : "neutral"}/>
             </FormControl>
           <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
             <FormControl orientation="horizontal" sx={{ width: "100%" }}>
               <FormLabel>Save password</FormLabel>
-              <StyledJoySwitch checked={savePassword} 
+              <StyledJoySwitch checked={savePassword}
                 disabled={submitted}
                 onChange={ (e) => setSavePassword(e?.target?.checked) }
                 color={savePassword ? "success" : "neutral"}/>

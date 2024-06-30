@@ -23,14 +23,14 @@ export function ReceivedChatRequestView({ receivedChatRequest, closeChat }: Rece
   useLayoutEffect(() => receivedChatRequest.markVisited(), []);
 
   return (
-    <StyledSheet sx={{ height: "100%", 
-                      display: "flex", 
-                      flexDirection: "column", 
+    <StyledSheet sx={{ height: "100%",
+                      display: "flex",
+                      flexDirection: "column",
                       overflow: "clip" }}>
       <Stack direction="column" spacing={2}>
         <ChatHeaderMemo {...{ belowXL, chatDetails, closeChat }}/>
         <div style={{ width: "100%", display: "flex", justifyContent: "center" }}>
-          <DayCard date={DateTime.fromMillis(lastActive).toISODate()} forceInline={true}/>
+          <DayCard date={DateTime.fromMillis(lastActive).toISODate()!} forceInline={true}/>
         </div>
         <DisableSelectTypography level="body-lg" sx={{ width: "100%", textAlign: "center", color: "lightgrey" }}>
           You have received a chat request from @{otherUser}. Accept chat request to reply.
@@ -48,7 +48,7 @@ export function ReceivedChatRequestView({ receivedChatRequest, closeChat }: Rece
         </Stack>
         <Stack direction="row" spacing={2}>
           <Button variant="solid" color="danger" onClick={() => receivedChatRequest.rejectRequest()} style={{ width: "100px" }}>
-            Reject 
+            Reject
           </Button>
           <DisableSelectTypography level="body-md" sx={{ width: "100%", textAlign: "start", color: "lightgrey" }} style={{ marginBlock: "auto" }}>
             @{otherUser} will not be notified.

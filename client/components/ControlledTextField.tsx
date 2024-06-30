@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect, forwardRef } from "react";
 import { FormControl, FormLabel, FormHelperText, Input  } from "@mui/joy";
 import { SxProps } from "@mui/material";
 
-export type ControlledTextFieldProps = {  
+export type ControlledTextFieldProps = {
   label?: string;
   placeholder: string;
   type: string;
@@ -30,11 +30,11 @@ export type ControlledTextFieldProps = {
 export default forwardRef(function(args: ControlledTextFieldProps, ref: React.ForwardedRef<HTMLInputElement>) {
   const { placeholder, setValue, type, valid, defaultValue, value, disabled, errorMessage, forceInvalid, helperText, label, onEnter, preventSpaces, variant, autoComplete, role, autoFocus, forceFocus, joyColor, highlightColor, sx } = args;
   const [cursor, setCursor] = useState(0);
-  const [touched, setTouched] = useState<boolean>(null);
+  const [touched, setTouched] = useState<boolean | null>(null);
   const enterRef = useRef(false);
-  const timeoutRef = useRef<number>(null);
+  const timeoutRef = useRef<number | null>(null);
   const errorText = () => (touched || forceInvalid) && !valid && !!errorMessage;
-  const localRef = useRef<HTMLInputElement>(null);
+  const localRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => localRef.current?.setSelectionRange?.(cursor, cursor), [cursor, args, value]);
 
   function onChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -84,12 +84,12 @@ export default forwardRef(function(args: ControlledTextFieldProps, ref: React.Fo
 
   return (
     <FormControl sx={{ justifyContent: "stretch", width: "100%" }}>
-      {label && 
+      {label &&
       <FormLabel sx={{ flexGrow: 1, width: "100%" }}>
         {label}
       </FormLabel>}
       <Input
-        ref={(elem) => {
+        ref={(elem: any) => {
           const inputElement = elem?.querySelector("input");
           localRef.current = inputElement;
           if (!ref) return;
@@ -105,7 +105,7 @@ export default forwardRef(function(args: ControlledTextFieldProps, ref: React.Fo
         placeholder={placeholder}
         defaultValue={defaultValue}
         value={value}
-        error={ !valid && (forceInvalid || touched) }
+        error={ !valid && (forceInvalid || touched) || false }
         disabled={disabled}
         onChange={onChange}
         onBlur={onBlur}

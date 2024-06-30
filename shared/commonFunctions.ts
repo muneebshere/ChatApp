@@ -11,7 +11,7 @@ export function failure(reason: ErrorStrings, details: any = null): Failure {
 
 export function randomFunctions() {
     let crypto: any = null;
-    if (isNode) { 
+    if (isNode) {
         crypto = eval(`require("node:crypto").webcrypto`);
     }
     else if (isBrowser) {
@@ -47,21 +47,21 @@ export function fromBase64(data: string) {
 }
 
 export function splitPromise<T>(): [(result: T) => void, Promise<T>] {
-    let resolve: (result: T) => void = null;
+    let resolve: (result: T) => void;
     const promise = new Promise<T>((res) => resolve = res);
-    return [resolve, promise];
+    return [resolve!, promise];
 }
 
 export async function allSettledResults<T>(promises: Promise<T>[]): Promise<T[]> {
     return (await Promise.allSettled(promises)).filter((result) => result.status === "fulfilled").map((result) => (result as PromiseFulfilledResult<T>).value);
 }
 
-export type Entry<T> = { 
-    [K in keyof T]: [K, T[K]] 
+export type Entry<T> = {
+    [K in keyof T]: [K, T[K]]
 }[keyof T]
 
 export function typedEntries<T extends {}>(object: T): ReadonlyArray<Entry<T>> {
-  return Object.entries(object) as unknown as ReadonlyArray<Entry<T>>; 
+  return Object.entries(object) as unknown as ReadonlyArray<Entry<T>>;
 }
 
 export async function truncateMarkdown(markdown: string, maxChars: number) {
@@ -73,7 +73,7 @@ export async function truncateMarkdown(markdown: string, maxChars: number) {
     const { removePosition } = await import("unist-util-remove-position");
     const { visit, SKIP, CONTINUE } = await import("unist-util-visit");
 
-    function replaceHeadings(node: any, index: number | null, parent: any) {
+    function replaceHeadings(node: any, index: number | undefined, parent: any) {
         const { children } = node;
         parent.children.splice(index, 1, { type: "paragraph", children });
         return CONTINUE;
@@ -84,30 +84,30 @@ export async function truncateMarkdown(markdown: string, maxChars: number) {
         parent.children.splice(index, 1, insertNode);
     }
 
-    function replaceImages(node: any, index: number | null, parent: any) {
-        replaceAsPara(parent, index, { type: "text", value: "[Image]" });
+    function replaceImages(node: any, index: number | undefined, parent: any) {
+        replaceAsPara(parent, index!, { type: "text", value: "[Image]" });
         return CONTINUE;
     }
 
-    function replaceCodeBlocks(node: any, index: number | null, parent: any) {
+    function replaceCodeBlocks(node: any, index: number | undefined, parent: any) {
         const lang = node.lang.trim();
-        const label = 
+        const label =
             lang === "mermaid"
                 ? "[Diagram]"
                 : (lang
                     ? `[${lang.charAt(0).toUpperCase()}${lang.slice(1)} Code]`
                     : ["Codeblock"]);
-        replaceAsPara(parent, index, { type: "text", value: label });
+        replaceAsPara(parent, index!, { type: "text", value: label });
         return CONTINUE;
     }
 
-    function replaceMathBlocks(node: any, index: number | null, parent: any) {
-        replaceAsPara(parent, index, { type: "text", value: "[Math]" });
+    function replaceMathBlocks(node: any, index: number | undefined, parent: any) {
+        replaceAsPara(parent, index!, { type: "text", value: "[Math]" });
         return CONTINUE;
     }
 
-    function replaceTables(node: any, index: number | null, parent: any) {
-        replaceAsPara(parent, index, { type: "text", value: "[Table]" });
+    function replaceTables(node: any, index: number | undefined, parent: any) {
+        replaceAsPara(parent, index!, { type: "text", value: "[Table]" });
         return CONTINUE;
     }
 
@@ -127,12 +127,12 @@ export async function truncateMarkdown(markdown: string, maxChars: number) {
         return children;
     }
 
-    function replaceLists(node: any, index: number | null, parent: any) {
+    function replaceLists(node: any, index: number | undefined, parent: any) {
         parent.children.splice(index, 1, ...expandList(node, 0));
         return SKIP;
     }
 
-    function truncateTree(node: Node | Parent | Literal, maxChars: number): { reachedEnd: boolean, isLeaf: boolean, usedChars: number, truncated: Node | Parent | Literal} {
+    function truncateTree(node: Node | Parent | Literal, maxChars: number): { reachedEnd: boolean, isLeaf: boolean, usedChars: number, truncated: Node | Parent | Literal | null} {
         if ("value" in node) {
             const { value } = node;
             let [reachedEnd, usedChars, truncated] = truncateText(value as string, maxChars);
@@ -216,9 +216,9 @@ export async function escapeHtml(markdown: string) {
         parent.children.splice(index, 1, insertNode);
     }
 
-    function htmlToText(node: any, index: number | null, parent: any) {
+    function htmlToText(node: any, index: number | undefined, parent: any) {
         const { value } = node;
-        replaceAsPara(parent, index, { type: "text", value });
+        replaceAsPara(parent, index!, { type: "text", value });
         return CONTINUE;
     }
 

@@ -21,14 +21,14 @@ export function SentChatRequestView({ sentChatRequest, closeChat }: SentChatRequ
   const belowXL = useMediaQuery((theme: Theme) => theme.breakpoints.down("xl"));
 
   return (
-    <StyledSheet sx={{ height: "100%", 
-                      display: "flex", 
-                      flexDirection: "column", 
+    <StyledSheet sx={{ height: "100%",
+                      display: "flex",
+                      flexDirection: "column",
                       overflow: "clip" }}>
       <Stack direction="column" spacing={2}>
         <ChatHeaderMemo {...{ belowXL, chatDetails, closeChat }}/>
         <div style={{ width: "100%", display: "flex", justifyContent: "center" }}>
-          <DayCard date={DateTime.fromMillis(lastActive).toISODate()} forceInline={true}/>
+          <DayCard date={DateTime.fromMillis(lastActive).toISODate()!} forceInline={true}/>
         </div>
         <DisableSelectTypography level="body-md" sx={{ width: "100%", textAlign: "center", color: "lightgrey" }}>
           You sent a chat request to @{otherUser}. Wait for them to respond.

@@ -1,7 +1,7 @@
 import _ from "lodash";
 import { ChattingSession, DirectChannelMessage, SendingMessage, ViewReceivedRequest } from "./e2e-encryption";
 import * as crypto from "../shared/cryptoOperator";
-import { MessageHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, DeliveryInfo, Receipt, Backup, Profile, PerspectiveSessionInfo  } from "../shared/commonTypes";
+import { MessageHeader, StoredMessage, ChatData, DisplayMessage, Contact, ReplyingToInfo, DeliveryInfo, Receipt, Backup, Profile, ProspectiveSessionInfo  } from "../shared/commonTypes";
 import { DateTime } from "luxon";
 import { allSettledResults, logError, randomFunctions, splitPromise } from "../shared/commonFunctions";
 import { ClientChatInterface, ClientReceivedChatRequestInterface, DirectChannelMethods } from "./Client";
@@ -10,22 +10,22 @@ import { noProfilePictureImage } from "./imageUtilities";
 const { getRandomString } = randomFunctions();
 
 export type ChatDetails = Readonly<{
-    otherUser: string, 
-    displayName: string, 
-    contactName?: string, 
-    profilePicture: string, 
+    otherUser: string,
+    displayName: string,
+    contactName?: string,
+    profilePicture: string,
     lastActivity: DisplayMessage,
     isOnline: boolean,
     isOtherTyping: boolean,
     unreadMessages: number,
-    draft: string
+    draft: string | null
 }>;
 
-export type FirstMessage = Readonly<{ 
-    messageId: string, 
-    text: string, 
-    timestamp: number, 
-    sentByMe: boolean, 
+export type FirstMessage = Readonly<{
+    messageId: string,
+    text: string,
+    timestamp: number,
+    sentByMe: boolean,
     respondedAt: number }>;
 
 export abstract class AbstractChat {
@@ -39,7 +39,7 @@ export abstract class AbstractChat {
     matchesName(search: string) {
         const searchLowerCase = search.toLowerCase();
         const { otherUser, displayName, contactName } = this.details;
-        return otherUser.includes(searchLowerCase) 
+        return otherUser.includes(searchLowerCase)
                 || displayName.toLowerCase().includes(searchLowerCase)
                 || (contactName && contactName.toLowerCase().includes(searchLowerCase));
     }
@@ -57,15 +57,15 @@ export class SentChatRequest extends AbstractChat {
         this.otherUser = otherUser;
         this.sessionId = sessionId;
         this.lastActive = timestamp;
-        this.chatMessage = ChatMessage.new({ 
-            messageId, 
-            text, 
+        this.chatMessage = ChatMessage.new({
+            messageId,
+            text,
             timestamp,
             sentByMe: true,
             delivery: {
-                delivered: false, 
-                seen: false 
-            } 
+                delivered: false,
+                seen: false
+            }
         }, true)[0];
         const displayName = otherUser;
         const profilePicture = noProfilePictureImage;
@@ -77,7 +77,7 @@ export class SentChatRequest extends AbstractChat {
     }
     subscribeActivity() {
     }
-    unsubscribeActivity() { 
+    unsubscribeActivity() {
     }
     activate(): void {}
 }
@@ -93,7 +93,7 @@ export class ReceivedChatRequest extends AbstractChat {
     private readonly isOnline = false;
     private readonly isOtherTyping = false;
     private unreadMessages = 1;
-    private notifyActivity: () => void;
+    private notifyActivity: (() => void) | null = null;
     get details(): ChatDetails {
         const { otherUser, contactDetails: { displayName, profilePicture, contactName }, isOnline, isOtherTyping, unreadMessages } = this;
         const lastActivity = this.chatMessage.displayMessage;
@@ -139,8 +139,8 @@ export class Chat extends AbstractChat {
     readonly otherAlias: string;
     private directChannelStatus: {
         readonly status: "disconnected" | "established"
-    } | ({ 
-            readonly directChannelId: string; 
+    } | ({
+            readonly directChannelId: string;
         } & (Readonly<{
             status: "requested"
         }> | Readonly<{
@@ -150,18 +150,18 @@ export class Chat extends AbstractChat {
             status: "establishing",
             verifyAccepted: (verified: boolean) => void
     }>)) = { status: "disconnected" };
-    private directChannel: DirectChannelMethods = null;
+    private directChannel: DirectChannelMethods | null = null;
     private disposed = false;
     private isLoading = false;
     private isOnline = false;
     private loadedUpto: number;
-    private lastActivity: DisplayMessage;
-    private otherTyping: boolean;
-    private typingTimeout: number;
-    private draft: string = null;
+    private lastActivity: DisplayMessage | null = null;
+    private otherTyping: boolean = false;
+    private typingTimeout: number = 0;
+    private draft: string | null = null;
     private rendered = false;
-    private notify: (event: ChatEvent) => void;
-    private notifyActivity: () => void;
+    private notify: ((event: ChatEvent) => void) | null = null;
+    private notifyActivity: (() => void) | null = null;
     private readonly createdAt: number;
     private readonly loadingBatch = 10;
     private readonly timeRatio: number;
@@ -170,7 +170,7 @@ export class Chat extends AbstractChat {
     private readonly sendingEvent: string;
     private contactDetails: Contact;
     private readonly messagesList = new Map<string, ChatMessage>();
-    private readonly chatMessageLists = new Map<string, typeof ChatMessageList.InternalListType>();
+    private readonly chatMessageLists = new Map<string, InternalList>();
     private readonly clientInterface: ClientChatInterface;
     readonly #chattingSession: ChattingSession;
     readonly #encryptionBaseVector: CryptoKey;
@@ -200,7 +200,7 @@ export class Chat extends AbstractChat {
         const { timeRatio }: { timeRatio: number } = await crypto.deriveDecrypt(timeRatioRecord, encryptionBaseVector, `${chatId} Time Ratio`);
         const { contactDetails }: { contactDetails: Contact } = await crypto.deriveDecrypt(contactDetailsRecord, encryptionBaseVector, `${chatId} Contact Details`);
         const chattingSession = await clientInterface.importChattingSession(exportedChattingSession);
-        const chat = new Chat(chatId, timeRatio, contactDetails, encryptionBaseVector, clientInterface, chattingSession);
+        const chat = new Chat(chatId, timeRatio, contactDetails, encryptionBaseVector, clientInterface, chattingSession!);
         if (firstMessage) {
             const { messageId, text, timestamp, sentByMe, respondedAt } = firstMessage;
             const delivery = { delivered: respondedAt, seen: respondedAt };
@@ -213,16 +213,17 @@ export class Chat extends AbstractChat {
 
     private async createDirectChannelHeader(action: "requesting"): Promise<[string, MessageHeader]>;
     private async createDirectChannelHeader(action: "responding" | "establishing" | "accepted", directChannelId: string): Promise<MessageHeader>;
-    private async createDirectChannelHeader(action: "requesting" | "responding" | "establishing" | "accepted", directChannelId?: string): Promise<MessageHeader | [string, MessageHeader]> {
+    private async createDirectChannelHeader(action: "requesting" | "responding" | "establishing" | "accepted", directChannelId?: string): Promise<MessageHeader | [string, MessageHeader] | null> {
         const requesting = action === "requesting";
         const messageId = `f${getRandomString(14, "hex")}`;
         const timestamp = Date.now();
         if (requesting) directChannelId = getRandomString(20, "hex");
-        const header = await this.createHeader({ messageId, timestamp, directChannelId, action });
-        return requesting ? [directChannelId, header] : header;
+        const header = await this.createHeader({ messageId, timestamp, directChannelId: directChannelId!, action });
+        if (!header) return null;
+        return requesting ? [directChannelId!, header] : header;
     }
 
-    private async initiateCreateDirectChannel({ directChannelId, sessionId, myAlias, otherAlias }: Omit<DirectChannelMessage, "action"> & PerspectiveSessionInfo, reset: () => void) {
+    private async initiateCreateDirectChannel({ directChannelId, sessionId, myAlias, otherAlias }: Omit<DirectChannelMessage, "action"> & ProspectiveSessionInfo, reset: () => void) {
         const [resolveAccepted, canReturnAccepted] = splitPromise<boolean>();
         const [resolveVerified, canReturnVerified] = splitPromise<boolean>();
         const terminate = (): null => {
@@ -234,12 +235,12 @@ export class Chat extends AbstractChat {
         const establishingHeader = await this.createDirectChannelHeader("establishing", directChannelId);
         if (!establishingHeader) return terminate();
         this.directChannelStatus = { directChannelId, status: "responded", sendAccepted: resolveAccepted };
-        return await this.clientInterface.establishDirectChannel({ 
-            info: { 
-                directChannelId, 
-                sessionId, 
-                myAlias, 
-                otherAlias }, 
+        return await this.clientInterface.establishDirectChannel({
+            info: {
+                directChannelId,
+                sessionId,
+                myAlias,
+                otherAlias },
             establishingHeader,
             getAcceptedHeader: async (establishing) => {
                 if ((await this.processMessageHeader(establishing, false))?.bounced) return terminate();
@@ -267,7 +268,7 @@ export class Chat extends AbstractChat {
 
     }
 
-    private async establishDirectChannel(request?: DirectChannelMessage & PerspectiveSessionInfo) {
+    private async establishDirectChannel(request?: DirectChannelMessage & ProspectiveSessionInfo) {
         const reset = () => {
             console.log("Resetting direct channel status.");
             if (this.directChannelStatus.status !== "established") {
@@ -329,13 +330,13 @@ export class Chat extends AbstractChat {
                     verifyAccepted(false);
                     reset();
                 }
-                
+
             }
             else if (this.directChannelStatus.status === "established") return;
         }
     }
 
-    set lastDraft(value: string) {
+    set lastDraft(value: string |null) {
         this.draft = value;
         this.notifyActivity?.();
     }
@@ -347,10 +348,10 @@ export class Chat extends AbstractChat {
     get details(): ChatDetails {
         const { otherUser, contactDetails: { displayName, profilePicture, contactName }, lastActivity, otherTyping: isOtherTyping, draft, isOnline } = this;
         const unreadMessages = this.unreadMessagesSet.size;
-        return { otherUser, displayName, contactName, profilePicture, lastActivity, isOnline, isOtherTyping, unreadMessages, draft };
+        return { otherUser, displayName, contactName, profilePicture, lastActivity: lastActivity!, isOnline, isOtherTyping, unreadMessages, draft };
     }
 
-    get messages() { 
+    get messages() {
         return Array.from(this.chatMessageLists.entries())
                 .sort(([d1,], [d2,]) => DateTime.fromISO(d1).toMillis() - DateTime.fromISO(d2).toMillis())
                 .map(([, l]) => l.chatMessageList);
@@ -424,17 +425,16 @@ export class Chat extends AbstractChat {
         const messageId = `f${getRandomString(14, "hex")}`;
         const sendingMessage: SendingMessage = { messageId, text, timestamp, replyingTo: replyId };
         const replyingToInfo = await this.populateReplyingTo(replyId);
-        if (replyingToInfo === undefined) {
+        if (replyingToInfo === null) {
             logError("Failed to come up with replied-to message.");
             return false;
         }
-        const displayMessage: DisplayMessage ={ 
-            messageId, 
+        const displayMessage: DisplayMessage = {
+            messageId,
             text,
             replyingToInfo,
             timestamp,
-            sentByMe: true,
-            delivery: null
+            sentByMe: true
         };
         this.addMessagesToList([displayMessage]);
         const result = await this.dispatchSendingMessage(sendingMessage, "AnyChannel");
@@ -465,12 +465,12 @@ export class Chat extends AbstractChat {
             return !!(await this.dispatchSendingMessage({ messageId, timestamp, event }, "DirectChannelOnly"));
         }
         else {
-            if (event === "seen" && this.unreadMessagesSet.has(reportingAbout)) {
-                this.unreadMessagesSet.delete(reportingAbout);
-                this.notifyActivity?.();  
+            if (event === "seen" && this.unreadMessagesSet.has(reportingAbout!)) {
+                this.unreadMessagesSet.delete(reportingAbout!);
+                this.notifyActivity?.();
             }
-            this.encryptStoreMessage(this.messagesList.get(reportingAbout).displayMessage); 
-            return !!(await this.dispatchSendingMessage({ messageId, timestamp, event, reportingAbout }, "AnyChannel"));
+            this.encryptStoreMessage(this.messagesList.get(reportingAbout!)!.displayMessage);
+            return !!(await this.dispatchSendingMessage({ messageId, timestamp, event, reportingAbout: reportingAbout! }, "AnyChannel"));
         }
     }
 
@@ -485,8 +485,9 @@ export class Chat extends AbstractChat {
         await this.clientInterface.TransmitStatus({ sessionId, fromAlias, toAlias, online, offline });
     }
 
-    private async createHeader(sendingMessage: SendingMessage): Promise<MessageHeader> {
+    private async createHeader(sendingMessage: SendingMessage): Promise<MessageHeader | null> {
         const messageHeader = await this.#chattingSession.sendMessage(sendingMessage, async (exportedChattingSession) => {
+            if (!exportedChattingSession) return false;
             const result = await this.clientInterface.UpdateChat({ chatId: this.chatId, exportedChattingSession });
             return result?.reason === false;
         });
@@ -495,7 +496,7 @@ export class Chat extends AbstractChat {
         return null;
     }
 
-    private async dispatchSendingMessage(sendingMessage: SendingMessage, channelType: "DirectChannelOnly" | "WithoutDirectChannel" | "AnyChannel"): Promise<{ acknowledged: boolean }> {
+    private async dispatchSendingMessage(sendingMessage: SendingMessage, channelType: "DirectChannelOnly" | "WithoutDirectChannel" | "AnyChannel"): Promise<{ acknowledged: boolean } | null> {
         if (!this.clientInterface.isConnected) return null;
         if (!this.hasDirectChannel && this.isOnline) this.establishDirectChannel();
         const messageHeader = await this.createHeader(sendingMessage);
@@ -616,8 +617,8 @@ export class Chat extends AbstractChat {
             messages.forEach((message) => {
                 const { messageId, sentByMe, timestamp, delivery } = message;
                 const chatMessage = chatMessageList.messageById(messageId);
-                this.messagesList.set(messageId, chatMessage);
-                if (!sentByMe && !delivery?.delivered) chatMessage.signalEvent("delivered", Date.now());
+                this.messagesList.set(messageId, chatMessage!);
+                if (!sentByMe && !delivery?.delivered) chatMessage!.signalEvent("delivered", Date.now());
                 if (timestamp >= (this.lastActivity?.timestamp || 0)) {
                     this.lastActivity = message;
                     this.notify?.("received-new");
@@ -633,7 +634,7 @@ export class Chat extends AbstractChat {
     }
 
     private async dispatch(messageHeader: MessageHeader) {
-        return await new Promise<{ signature: string, bounced: boolean }>(async (resolve) => {
+        return await new Promise<{ signature: string, bounced: boolean } | null>(async (resolve) => {
             if (!this.directChannel) resolve(null);
             else this.directChannel.sendMessage(messageHeader, 1000);
         });
@@ -657,8 +658,9 @@ export class Chat extends AbstractChat {
         const { sessionId, fromAlias, toAlias, headerId } = encryptedMessage;
         const { myAlias, otherAlias } = this;
         const [messageBody, signature] = await this.#chattingSession.receiveMessage(encryptedMessage, async (exportedChattingSession) => {
+            if (!exportedChattingSession) return false;
             const result = await this.clientInterface.UpdateChat({ chatId: this.chatId, exportedChattingSession });
-            return result?.reason === false; 
+            return result?.reason === false;
         });
         const respond = async ({ bounced }: { bounced: boolean }) => {
             live || await this.clientInterface.MessageHeaderProcessed({ sessionId, headerId, toAlias: this.myAlias });
@@ -681,7 +683,7 @@ export class Chat extends AbstractChat {
             if (chatMessage) {
                 chatMessage.signalEvent(event, timestamp);
                 displayMessage = chatMessage.displayMessage;
-                if (reportingAbout === this.lastActivity.messageId) {
+                if (reportingAbout === this.lastActivity?.messageId) {
                     this.lastActivity = displayMessage;
                     this.notifyActivity?.();
                 }
@@ -724,7 +726,7 @@ export class Chat extends AbstractChat {
                     this.contactDetails = contactDetails;
                     this.notifyActivity?.();
                     this.notify?.("details-change");
-                } 
+                }
             })();
         }
         else if ("directChannelId" in messageBody) {
@@ -741,34 +743,34 @@ export class Chat extends AbstractChat {
         else {
             const { text, replyingTo } = messageBody;
             const replyingToInfo = await this.populateReplyingTo(replyingTo);
-            if (replyingToInfo === undefined) {
+            if (replyingToInfo === null) {
                 logError("Failed to come up with replied-to message.");
                 return respond({ bounced: true });
             }
             displayMessage = { messageId, timestamp, text, replyingToInfo, sentByMe: false };
             this.addMessagesToList([displayMessage]);
         }
-        if (displayMessage) await this.encryptStoreMessage(displayMessage);
+        if (displayMessage!) await this.encryptStoreMessage(displayMessage);
         return respond({ bounced: false });
     }
 
-    private async populateReplyingTo(replyId: string): Promise<ReplyingToInfo> {
-        if (!replyId) return null;
+    private async populateReplyingTo(replyId: string | undefined): Promise<ReplyingToInfo | null | undefined> {
+        if (!replyId) return undefined;
         const repliedTo = await this.getMessageById(replyId);
-        if (!repliedTo) return undefined;
+        if (!repliedTo) return null;
         const replyToOwn = repliedTo.sentByMe;
         const displayText = repliedTo.text;
         return { replyId, replyToOwn, displayText };
     }
 
-    private async getMessageById(messageId: string): Promise<DisplayMessage> {
-        if (!messageId) return null;
-        if (this.messagesList.has(messageId)) return this.messagesList.get(messageId).displayMessage;
+    private async getMessageById(messageId: string): Promise<DisplayMessage | null | undefined > {
+        if (!messageId) return undefined;
+        if (this.messagesList.has(messageId)) return this.messagesList.get(messageId)!.displayMessage;
         const hashedId = await this.calculateHashedId(messageId);
         const fetched = await this.clientInterface.GetMessageById({ chatId: this.chatId, hashedId });
         if ("reason" in fetched) {
             logError(fetched);
-            return undefined;
+            return null;
         };
         return await crypto.deriveDecrypt(fetched.content, this.#encryptionBaseVector, this.sessionId);
     }
@@ -807,15 +809,17 @@ export class Chat extends AbstractChat {
     }
 }
 
-export class ChatMessageList {
-    private internalList: typeof ChatMessageList.InternalListType;
+type InternalList = (typeof ChatMessageList)["InternalList"]["prototype"];
 
-    private constructor() {
+export class ChatMessageList {
+    private internalList: InternalList;
+
+    private constructor(messages: DisplayMessage[], sendEvent: (event: "delivered" | "seen", timestamp: number, reportingAbout: string) => void) {
+        this.internalList = new ChatMessageList.InternalList(messages, sendEvent, this);
     }
 
     static construct(messages: DisplayMessage[], sendEvent: (event: "delivered" | "seen", timestamp: number, reportingAbout: string) => void) {
-        const list = new ChatMessageList();
-        list.internalList = new ChatMessageList.InternalList(messages, sendEvent, list);
+        const list = new ChatMessageList(messages, sendEvent);
         return list.internalList;
     }
 
@@ -835,20 +839,18 @@ export class ChatMessageList {
         this.internalList.unsubscribe();
     }
 
-    static readonly InternalListType: typeof this.InternalList.prototype = null;
-
     private static readonly InternalList = class {
         readonly date: string;
         private indexedMessages = new Map<string, readonly [ChatMessage, (isFirst: boolean) => void]>();
         private chatMessages: ChatMessage[] = [];
-        private notifyAdded: () => void;
+        private notifyAdded: (() => void) | null = null;
         private sendEvent: (event: "delivered" | "seen", timestamp: number, reportingAbout: string) => void;
-        private earliest: number;
-        private latest: number;
+        private earliest: number | null = null;
+        private latest: number | null = null;
         private exposedList: ChatMessageList;
 
         constructor(messages: DisplayMessage[], sendEvent: (event: "delivered" | "seen", timestamp: number, reportingAbout: string) => void, exposedList: ChatMessageList) {
-            this.date = DateTime.fromMillis(messages[0].timestamp).toISODate();
+            this.date = DateTime.fromMillis(messages[0].timestamp).toISODate()!;
             if (messages.some(({ timestamp }) => DateTime.fromMillis(timestamp).toISODate() !== this.date)) throw "All messages must be same date";
             this.sendEvent = sendEvent;
             this.exposedList = exposedList;
@@ -858,23 +860,23 @@ export class ChatMessageList {
         public get messageList() {
             return [...this.chatMessages];
         }
-    
+
         public get chatMessageList() {
             return this.exposedList;
         }
-    
+
         messageById(messageId: string) {
-            return this.indexedMessages.get(messageId)[0];
+            return this.indexedMessages.get(messageId)?.[0] || null;
         }
-    
+
         subscribe(notifyAdded: () => void) {
             this.notifyAdded = notifyAdded;
         }
-    
+
         unsubscribe() {
             this.notifyAdded = null;
         }
-    
+
         add(messages: DisplayMessage[]) {
             this.breakIntoChunks(messages).forEach(([index, messagesChunk]) => this.insertChunk(index, messagesChunk));
         }
@@ -883,8 +885,8 @@ export class ChatMessageList {
             if (messages.some(({ timestamp }) => DateTime.fromMillis(timestamp).toISODate() !== this.date)) throw "All messages must be same date";
             messages = messages.filter(({ messageId }) => !this.indexedMessages.has(messageId)).sort((m1, m2) => m1.timestamp - m2.timestamp);
             if (messages.length === 0) return [];
-            if (!this.earliest || messages.at(-1).timestamp < this.earliest) return [[0, messages]];
-            if (messages.at(-1).timestamp > this.latest) return [[this.chatMessages.length, messages]];
+            if (!this.earliest || messages.at(-1)!.timestamp < this.earliest) return [[0, messages]];
+            if (messages.at(-1)!.timestamp > this.latest!) return [[this.chatMessages.length, messages]];
             const oldMessages = this.chatMessages.map(({ timestamp }, index) => ({ index, timestamp, newlyAdded: false }));
             const newMessages = messages.map(({ timestamp }, index) => ({ index, timestamp, newlyAdded: true }));
             const ordered = [...newMessages, ...oldMessages].sort((m1, m2) => m1.timestamp - m2.timestamp);
@@ -893,16 +895,16 @@ export class ChatMessageList {
             while (cursor < ordered.length) {
                 cursor = ordered.findIndex(({ newlyAdded }, i) => i >= cursor && newlyAdded);
                 if (cursor < 0) break;
-                const insertIndex = 
+                const insertIndex =
                     cursor > 0
                         ? ordered[cursor - 1].index + 1
                         : 0;
                 const startIndex = ordered[cursor].index;
                 cursor = ordered.findIndex(({ newlyAdded }, i) => i > cursor && !newlyAdded);
-                const stopIndex = 
+                const stopIndex =
                     cursor > 0
                         ? ordered[cursor - 1].index
-                        : ordered.at(-1).index;
+                        : ordered.at(-1)!.index;
                 chunks.push([insertIndex, messages.slice(startIndex, stopIndex + 1)]);
                 if (cursor < 0) cursor = ordered.length;
             }
@@ -916,11 +918,11 @@ export class ChatMessageList {
                 this.earliest = newChatMessages[0][0].timestamp;
             }
             if (index >= this.chatMessages.length) {
-                this.latest = newChatMessages.at(-1)[0].timestamp;
+                this.latest = newChatMessages.at(-1)![0].timestamp;
             }
             if (lastSentByMe !== null && index > 0 && index < this.chatMessages.length) {
-                const { messageId, sentByMe } = this.chatMessageList[index].messageId;
-                this.indexedMessages.get(messageId)[1](sentByMe !== lastSentByMe);
+                const { messageId, sentByMe } = this.chatMessages[index];
+                this.indexedMessages.get(messageId)![1](sentByMe !== lastSentByMe);
             }
             const chatMessages = newChatMessages.map(([message, updateFirst]) => {
                 this.indexedMessages.set(message.messageId, [message, updateFirst]);
@@ -930,20 +932,20 @@ export class ChatMessageList {
             this.notifyAdded?.();
         }
 
-        private constructChatMessages(startSentByMe: boolean, messages: DisplayMessage[]) {
+        private constructChatMessages(startSentByMe: boolean | null, messages: DisplayMessage[]) {
             const chatMessages: (readonly [ChatMessage, (isFirst: boolean) => void])[] = [];
             let index = 0;
             let lastSentByMe = startSentByMe;
             while (index < messages.length) {
                 const message = messages[index];
                 const { sentByMe, messageId } = message;
-                const sendEvent = 
-                    sentByMe 
+                const sendEvent =
+                    sentByMe
                         ? null
                         : (event: "delivered" | "seen", timestamp: number) => this.sendEvent(event, timestamp, messageId);
-                const isFirst = 
-                    lastSentByMe === null 
-                        ? true 
+                const isFirst =
+                    lastSentByMe === null
+                        ? true
                         : lastSentByMe !== sentByMe;
                 chatMessages.push(ChatMessage.new(message, isFirst, sendEvent));
                 index += 1;
@@ -957,7 +959,7 @@ export class ChatMessageList {
 export class ChatMessage {
     private message: DisplayMessage;
     private isFirst: boolean;
-    private notifyChange: (event: "first" | "sent" | "delivered" | "seen") => void;
+    private notifyChange: ((event: "first" | "sent" | "delivered" | "seen") => void) | null = null;
     readonly signalEvent: (event: "sent" | "delivered" | "seen", timestamp: number) => void;
 
     public get displayMessage() {
@@ -967,7 +969,7 @@ export class ChatMessage {
     public get messageId() {
         return this.displayMessage.messageId;
     }
-        
+
     public get replyingToInfo() {
         return { ...this.displayMessage.replyingToInfo };
     }
@@ -985,7 +987,7 @@ export class ChatMessage {
     }
 
     public get delivery() {
-        return { ...this.displayMessage.delivery };
+        return { ...(this.displayMessage.delivery || {} as DeliveryInfo) };
     }
 
     public get isFirstOfType() {
@@ -1008,9 +1010,9 @@ export class ChatMessage {
         this.notifyChange = null;
     }
 
-    private constructor(displayMessage: DisplayMessage, 
+    private constructor(displayMessage: DisplayMessage,
         isFirst: boolean,
-        signalEvent?: (event: "delivered" | "seen", timestamp: number) => void) {
+        signalEvent: ((event: "delivered" | "seen", timestamp: number) => void) | null) {
             this.message = displayMessage;
             this.isFirst = isFirst;
             let signaling = false;
@@ -1037,7 +1039,7 @@ export class ChatMessage {
             }
     }
 
-    static new(displayMessage: DisplayMessage, isFirst: boolean, signalEvent?: (event: "delivered" | "seen", timestamp: number) => void) {
+    static new(displayMessage: DisplayMessage, isFirst: boolean, signalEvent: ((event: "delivered" | "seen", timestamp: number) => void) | null = null) {
         const chatMessage = new ChatMessage(displayMessage, isFirst, signalEvent);
         return [chatMessage, (isFirst: boolean) => chatMessage.updateFirst(isFirst)] as const;
     }
@@ -1051,7 +1053,7 @@ type MessageContent = Readonly<{
 
 type ChatEvent = "details-change" | "added" | "loading-earlier" | "loaded-earlier" | "received-new";
 
-function calculateDelivery(prevDelivery: DeliveryInfo, event: "delivered" | "seen", timestamp: number, messageTimestamp: number): DeliveryInfo {
+function calculateDelivery(prevDelivery: DeliveryInfo | undefined, event: "delivered" | "seen", timestamp: number, messageTimestamp: number): DeliveryInfo {
     const { delivered, seen } = prevDelivery || {};
     let newDelivery: DeliveryInfo;
     if (event === "delivered") {

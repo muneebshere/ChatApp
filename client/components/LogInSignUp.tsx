@@ -7,17 +7,17 @@ import SignUpForm, { SignUpContext } from "./Signup";
 import { AuthConnectionStatus } from "../AuthClient";
 import { CloudOff, WifiOff } from "@mui/icons-material";
 
-type TabProps =  { 
+type TabProps =  {
   connectionStatus: AuthConnectionStatus,
-  currentTab: number, 
-  setCurrentTab: (currentTab: 0 | 1) => void 
+  currentTab: 0 | 1,
+  setCurrentTab: (currentTab: 0 | 1) => void
 };
 
 export default function LogInSignUp({ connectionStatus, currentTab, setCurrentTab }: TabProps) {
   const { logInData: { submitted: logInSubmitted } } = useContext(LogInContext);
   const { signUpData: { submitted: signUpSubmitted } } = useContext(SignUpContext);
   const currentTabRef = useRef<0 | 1>(0);
-  const timeoutRef = useRef<number>(null);
+  const timeoutRef = useRef<number | null>(null);
   const switchingRef = useRef(false);
   const setCurrentTabLocal = (currentTab: 0 | 1) => setCurrentTab(currentTabRef.current = currentTab);
   const swapTab = () => setCurrentTabLocal(currentTabRef.current === 0 ? 1 : 0);
@@ -46,9 +46,9 @@ export default function LogInSignUp({ connectionStatus, currentTab, setCurrentTa
       {(connectionStatus !== "Online") &&
         <Grid xs={12}>
           <Alert
-            variant="soft" 
+            variant="soft"
             size="md"
-            sx={{ justifyContent: "center" }} 
+            sx={{ justifyContent: "center" }}
             color="danger"
             startDecorator={connectionStatus === "ClientOffline" ? <WifiOff/> : <CloudOff/>}>
               {connectionStatus === "ClientOffline" ? "You are offline." : "Cannot reach server."}
@@ -60,20 +60,20 @@ export default function LogInSignUp({ connectionStatus, currentTab, setCurrentTa
             onKeyDownCapture={(e) => onKey(e, "down")}>
           <Tabs
             value={currentTab}
-            onChange={(_, value: 0 | 1) => setCurrentTabLocal(value)}>
-            <TabList 
+            onChange={(_, value) => setCurrentTabLocal(value as 0 | 1)}>
+            <TabList
               color="success"
-              disableUnderline 
-              variant="soft" 
-              tabFlex={1} 
+              disableUnderline
+              variant="soft"
+              tabFlex={1}
               sx={{ borderRadius: "sm", padding: "3px", gap: 0.5 }}>
-              <Tab 
+              <Tab
                 disableIndicator
                 variant={ currentTab === 0 ? "solid" : "plain" }
-                sx={{ 
+                sx={{
                   borderRadius: "sm",
-                  ...(currentTab === 0 
-                    ? { backgroundColor: "#1f7a1f !important" } 
+                  ...(currentTab === 0
+                    ? { backgroundColor: "#1f7a1f !important" }
                     : { "&:hover": { backgroundColor: "#f1fdf1 !important" } })
                 }}
                 disabled={ logInSubmitted || signUpSubmitted }>
@@ -82,10 +82,10 @@ export default function LogInSignUp({ connectionStatus, currentTab, setCurrentTa
               <Tab
                 disableIndicator
                 variant={ currentTab === 1 ? "solid" : "plain" }
-                sx={{ 
+                sx={{
                   borderRadius: "sm",
-                  ...(currentTab === 1 
-                        ? { backgroundColor: "#1f7a1f !important" } 
+                  ...(currentTab === 1
+                        ? { backgroundColor: "#1f7a1f !important" }
                         : { "&:hover": { backgroundColor: "#f1fdf1 !important" } })
                 }}
                 disabled={ logInSubmitted || signUpSubmitted }>

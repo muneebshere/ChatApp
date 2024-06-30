@@ -24,9 +24,10 @@ declare module "http" {
     }
 }
 const { getRandomString, getRandomVector } = randomFunctions();
-let latestJsHash: string = null;
+let latestJsHash: string;
 
-function parseIpRepresentation(address: string) {
+function parseIpRepresentation(address: string | undefined) {
+    if (!address) return null;
     if (!ipaddr.isValid(address)) return null;
     const ipv4_or_ipv6 = ipaddr.parse(address);
     const ipv6 =
@@ -72,7 +73,7 @@ export const defaultServerConfig: ServerConfig = {
 }
 
 async function main() {
-    
+
     const PORT = 443;
     const mongoUrl = "mongodb://localhost:27017/chatapp";
     const httpsOptions: ServerOptions = {
@@ -100,7 +101,7 @@ async function main() {
         await SocketHandler.disposeSession(sessionReference, reason);
         saveSessionKeys.delete(sessionReference);
     }
-    
+
     const io = new SocketServer(backendServer, {
         cors: {
             origin: /.*/,
@@ -128,7 +129,7 @@ async function main() {
         const { exists } = await authHandler.userExists(req.params.username);
         return res.json({ exists });
     });
-    
+
     app.post("/initiateSignUp", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { payload } = req.body;
@@ -141,7 +142,7 @@ async function main() {
         }
         return res.json({ payload: serialize(result).toString("base64") });
     });
-    
+
     app.post("/concludeSignUp", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { challengeReference } = req.signedCookies?.signUpInit || {};
@@ -157,7 +158,7 @@ async function main() {
         }
         return res.json({ payload: serialize(result).toString("base64") });
     });
-    
+
     app.post("/initiateLogIn", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { payload } = req.body;
@@ -170,7 +171,7 @@ async function main() {
         }
         return res.json({ payload: serialize(result).toString("base64") }).status(200).end();
     });
-    
+
     app.post("/concludeLogIn", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { challengeReference } = req.signedCookies?.logInInit || {};
@@ -189,7 +190,7 @@ async function main() {
         }
         return res.json({ payload: serialize(result).toString("base64") });
     });
-    
+
     app.post("/initiateLogInSaved", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { saveToken } = req.signedCookies?.passwordSaved || {};
@@ -203,7 +204,7 @@ async function main() {
         }
         return res.json({ payload: serialize("reason" in result ? result : _.pick(result, "authKeyBits")).toString("base64") });
     });
-    
+
     app.post("/concludeLogInSaved", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { username } = req.signedCookies?.logInSavedInit || {};
@@ -222,7 +223,7 @@ async function main() {
         }
         return res.json({ payload: serialize(result).toString("base64") });
     });
-    
+
     app.post("/savePassword", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { sessionReference } = req.signedCookies?.authenticated || {};
@@ -230,6 +231,7 @@ async function main() {
         if (!ipRep || typeof payload !== "string") return res.status(400).end();
         const request: SavePasswordRequest = crypto.deserialize(fromBase64(payload));
         const username = SocketHandler.getUsername(sessionReference);
+        if (!username) return res.status(400).end();
         const saveToken = getRandomString(16, "base64");
         const result = await authHandler.savePassword(username, ipRep, saveToken, request);
         if (!("reason" in result)) {
@@ -237,13 +239,13 @@ async function main() {
         }
         return res.json({ payload: serialize(result).toString("base64") });
     });
-    
+
     app.post("/userLogOut", async (req, res) => {
         const { sessionReference } = req.signedCookies?.authenticated || {};
         await disposeSession(sessionReference, "Logging out");
         return res.clearCookie("authenticated").clearCookie("savedPassword").status(200).end();
     });
-    
+
     app.post("/terminateCurrentSession", async (req, res) => {
         const { sessionReference } = req.signedCookies?.authenticated || {};
         if (sessionReference) {
@@ -254,7 +256,7 @@ async function main() {
         }
         return res.status(200).end();
     });
-    
+
     app.get("/resumeAuthenticatedSession", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { sessionReference, sessionIp } = req.signedCookies?.authenticated || {};
@@ -266,17 +268,17 @@ async function main() {
         const saveSessionKeyBase64 = saveSessionKeys.get(sessionReference);
         return res.json({ resumed: true, saveSessionKeyBase64 });
     });
-    
+
     app.get("/isPasswordSaved", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         if (!ipRep) return res.status(400).end();
         const { saveToken } = req.signedCookies?.passwordSaved || {};
-        const passwordSaved = 
+        const passwordSaved =
             !(await MongoHandlerCentral.savedAuthExists(saveToken))
                 ? false
                 : (await MongoHandlerCentral.savedAuthExists(saveToken, ipRep)
                     ? "same-ip"
-                    : "other-ip"); 
+                    : "other-ip");
         if (saveToken && !passwordSaved) {
             res.clearCookie("passwordSaved");
         }
@@ -296,7 +298,7 @@ async function main() {
         const crashed = authenticated ? !running: undefined;
         return res.json({ authenticated, crashed });
     });
-    
+
     app.get("/authNonce", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { sessionReference, sessionIp } = req.signedCookies?.authenticated || {};
@@ -308,7 +310,7 @@ async function main() {
         if (!existingNonce) res.cookie("authNonce", { nonceId, nonce, authNonce }, { ...cookieOptions, maxAge: 5000 });
         return res.json({ nonceId, authNonce });
     });
-    
+
     app.get("/verifyAuthentication/:clientNonceId/:authToken/:sessionRecordKey", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         const { sessionReference, sessionIp } = req.signedCookies?.authenticated || {};
@@ -331,10 +333,10 @@ async function main() {
         const { saveToken } = req.signedCookies?.passwordSaved || {};
         if (saveToken) {
             MongoHandlerCentral.clearSavedAuth(saveToken);
-        } 
+        }
         return res.clearCookie("passwordSaved").status(200).end();
     });
-    
+
     app.delete("/clearNonce", async (req, res) => {
         const ipRep = parseIpRepresentation(req.socket.remoteAddress);
         if (!ipRep) return res.status(400).end();
@@ -342,9 +344,9 @@ async function main() {
     });
 
     app.get("/*", async (req, res) => {
-       res.status(200).sendFile(path.resolve("../public/index.html")); 
+       res.status(200).sendFile(path.resolve("../public/index.html"));
     });
-    
+
     io.use((socket: Socket, next) => {
         cookieParserMiddle(socket.request as Request, ((socket.request as any).res || {}) as Response, next as NextFunction)
     });
@@ -352,6 +354,7 @@ async function main() {
     io.use(async (socket: Socket, next) => {
         try {
             const ipRep = parseIpRepresentation(socket.request.socket.remoteAddress);
+            if (!ipRep) return next(new Error(("Could not parse ip.")));
             const { authenticated: { sessionReference }, authNonce: { nonceId, nonce } } = socket.request.signedCookies;
             const { nonceId: clientNonceId, authToken, sessionRecordKey } = socket.handshake.auth ?? {};
             if (nonceId !== clientNonceId) {
@@ -366,11 +369,11 @@ async function main() {
                     return next();
                 }
             }
-            console.log(`Socket connection from ip ${parseIpReadable(ipRep)} with sessionReference ${sessionReference} rejected.`)
+            console.log(`Socket connection from ip ${parseIpReadable(ipRep)} with sessionReference ${sessionReference} rejected.`);
             return next(new Error(("Registering socket failed.")));
         }
         catch (err) {
-            next(new Error(err.toString()));
+            next(new Error(err?.toString()));
         }
     });
 

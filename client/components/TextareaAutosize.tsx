@@ -39,8 +39,8 @@ interface TextareaAutosizeProps
   /**
    * props for outer border
    */
-  outerProps?: Omit<React.HTMLProps<HTMLDivElement>, "as">; 
-  
+  outerProps?: Omit<React.HTMLProps<HTMLDivElement>, "as">;
+
   startDecorator?: JSX.Element;
 
   startDecoratorStyle?: React.CSSProperties;
@@ -287,7 +287,7 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
 
   const handleSubmit = useMemo(() => {
     return onSubmit
-      ? (event: React.KeyboardEvent<HTMLTextAreaElement>) => { 
+      ? (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
           if (event.ctrlKey && event.key === "Enter") {
             onSubmit(event.currentTarget.value);
             event.stopPropagation();
@@ -295,7 +295,9 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
           }
           else if (tabbedOutside && event.key === "Tab") {
             tabbedOutside.current = true;
+            return false;
           }
+          return true;
         }
       : undefined;
 
@@ -307,7 +309,7 @@ const TextareaAutosize = forwardRef(function TextareaAutosize(
       : undefined;
   }, [tabbedOutside]);
 
-  const onClickKeyboard: React.MouseEventHandler<HTMLTextAreaElement> = 
+  const onClickKeyboard: React.MouseEventHandler<HTMLTextAreaElement> | undefined =
     inputModeManual
       ? (e) => {
         setInputModeState(inputMode || "text");
@@ -402,7 +404,7 @@ export default TextareaAutosize;
 
 const TextareaBorder = styled.div`
   width: 100%;
-  display: flex; 
+  display: flex;
   flex-direction: column;
   height: max-content;
   padding: 7px;
@@ -447,7 +449,7 @@ const StyledInnerTextarea = styled(TextareaAutosize)`
   }`;
 
 export const StyledScrollingTextarea = forwardRef(function(props: TextareaAutosizeProps, ref: ForwardedRef<HTMLTextAreaElement>) {
-  const { startDecorator, endDecorator, startDecoratorStyle = {}, endDecoratorStyle = {}, outerProps = {}, ...innerProps } = props; 
+  const { startDecorator, endDecorator, startDecoratorStyle = {}, endDecoratorStyle = {}, outerProps = {}, ...innerProps } = props;
   return (
   <TextareaBorder {...outerProps}>
     {startDecorator &&
